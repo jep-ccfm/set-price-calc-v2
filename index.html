@@ -97,6 +97,17 @@
   .save-state{font-size:11px;color:var(--ink-soft);text-align:right;margin-top:8px;}
   .footnote{font-size:11px;color:#A8A296;margin-top:20px;text-align:center;}
 
+  /* ===== 브랜드 토글 ===== */
+  .brand-bar{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--line);}
+  .brand-label{align-self:center;font-size:11px;font-weight:800;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.1em;margin-right:2px;}
+  .brand-tab{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 16px;border-radius:11px;border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);cursor:pointer;font-family:inherit;min-width:150px;}
+  .brand-tab:hover{border-color:var(--accent);}
+  .brand-tab.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .brand-tab .bt-name{font-size:15px;font-weight:800;display:flex;align-items:center;gap:7px;}
+  .brand-tab .bt-cnt{font-size:10.5px;font-weight:700;font-family:var(--mono);background:rgba(27,42,74,.08);color:var(--ink-soft);padding:1px 7px;border-radius:9px;}
+  .brand-tab.active .bt-cnt{background:rgba(0,0,0,.2);color:#fff;}
+  .brand-tab .bt-lines{font-size:10.5px;font-weight:600;opacity:.85;}
+
   /* ===== 차수 바 ===== */
   .round-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
   .round-pill{padding:8px 16px;border-radius:22px;border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);font-size:13px;font-weight:800;cursor:pointer;transition:all .15s;font-family:inherit;}
@@ -362,6 +373,13 @@
     <p>현재 계산기의 세트 구성을 선택한 업체·차수에 <b>제안 구성</b>으로 저장합니다.</p>
     <label class="flabel">업체</label>
     <select id="srCompany"></select>
+    <div id="srBrandRow" hidden>
+      <label class="flabel">브랜드</label>
+      <select id="srBrand">
+        <option value="merable">메라블 (루비알엔·유쎄라블·포어시그널·비타터닝)</option>
+        <option value="lusolve">루솔브 (비오티아)</option>
+      </select>
+    </div>
     <label class="flabel">차수</label>
     <select id="srRound"></select>
     <label class="flabel">구성 이름</label>
@@ -410,16 +428,17 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const DEFAULT_DB={"루비알엔 피코샷 크림":2723,"루비알엔 토닝샷 앰플":2678,"루비알엔 앰플 클렌저":2120,"유쎄라블 리프팅샷 900 아이크림":1389,"유쎄라블 타이트닝 600샷 아이크림":1614,"유쎄라블 실프팅 4D 크림":3187,"유쎄라블 2X 볼륨필인 앰플":2922,"루비알엔 앰플 겔 마스크":1035,"루비알엔 미니 앰플 클렌저 33ml":998,"유쎄라블 올페이스 텐션 마스크팩":471,"유쎄라블 부스트업 앰플 클렌저":2497,"포어시그널 클렌저":2583,"포어시그널 앰플":2632,"포어시그널 크림":2533,"비타터닝 앰플":3892,"비타터닝 크림":2638,"비타터닝 선크림":2946,"루솔브 샴푸":5243,"루솔브 트리트먼트":3076,"루솔브 앰플":2388,"루솔브 토닉":2165};
+const DEFAULT_DB={"루비알엔 피코샷 크림":2723,"루비알엔 토닝샷 앰플":2690,"루비알엔 앰플 클렌저":2120,"유쎄라블 리프팅샷 900 아이크림":1389,"유쎄라블 타이트닝 600샷 아이크림":1614,"유쎄라블 실프팅 4D 크림":3187,"유쎄라블 2X 볼륨필인 앰플":2922,"루비알엔 앰플 겔 마스크":1035,"루비알엔 미니 앰플 클렌저 33ml":998,"유쎄라블 올페이스 텐션 마스크팩":471,"유쎄라블 부스트업 앰플 클렌저":2497,"포어시그널 클렌저":2583,"포어시그널 앰플":2632,"포어시그널 크림":2533,"비타터닝 앰플":3992,"비타터닝 크림":2533,"비타터닝 선크림":2878,"루솔브 샴푸":5243,"루솔브 트리트먼트":3076,"루솔브 앰플":2372,"루솔브 토닉":2165};
 const COMPANIES=[
-  {key:'jp',   name:'일본라방',        flag:'🇯🇵', desc:'일본 라이브 방송 판매 — 차수별 제안 세트 구성과 판매 실적을 관리합니다.'},
+  {key:'jp',   name:'일본라방',        flag:'🇯🇵', desc:'일본 라이브 방송 판매 — 브랜드(메라블·루솔브)별로 차수·제안 구성·판매 실적을 각각 관리합니다.'},
   {key:'hk',   name:'홍콩 라이브 커머스', flag:'🇭🇰', desc:'홍콩 라이브 커머스 — 차수별 제안 세트 구성과 판매 실적을 관리합니다.'},
   {key:'ready',name:'레디영',          flag:'📦', desc:'레디영 — 차수별 제안 세트 구성과 판매 실적을 관리합니다.'}
 ];
 const companyMeta=k=>COMPANIES.find(c=>c.key===k);
+const JP_BRANDS=[{key:'merable',name:'메라블',lines:'루비알엔·유쎄라블·포어시그널·비타터닝'},{key:'lusolve',name:'루솔브',lines:'비오티아'}];
 
 let costDB={},rows=[],margin=0.68,rowIdSeq=1,roundupUnit=100,setRoundUnit=100;
-let lib={companies:{jp:{rounds:[],activeId:null},hk:{rounds:[],activeId:null},ready:{rounds:[],activeId:null}}};
+let lib={companies:{jp:{brands:{merable:{rounds:[],activeId:null},lusolve:{rounds:[],activeId:null}},activeBrand:'merable'},hk:{rounds:[],activeId:null},ready:{rounds:[],activeId:null}}};
 let currentView='calc';
 let idSeq=1;
 function uid(p){return (p||'id')+'_'+(idSeq++)+'_'+Date.now();}
@@ -435,7 +454,7 @@ function sSet(k,v){try{localStorage.setItem(PFX+k,JSON.stringify(v));return true
 function loadState(){
   const db=sGet('costDB');costDB=db||{...DEFAULT_DB};
   const L=sGet('libraryV2');
-  if(L&&L.companies){lib=L;COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]={rounds:[],activeId:null};});}
+  if(L&&L.companies){lib=L;COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]={rounds:[],activeId:null};});migrateJp();}
   const s=sGet('currentSet');
   if(s){margin=typeof s.margin==='number'?s.margin:0.68;rows=(s.rows&&s.rows.length)?s.rows.map(r=>({id:rowIdSeq++,name:r.name||'',qty:r.qty||''})):[newRow(),newRow()];if(s.roundupUnit===100||s.roundupUnit===1000){roundupUnit=s.roundupUnit;}if(s.setRoundUnit===100||s.setRoundUnit===1000){setRoundUnit=s.setRoundUnit;}}
   else rows=[newRow(),newRow()];
@@ -445,9 +464,17 @@ function loadState(){
 let saveT=null;
 function persist(){clearTimeout(saveT);saveT=setTimeout(()=>{const ok=sSet('costDB',costDB)&&sSet('currentSet',{margin,roundupUnit,setRoundUnit,rows:rows.map(r=>({name:r.name,qty:r.qty}))});document.getElementById('saveState').textContent=ok?'저장됨 · '+new Date().toLocaleTimeString('ko-KR'):'저장 실패';},300);}
 function persistLib(){sSet('libraryV2',lib);updateBadges();}
+function migrateJp(){
+  const jp=lib.companies.jp;if(!jp)return;
+  if(!jp.brands){jp.brands={merable:{rounds:jp.rounds||[],activeId:jp.activeId||null},lusolve:{rounds:[],activeId:null}};jp.activeBrand='merable';delete jp.rounds;delete jp.activeId;}
+  if(!jp.brands.merable)jp.brands.merable={rounds:[],activeId:null};
+  if(!jp.brands.lusolve)jp.brands.lusolve={rounds:[],activeId:null};
+  if(!jp.activeBrand)jp.activeBrand='merable';
+}
 function dbNames(){return Object.keys(costDB).sort((a,b)=>a.localeCompare(b,'ko'));}
 function refreshDatalist(){const dl=document.getElementById('dbItems');dl.innerHTML='';dbNames().forEach(n=>{const o=document.createElement('option');o.value=n;dl.appendChild(o);});}
-function updateBadges(){COMPANIES.forEach(c=>{const b=document.getElementById('badge-'+c.key);if(b)b.textContent=(lib.companies[c.key].rounds||[]).length;});}
+function streamsOf(k){const c=lib.companies[k];return c.brands?Object.values(c.brands):[c];}
+function updateBadges(){COMPANIES.forEach(c=>{const b=document.getElementById('badge-'+c.key);if(b)b.textContent=streamsOf(c.key).reduce((n,s)=>n+(s.rounds||[]).length,0);});}
 
 function updateRuBtns(){
   const labels={1:'1원 단위',10:'10원 단위',100:'100원 단위',1000:'1,000원 단위'};
@@ -521,9 +548,10 @@ function renderDB(){
    업체(라이브러리) — 데이터 헬퍼
    ============================================================ */
 function getCompany(k){return lib.companies[k];}
-function getActiveRound(k){const c=getCompany(k);return (c.rounds||[]).find(r=>r.id===c.activeId)||null;}
-function nextRoundLabel(c){let mx=0;(c.rounds||[]).forEach(r=>{const m=String(r.label||'').match(/(\d+)\s*차/);if(m)mx=Math.max(mx,parseInt(m[1]));});return (mx+1)+'차';}
-function addRound(k,select){const c=getCompany(k);const r={id:uid('round'),label:nextRoundLabel(c),configs:[],sales:[],salesMargin:0.68,salesRoundup:1,aggOpen:false};c.rounds.push(r);if(select!==false)c.activeId=r.id;persistLib();return r;}
+function getStream(k){const c=lib.companies[k];return c.brands?c.brands[c.activeBrand]:c;}
+function getActiveRound(k){const s=getStream(k);return (s.rounds||[]).find(r=>r.id===s.activeId)||null;}
+function nextRoundLabel(s){let mx=0;(s.rounds||[]).forEach(r=>{const m=String(r.label||'').match(/(\d+)\s*차/);if(m)mx=Math.max(mx,parseInt(m[1]));});return (mx+1)+'차';}
+function addRound(k,select){const s=getStream(k);const r={id:uid('round'),label:nextRoundLabel(s),configs:[],sales:[],salesMargin:0.68,salesRoundup:100,aggOpen:false};s.rounds.push(r);if(select!==false)s.activeId=r.id;persistLib();return r;}
 
 function configTotals(cfg){
   let tc=0,tp=0,cnt=0,missing=false;
@@ -550,22 +578,39 @@ function aggregate(round){
 function renderCompany(k){
   const meta=companyMeta(k);const c=getCompany(k);
   const box=document.getElementById('view-company');box.innerHTML='';
+  const brandInfo=c.brands?JP_BRANDS.find(b=>b.key===c.activeBrand):null;
   const head=document.createElement('header');head.className='page-head';
-  head.innerHTML='<div class="eyebrow">SET LIBRARY · 세트 저장소</div><h1><span class="flag">'+meta.flag+'</span>'+meta.name+'</h1><p class="sub">'+meta.desc+'</p>';
+  head.innerHTML='<div class="eyebrow">SET LIBRARY · 세트 저장소</div><h1><span class="flag">'+meta.flag+'</span>'+meta.name+(brandInfo?' <span style="color:var(--accent);">· '+brandInfo.name+'</span>':'')+'</h1><p class="sub">'+meta.desc+'</p>';
   box.appendChild(head);
 
-  if(!c.rounds||!c.rounds.length){
+  // 브랜드 토글 (일본라방: 메라블 / 루솔브)
+  if(c.brands){
+    const bb=document.createElement('div');bb.className='brand-bar';
+    const lbl=document.createElement('span');lbl.className='brand-label';lbl.textContent='브랜드';bb.appendChild(lbl);
+    JP_BRANDS.forEach(br=>{
+      const cnt=(c.brands[br.key].rounds||[]).length;
+      const p=document.createElement('button');p.className='brand-tab'+(c.activeBrand===br.key?' active':'');
+      p.innerHTML='<span class="bt-name">'+br.name+'<span class="bt-cnt">'+cnt+'차수</span></span><span class="bt-lines">'+br.lines+'</span>';
+      p.addEventListener('click',()=>{c.activeBrand=br.key;persistLib();renderCompany(k);});
+      bb.appendChild(p);
+    });
+    box.appendChild(bb);
+  }
+
+  const s=getStream(k);
+
+  if(!s.rounds||!s.rounds.length){
     const e=document.createElement('div');e.className='company-empty';
-    e.innerHTML='<div class="ce-emoji">'+meta.flag+'</div><div class="ce-title">아직 저장된 차수가 없습니다</div><div class="ce-desc">계산기에서 세트를 구성한 뒤 <b>「차수 저장」</b>으로 담거나,<br>아래 버튼으로 첫 차수를 만들어 시작하세요.</div>';
+    e.innerHTML='<div class="ce-emoji">'+meta.flag+'</div><div class="ce-title">아직 저장된 차수가 없습니다'+(brandInfo?' · '+brandInfo.name:'')+'</div><div class="ce-desc">계산기에서 세트를 구성한 뒤 <b>「차수 저장」</b>으로 담거나,<br>아래 버튼으로 첫 차수를 만들어 시작하세요.</div>';
     const btn=document.createElement('button');btn.className='round-next';btn.textContent='＋ 1차 만들기';
     btn.addEventListener('click',()=>{addRound(k);renderCompany(k);});
     e.appendChild(btn);box.appendChild(e);return;
   }
-  if(!getActiveRound(k))c.activeId=c.rounds[c.rounds.length-1].id;
+  if(!getActiveRound(k))s.activeId=s.rounds[s.rounds.length-1].id;
 
   // 차수 바
   const bar=document.createElement('div');bar.className='round-bar';
-  c.rounds.forEach(r=>{const p=document.createElement('button');p.className='round-pill'+(r.id===c.activeId?' active':'');p.textContent=r.label;p.addEventListener('click',()=>{c.activeId=r.id;persistLib();renderCompany(k);});bar.appendChild(p);});
+  s.rounds.forEach(r=>{const p=document.createElement('button');p.className='round-pill'+(r.id===s.activeId?' active':'');p.textContent=r.label;p.addEventListener('click',()=>{s.activeId=r.id;persistLib();renderCompany(k);});bar.appendChild(p);});
   const nx=document.createElement('button');nx.className='round-next';nx.textContent='＋ 다음차로 넘어가기';
   nx.addEventListener('click',()=>{const r=addRound(k);renderCompany(k);showToast(r.label+' 차수가 생성되었습니다');});
   bar.appendChild(nx);
@@ -580,7 +625,7 @@ function renderCompany(k){
   const bRen=document.createElement('button');bRen.className='icon-btn';bRen.textContent='차수 이름수정';
   bRen.addEventListener('click',()=>openModal({title:'차수 이름 수정',desc:'예: 1차, 2차 (3/15 방송) 등',value:round.label,confirmText:'변경',onConfirm:v=>{round.label=v;persistLib();renderCompany(k);}}));
   const bDel=document.createElement('button');bDel.className='icon-btn';bDel.textContent='차수 삭제';
-  bDel.addEventListener('click',()=>{if(!confirm('「'+round.label+'」 차수를 삭제할까요? (제안 구성·판매 실적 모두 삭제)'))return;c.rounds=c.rounds.filter(x=>x.id!==round.id);c.activeId=c.rounds.length?c.rounds[c.rounds.length-1].id:null;persistLib();renderCompany(k);showToast('차수가 삭제되었습니다');});
+  bDel.addEventListener('click',()=>{if(!confirm('「'+round.label+'」 차수를 삭제할까요? (제안 구성·판매 실적 모두 삭제)'))return;s.rounds=s.rounds.filter(x=>x.id!==round.id);s.activeId=s.rounds.length?s.rounds[s.rounds.length-1].id:null;persistLib();renderCompany(k);showToast('차수가 삭제되었습니다');});
   tools.append(bRen,bDel);rh.append(rt,tools);box.appendChild(rh);
 
   // ===== 집계 토글 (차수 바로 밑) =====
@@ -713,7 +758,7 @@ function loadCfgToCalc(cfg){
    ============================================================ */
 let cfgDraft=null;
 function openCfgModal(k,roundId,cfgId){
-  const round=(getCompany(k).rounds||[]).find(r=>r.id===roundId);if(!round)return;
+  const round=(getStream(k).rounds||[]).find(r=>r.id===roundId);if(!round)return;
   const existing=cfgId?round.configs.find(c=>c.id===cfgId):null;
   cfgDraft={k,roundId,cfgId,title:existing?existing.title:'',source:existing?existing.source:'internal',margin:existing?existing.margin:0.68,roundupUnit:existing?existing.roundupUnit:100,rows:existing?JSON.parse(JSON.stringify(existing.rows||[])):[{name:'',qty:''},{name:'',qty:''}]};
   document.getElementById('cfgModalTitle').textContent=existing?'세트 구성 수정':'세트 구성 추가';
@@ -744,7 +789,7 @@ document.getElementById('cfgConfirm').addEventListener('click',()=>{
   let m=parseFloat(document.getElementById('cfgMargin').value);if(isNaN(m))m=0.68;m=Math.min(Math.max(m,0),0.99);
   const cleanRows=cfgDraft.rows.filter(r=>(r.name||'').trim()).map(r=>({name:r.name.trim(),qty:r.qty}));
   if(!cleanRows.length){showToast('품목을 최소 1개 입력해주세요');return;}
-  const round=(getCompany(cfgDraft.k).rounds||[]).find(r=>r.id===cfgDraft.roundId);if(!round){document.getElementById('cfgModal').hidden=true;return;}
+  const round=(getStream(cfgDraft.k).rounds||[]).find(r=>r.id===cfgDraft.roundId);if(!round){document.getElementById('cfgModal').hidden=true;return;}
   if(cfgDraft.cfgId){const cfg=round.configs.find(c=>c.id===cfgDraft.cfgId);if(cfg){cfg.title=title;cfg.source=cfgDraft.source;cfg.margin=m;cfg.roundupUnit=cfgDraft.roundupUnit;cfg.rows=cleanRows;}}
   else{round.configs.push({id:uid('cfg'),title,source:cfgDraft.source,margin:m,roundupUnit:cfgDraft.roundupUnit,rows:cleanRows});}
   persistLib();document.getElementById('cfgModal').hidden=true;const kk=cfgDraft.k;cfgDraft=null;renderCompany(kk);showToast('구성이 저장되었습니다');
@@ -760,34 +805,45 @@ function openSaveRoundModal(){
   const csel=document.getElementById('srCompany');csel.innerHTML='';
   COMPANIES.forEach(c=>{const o=document.createElement('option');o.value=c.key;o.textContent=c.flag+' '+c.name;csel.appendChild(o);});
   csel.value=(currentView!=='calc'?currentView:'jp');
+  syncSrBrand();
   populateSrRounds();
   document.getElementById('srTitle').value='제안 구성';
   srSourceVal='internal';document.querySelectorAll('#srSource .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.src==='internal'));
   document.getElementById('saveRoundModal').hidden=false;
 }
-function populateSrRounds(){
-  const k=document.getElementById('srCompany').value;const rsel=document.getElementById('srRound');rsel.innerHTML='';
-  const c=getCompany(k);
-  (c.rounds||[]).forEach(r=>{const o=document.createElement('option');o.value=r.id;o.textContent=r.label+' ('+(r.configs||[]).length+'개 구성)';rsel.appendChild(o);});
-  const o2=document.createElement('option');o2.value='__new__';o2.textContent='＋ 새 차수 생성';rsel.appendChild(o2);
-  rsel.value=c.activeId&&c.rounds.some(r=>r.id===c.activeId)?c.activeId:(c.rounds.length?c.rounds[c.rounds.length-1].id:'__new__');
+function syncSrBrand(){
+  const k=document.getElementById('srCompany').value;const c=getCompany(k);const row=document.getElementById('srBrandRow');
+  if(c.brands){row.hidden=false;document.getElementById('srBrand').value=c.activeBrand||'merable';}
+  else{row.hidden=true;}
 }
-document.getElementById('srCompany').addEventListener('change',populateSrRounds);
+function srStream(){const k=document.getElementById('srCompany').value;const c=getCompany(k);return c.brands?c.brands[document.getElementById('srBrand').value]:c;}
+function populateSrRounds(){
+  const rsel=document.getElementById('srRound');rsel.innerHTML='';
+  const s=srStream();
+  (s.rounds||[]).forEach(r=>{const o=document.createElement('option');o.value=r.id;o.textContent=r.label+' ('+(r.configs||[]).length+'개 구성)';rsel.appendChild(o);});
+  const o2=document.createElement('option');o2.value='__new__';o2.textContent='＋ 새 차수 생성';rsel.appendChild(o2);
+  rsel.value=s.activeId&&s.rounds.some(r=>r.id===s.activeId)?s.activeId:(s.rounds.length?s.rounds[s.rounds.length-1].id:'__new__');
+}
+document.getElementById('srCompany').addEventListener('change',()=>{syncSrBrand();populateSrRounds();});
+document.getElementById('srBrand').addEventListener('change',populateSrRounds);
 document.getElementById('srSource').addEventListener('click',e=>{const b=e.target.closest('.seg-btn');if(!b)return;srSourceVal=b.dataset.src;document.querySelectorAll('#srSource .seg-btn').forEach(x=>x.classList.toggle('active',x===b));});
 document.getElementById('srCancel').addEventListener('click',()=>document.getElementById('saveRoundModal').hidden=true);
 document.getElementById('saveRoundModal').addEventListener('click',e=>{if(e.target.id==='saveRoundModal')document.getElementById('saveRoundModal').hidden=true;});
 document.getElementById('srConfirm').addEventListener('click',()=>{
   const k=document.getElementById('srCompany').value;
-  let roundId=document.getElementById('srRound').value;
   const c=getCompany(k);
+  if(c.brands){c.activeBrand=document.getElementById('srBrand').value;}
+  const s=getStream(k);
+  let roundId=document.getElementById('srRound').value;
   let round;
-  if(roundId==='__new__'){round=addRound(k,false);}else{round=c.rounds.find(r=>r.id===roundId);}
+  if(roundId==='__new__'){round=addRound(k,false);}else{round=s.rounds.find(r=>r.id===roundId);}
   if(!round){showToast('차수를 확인해주세요');return;}
   const title=document.getElementById('srTitle').value.trim()||'제안 구성';
   round.configs.push({id:uid('cfg'),title,source:srSourceVal,margin,roundupUnit,rows:rows.filter(r=>r.name).map(r=>({name:r.name,qty:r.qty}))});
-  c.activeId=round.id;persistLib();
+  s.activeId=round.id;persistLib();
   document.getElementById('saveRoundModal').hidden=true;
-  showToast(companyMeta(k).name+' '+round.label+'에 저장되었습니다');
+  const brandTxt=c.brands?(' '+JP_BRANDS.find(b=>b.key===c.activeBrand).name):'';
+  showToast(companyMeta(k).name+brandTxt+' '+round.label+'에 저장되었습니다');
   switchView(k);
 });
 
