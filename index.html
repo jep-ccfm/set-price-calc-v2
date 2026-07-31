@@ -485,7 +485,7 @@ async function syncPull(){
   if(!libR.ok||!dbR.ok){setSync('error');return;}
   if(dbR.row&&dbR.row.payload&&Object.keys(dbR.row.payload).length){costDB=dbR.row.payload;sSet('costDB',costDB);}
   else if(Object.keys(costDB).length){pushCostDBSoon();}
-  if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sSet('libraryV2',lib);}
+  if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sortAllStreams();sSet('libraryV2',lib);}
   else if(hasLibData(lib)){pushLibSoon();}
   rerenderAll();
   setSync('synced');
@@ -499,6 +499,7 @@ function loadState(){
   if(s){margin=typeof s.margin==='number'?s.margin:0.68;rows=(s.rows&&s.rows.length)?s.rows.map(r=>({id:rowIdSeq++,name:r.name||'',qty:r.qty||''})):[newRow(),newRow()];if(s.roundupUnit===100||s.roundupUnit===1000){roundupUnit=s.roundupUnit;}if(s.setRoundUnit===100||s.setRoundUnit===1000){setRoundUnit=s.setRoundUnit;}}
   else rows=[newRow(),newRow()];
   document.getElementById('saveState').textContent='이 브라우저에 자동 저장됩니다';
+  sortAllStreams();
   refreshDatalist();render();updateBadges();
   syncPull();
 }
@@ -591,8 +592,11 @@ function renderDB(){
 function getCompany(k){return lib.companies[k];}
 function getStream(k){const c=lib.companies[k];return c.brands?c.brands[c.activeBrand]:c;}
 function getActiveRound(k){const s=getStream(k);return (s.rounds||[]).find(r=>r.id===s.activeId)||null;}
-function nextRoundLabel(s){let mx=0;(s.rounds||[]).forEach(r=>{const m=String(r.label||'').match(/(\d+)\s*차/);if(m)mx=Math.max(mx,parseInt(m[1]));});return (mx+1)+'차';}
-function addRound(k,select){const s=getStream(k);const r={id:uid('round'),label:nextRoundLabel(s),configs:[],sales:[],salesMargin:0.68,salesRoundup:100,aggOpen:false};s.rounds.push(r);if(select!==false)s.activeId=r.id;persistLib();return r;}
+function roundNum(label){const m=String(label||'').match(/(\d+)\s*차/)||String(label||'').match(/(\d+)/);return m?parseInt(m[1]):null;}
+function sortRounds(s){if(!s||!s.rounds)return;s.rounds.sort((a,b)=>{const na=roundNum(a.label),nb=roundNum(b.label);if(na===null&&nb===null)return 0;if(na===null)return 1;if(nb===null)return -1;return na-nb;});}
+function sortAllStreams(){if(!lib||!lib.companies)return;for(const k in lib.companies){const c=lib.companies[k];if(c.brands)Object.values(c.brands).forEach(sortRounds);else sortRounds(c);}}
+function nextRoundLabel(s){let mx=0;(s.rounds||[]).forEach(r=>{const n=roundNum(r.label);if(n!==null)mx=Math.max(mx,n);});return (mx+1)+'차';}
+function addRound(k,select){const s=getStream(k);const r={id:uid('round'),label:nextRoundLabel(s),configs:[],sales:[],salesMargin:0.68,salesRoundup:100,aggOpen:false};s.rounds.push(r);sortRounds(s);if(select!==false)s.activeId=r.id;persistLib();return r;}
 
 function configTotals(cfg){
   let tc=0,tp=0,cnt=0,missing=false;
@@ -665,7 +669,7 @@ function renderCompany(k){
   const rt=document.createElement('div');rt.className='rh-title';rt.textContent=round.label;
   const tools=document.createElement('div');tools.className='rh-tools';
   const bRen=document.createElement('button');bRen.className='icon-btn';bRen.textContent='차수 이름수정';
-  bRen.addEventListener('click',()=>openModal({title:'차수 이름 수정',desc:'예: 1차, 2차 (3/15 방송) 등',value:round.label,confirmText:'변경',onConfirm:v=>{round.label=v;persistLib();renderCompany(k);}}));
+  bRen.addEventListener('click',()=>openModal({title:'차수 이름 수정',desc:'예: 1차, 2차 (3/15 방송) 등 — 숫자를 인식해 자동 정렬됩니다',value:round.label,confirmText:'변경',onConfirm:v=>{round.label=v;sortRounds(s);persistLib();renderCompany(k);}}));
   const bDel=document.createElement('button');bDel.className='icon-btn';bDel.textContent='차수 삭제';
   bDel.addEventListener('click',()=>{if(!confirm('「'+round.label+'」 차수를 삭제할까요? (제안 구성·판매 실적 모두 삭제)'))return;s.rounds=s.rounds.filter(x=>x.id!==round.id);s.activeId=s.rounds.length?s.rounds[s.rounds.length-1].id:null;persistLib();renderCompany(k);showToast('차수가 삭제되었습니다');});
   tools.append(bRen,bDel);rh.append(rt,tools);box.appendChild(rh);
