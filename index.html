@@ -25,6 +25,10 @@
   .nav-item .badge{margin-left:auto;background:rgba(255,255,255,.18);color:#fff;font-size:11px;font-weight:700;font-family:var(--mono);padding:1px 7px;border-radius:10px;}
   .nav-item.active .badge{background:rgba(0,0,0,.22);}
   .side-foot{margin-top:auto;font-size:10.5px;color:#7A83A0;line-height:1.5;padding:16px 8px 0;}
+  .sync-btn{width:100%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:#fff;font-size:12px;font-weight:700;padding:8px;border-radius:8px;cursor:pointer;font-family:inherit;}
+  .sync-btn:hover{background:rgba(255,255,255,.2);}
+  .sync-state-line{font-size:11px;color:#AEB6D0;margin-top:7px;font-weight:600;}
+  .side-note{margin-top:9px;}
 
   .content{flex:1;min-width:0;padding:28px 22px 60px;}
   .wrap{max-width:960px;margin:0 auto;}
@@ -220,7 +224,11 @@
       <button class="nav-item" data-view="hk"><span class="ic">🇭🇰</span>홍콩 라이브 커머스<span class="badge" id="badge-hk">0</span></button>
       <button class="nav-item" data-view="ready"><span class="ic">📦</span>레디영<span class="badge" id="badge-ready">0</span></button>
     </nav>
-    <div class="side-foot">데이터는 이 브라우저에만 저장되며 다른 사람에게 공유되지 않습니다.</div>
+    <div class="side-foot">
+      <button id="syncBtn" class="sync-btn" type="button">↻ 최신 불러오기</button>
+      <div id="syncState" class="sync-state-line">동기화 준비 중…</div>
+      <div class="side-note">라이브러리(차수·구성·판매집계)는 <b>팀 공용 데이터</b>로, 저장 시 자동 공유됩니다. 계산기 입력값은 개인용입니다.</div>
+    </div>
   </aside>
 
   <main class="content">
@@ -347,7 +355,7 @@
           </div>
         </div>
         <div class="save-state" id="saveState">이 브라우저에 자동 저장됩니다</div>
-        <div class="footnote">데이터는 이 브라우저(계정)에만 저장되며 다른 사람에게 공유되지 않습니다.</div>
+        <div class="footnote">계산기 입력값은 개인(이 브라우저)용입니다. 라이브러리 저장 내용은 팀 공용으로 공유됩니다.</div>
       </div>
 
       <!-- ========== 업체(라이브러리) 뷰 ========== -->
@@ -457,6 +465,32 @@ const PFX='setPriceCalc:';
 function sGet(k){try{const v=localStorage.getItem(PFX+k);return v?JSON.parse(v):null;}catch(e){return null;}}
 function sSet(k,v){try{localStorage.setItem(PFX+k,JSON.stringify(v));return true;}catch(e){return false;}}
 
+/* ===== 팀 공용 저장소 (Supabase) 동기화 ===== */
+const SB_URL='https://yehefdnyikbogimmjddh.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InllaGVmZG55aWtib2dpbW1qZGRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4NzQ4MDMsImV4cCI6MjEwMDQ1MDgwM30.vsouWuZ9coF8gkBLs1GtMqjnUmodVNF5q2XzNeA2cpg';
+const SB_T=SB_URL+'/rest/v1/set_calc_state';
+const SB_H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
+let pendingPush=0,libPushT=null,dbPushT=null;
+function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)'};el.textContent=m[s]||s;}
+async function sbGet(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=payload',{headers:SB_H});if(!r.ok)return{ok:false,row:null};const a=await r.json();return{ok:true,row:(a&&a.length?a[0]:null)};}catch(e){return{ok:false,row:null};}}
+async function sbUpsert(id,payload){try{const r=await fetch(SB_T,{method:'POST',headers:{...SB_H,Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id,payload,updated_at:new Date().toISOString()})});return r.ok;}catch(e){return false;}}
+function pushLibSoon(){clearTimeout(libPushT);setSync('saving');pendingPush++;libPushT=setTimeout(async()=>{const ok=await sbUpsert('libraryV2',lib);pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');},600);}
+function pushCostDBSoon(){clearTimeout(dbPushT);setSync('saving');pendingPush++;dbPushT=setTimeout(async()=>{const ok=await sbUpsert('costDB',costDB);pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');},600);}
+function hasLibData(l){return Object.values((l&&l.companies)||{}).some(c=>c.brands?Object.values(c.brands).some(b=>(b.rounds||[]).length):(c.rounds||[]).length);}
+function ensureCompanies(){COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]=(c.key==='jp'?{brands:{merable:{rounds:[],activeId:null},lusolve:{rounds:[],activeId:null}},activeBrand:'merable'}:{rounds:[],activeId:null});});}
+function rerenderAll(){refreshDatalist();render();updateBadges();if(currentView!=='calc')renderCompany(currentView);}
+async function syncPull(){
+  setSync('pull');
+  const [libR,dbR]=await Promise.all([sbGet('libraryV2'),sbGet('costDB')]);
+  if(!libR.ok||!dbR.ok){setSync('error');return;}
+  if(dbR.row&&dbR.row.payload&&Object.keys(dbR.row.payload).length){costDB=dbR.row.payload;sSet('costDB',costDB);}
+  else if(Object.keys(costDB).length){pushCostDBSoon();}
+  if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sSet('libraryV2',lib);}
+  else if(hasLibData(lib)){pushLibSoon();}
+  rerenderAll();
+  setSync('synced');
+}
+
 function loadState(){
   const db=sGet('costDB');costDB=db||{...DEFAULT_DB};
   const L=sGet('libraryV2');
@@ -466,10 +500,11 @@ function loadState(){
   else rows=[newRow(),newRow()];
   document.getElementById('saveState').textContent='이 브라우저에 자동 저장됩니다';
   refreshDatalist();render();updateBadges();
+  syncPull();
 }
 let saveT=null;
 function persist(){clearTimeout(saveT);saveT=setTimeout(()=>{const ok=sSet('costDB',costDB)&&sSet('currentSet',{margin,roundupUnit,setRoundUnit,rows:rows.map(r=>({name:r.name,qty:r.qty}))});document.getElementById('saveState').textContent=ok?'저장됨 · '+new Date().toLocaleTimeString('ko-KR'):'저장 실패';},300);}
-function persistLib(){sSet('libraryV2',lib);updateBadges();}
+function persistLib(){sSet('libraryV2',lib);updateBadges();pushLibSoon();}
 function migrateJp(){
   const jp=lib.companies.jp;if(!jp)return;
   if(!jp.brands){jp.brands={merable:{rounds:jp.rounds||[],activeId:jp.activeId||null},lusolve:{rounds:[],activeId:null}};jp.activeBrand='merable';delete jp.rounds;delete jp.activeId;}
@@ -541,11 +576,11 @@ function renderDB(){
   dbNames().forEach(name=>{
     const d=document.createElement('div');d.className='db-row';
     const ni=document.createElement('input');ni.type='text';ni.value=name;
-    ni.addEventListener('change',e=>{const nn=e.target.value.trim();if(!nn||nn===name){e.target.value=name;return;}const co=costDB[name];delete costDB[name];costDB[nn]=co;rows.forEach(r=>{if(r.name===name)r.name=nn;});renderRows();renderResults();renderDB();refreshDatalist();persist();});
+    ni.addEventListener('change',e=>{const nn=e.target.value.trim();if(!nn||nn===name){e.target.value=name;return;}const co=costDB[name];delete costDB[name];costDB[nn]=co;rows.forEach(r=>{if(r.name===name)r.name=nn;});renderRows();renderResults();renderDB();refreshDatalist();persist();pushCostDBSoon();});
     const ci=document.createElement('input');ci.type='number';ci.className='cost';ci.value=costDB[name];
-    ci.addEventListener('input',e=>{costDB[name]=parseFloat(e.target.value)||0;renderRows();renderResults();persist();});
+    ci.addEventListener('input',e=>{costDB[name]=parseFloat(e.target.value)||0;renderRows();renderResults();persist();pushCostDBSoon();});
     const db=document.createElement('button');db.className='del-btn';db.textContent='✕';
-    db.addEventListener('click',()=>{delete costDB[name];rows.forEach(r=>{if(r.name===name)r.name='';});renderRows();renderResults();renderDB();refreshDatalist();persist();});
+    db.addEventListener('click',()=>{delete costDB[name];rows.forEach(r=>{if(r.name===name)r.name='';});renderRows();renderResults();renderDB();refreshDatalist();persist();pushCostDBSoon();});
     d.append(ni,ci,db);c.appendChild(d);
   });
 }
@@ -877,7 +912,7 @@ document.getElementById('marginInput').addEventListener('input',e=>{let v=parseF
 document.getElementById('addRowBtn').addEventListener('click',()=>{rows.push(newRow());renderRows();renderResults();persist();});
 document.getElementById('resetBtn').addEventListener('click',()=>{rows=[newRow(),newRow()];renderRows();renderResults();persist();showToast('세트 구성이 초기화되었습니다');});
 document.getElementById('dbToggle').addEventListener('click',()=>{const b=document.getElementById('dbBody');const t=document.getElementById('dbToggle');b.classList.toggle('open');t.classList.toggle('open');t.querySelector('.chev').textContent=b.classList.contains('open')?'▼':'▶';});
-document.getElementById('newItemAddBtn').addEventListener('click',()=>{const ni=document.getElementById('newItemName');const ci=document.getElementById('newItemCost');const name=ni.value.trim();const cost=parseFloat(ci.value);if(!name||isNaN(cost)){showToast('품목명과 원가를 입력해주세요');return;}costDB[name]=cost;ni.value='';ci.value='';renderRows();renderResults();renderDB();refreshDatalist();persist();showToast('품목이 추가되었습니다');});
+document.getElementById('newItemAddBtn').addEventListener('click',()=>{const ni=document.getElementById('newItemName');const ci=document.getElementById('newItemCost');const name=ni.value.trim();const cost=parseFloat(ci.value);if(!name||isNaN(cost)){showToast('품목명과 원가를 입력해주세요');return;}costDB[name]=cost;ni.value='';ci.value='';renderRows();renderResults();renderDB();refreshDatalist();persist();pushCostDBSoon();showToast('품목이 추가되었습니다');});
 document.getElementById('saveRoundBtn').addEventListener('click',openSaveRoundModal);
 document.getElementById('copyBtn').addEventListener('click',()=>{
   const{totalCost:tc,totalPrice:tp}=computeTotals();const ma=tp-tc;const am=tp?ma/tp:0;
@@ -889,6 +924,8 @@ document.getElementById('copyBtn').addEventListener('click',()=>{
 });
 let toastT=null;
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2200);}
+document.getElementById('syncBtn').addEventListener('click',()=>{syncPull().then(()=>showToast('최신 공용 데이터를 불러왔습니다'));});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&pendingPush===0)syncPull();});
 loadState();
 </script>
 </body>
