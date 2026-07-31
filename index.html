@@ -96,6 +96,22 @@
   .btn-accent{background:var(--accent);color:#fff;}
   .btn-accent:hover{background:#A24E69;}
   .btn-sm{padding:6px 11px;font-size:12px;}
+  /* ===== 차수 플로팅 메모 ===== */
+  .memo-dock{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:90;display:flex;align-items:flex-start;}
+  .memo-tab{background:var(--accent);color:#fff;border:none;cursor:pointer;font-family:inherit;font-weight:800;font-size:12px;padding:12px 8px;border-radius:10px 0 0 10px;box-shadow:-2px 2px 10px rgba(27,42,74,.18);display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;}
+  .memo-tab:hover{background:#A24E69;}
+  .memo-tab-ic{font-size:16px;}
+  .memo-tab-label{writing-mode:vertical-rl;letter-spacing:.05em;}
+  .memo-dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:#FFD84D;border:1.5px solid #fff;}
+  .memo-panel{width:290px;max-width:80vw;background:#fff;border:1px solid var(--line);border-right:none;border-radius:12px 0 0 12px;box-shadow:-6px 4px 24px rgba(27,42,74,.22);padding:14px;}
+  .memo-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+  .memo-head #memoTitle{font-size:13px;font-weight:800;color:var(--ink);}
+  .memo-x{background:none;border:none;color:var(--ink-soft);font-size:15px;cursor:pointer;border-radius:6px;padding:2px 6px;}
+  .memo-x:hover{background:#F2E5E5;color:var(--warn);}
+  #memoText{width:100%;height:200px;resize:vertical;border:1px solid #D6D2C8;border-radius:8px;padding:9px 10px;font-size:13px;font-family:inherit;line-height:1.5;color:var(--ink);}
+  #memoText:focus{outline:2px solid var(--accent-soft);border-color:var(--accent);}
+  .memo-foot{font-size:10.5px;color:var(--ink-soft);margin-top:7px;text-align:right;}
+  @media (max-width:760px){.memo-panel{width:240px;}.memo-tab-label{display:none;}}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--ink);color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:120;}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   .save-state{font-size:11px;color:var(--ink-soft);text-align:right;margin-top:8px;}
@@ -136,13 +152,18 @@
   .agg-body{display:none;padding:0 16px 16px;}
   .agg.open .agg-body{display:block;}
   .agg-sub{font-size:12px;font-weight:800;color:var(--ink-soft);margin:14px 0 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .set-row{display:grid;grid-template-columns:1fr 96px 110px;gap:10px;margin-bottom:7px;align-items:center;}
-  .set-head span{font-size:10.5px;color:var(--ink-soft);font-weight:700;}
-  .set-name{font-size:13px;line-height:1.3;}
-  .set-name b{font-weight:800;}
-  .set-name .set-unit{display:block;font-size:10.5px;color:var(--ink-soft);font-family:var(--mono);margin-top:1px;}
-  .set-row input.q{padding:7px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:14px;font-family:var(--mono);color:var(--input-blue);font-weight:700;text-align:center;}
-  .set-rev{font-family:var(--mono);text-align:right;font-weight:700;color:var(--good);font-size:13px;}
+  .set-block{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 12px 10px;margin-bottom:10px;}
+  .set-block-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:9px;flex-wrap:wrap;}
+  .set-block-head .sb-name b{font-size:13.5px;font-weight:800;}
+  .set-block-head .set-unit{margin-left:6px;font-size:10.5px;color:var(--ink-soft);font-family:var(--mono);}
+  .set-block-rev{font-family:var(--mono);font-weight:800;color:var(--good);font-size:12.5px;white-space:nowrap;}
+  .date-rows{display:flex;flex-direction:column;gap:6px;}
+  .date-row{display:grid;grid-template-columns:1fr 90px 30px;gap:8px;align-items:center;}
+  .date-head span{font-size:10.5px;color:var(--ink-soft);font-weight:700;}
+  .date-row input.d{padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:13px;font-family:inherit;color:var(--ink);}
+  .date-row input.q{padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:14px;font-family:var(--mono);color:var(--input-blue);font-weight:700;text-align:center;}
+  .add-date{margin-top:9px;background:var(--accent-soft);color:var(--accent);border:none;padding:6px 12px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
+  .add-date:hover{background:#E7C9D2;}
   .mini-margin{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 12px;padding:10px;background:#fff;border:1px dashed var(--line);border-radius:9px;}
   .mini-margin label{font-size:12px;font-weight:700;color:var(--ink-soft);}
   .mini-margin input[type=number]{width:74px;padding:5px 8px;font-size:13px;font-weight:700;border:1.5px solid var(--input-blue);border-radius:7px;color:var(--input-blue);font-family:var(--mono);}
@@ -439,6 +460,14 @@
   </div>
 </div>
 
+<div id="memoDock" class="memo-dock" hidden>
+  <button id="memoTab" class="memo-tab" type="button" title="차수 메모"><span class="memo-tab-ic">📝</span><span class="memo-tab-label">메모</span><span id="memoDot" class="memo-dot" hidden></span></button>
+  <div id="memoPanel" class="memo-panel" hidden>
+    <div class="memo-head"><span id="memoTitle">메모</span><button id="memoClose" class="memo-x" type="button">✕</button></div>
+    <textarea id="memoText" placeholder="이 차수 메모 — 발주 특이사항, 업체 요청, 정산 참고 등 (팀 공유·자동 저장)"></textarea>
+    <div class="memo-foot">이 차수에만 붙는 메모 · 팀 공유</div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -607,9 +636,14 @@ function configTotals(cfg){
   const price=manual!==null?manual:tp;
   return{tc,tp,cnt,missing,margin:m,roundupUnit:ru,manual,price,actualMargin:price?(price-tc)/price:0};
 }
+function saleEntries(v){
+  if(Array.isArray(v))return v;
+  if(v!=null&&v!==''&&!isNaN(parseFloat(v)))return [{date:'',qty:v}];
+  return [];
+}
 function aggregate(round){
   const configs=round.configs||[];const setSales=round.setSales||{};
-  const lines=configs.map(cfg=>{const ct=configTotals(cfg);const qty=parseFloat(setSales[cfg.id])||0;return{id:cfg.id,title:cfg.title,qty,price:ct.price,manual:ct.manual!==null,rev:qty*ct.price,cfg};});
+  const lines=configs.map(cfg=>{const ct=configTotals(cfg);const entries=saleEntries(setSales[cfg.id]);const qty=entries.reduce((a,e)=>a+(parseFloat(e.qty)||0),0);return{id:cfg.id,title:cfg.title,qty,price:ct.price,manual:ct.manual!==null,rev:qty*ct.price,cfg,entries};});
   const itemMap={};
   lines.forEach(l=>{if(!l.qty)return;(l.cfg.rows||[]).forEach(r=>{if(!r.name)return;const iq=(parseFloat(r.qty)||0)*l.qty;itemMap[r.name]=(itemMap[r.name]||0)+iq;});});
   const items=Object.keys(itemMap).map(name=>({name,qty:itemMap[name]})).sort((a,b)=>b.qty-a.qty||a.name.localeCompare(b.name,'ko'));
@@ -650,7 +684,7 @@ function renderCompany(k){
     e.innerHTML='<div class="ce-emoji">'+meta.flag+'</div><div class="ce-title">아직 저장된 차수가 없습니다'+(brandInfo?' · '+brandInfo.name:'')+'</div><div class="ce-desc">계산기에서 세트를 구성한 뒤 <b>「차수 저장」</b>으로 담거나,<br>아래 버튼으로 첫 차수를 만들어 시작하세요.</div>';
     const btn=document.createElement('button');btn.className='round-next';btn.textContent='＋ 1차 만들기';
     btn.addEventListener('click',()=>{addRound(k);renderCompany(k);});
-    e.appendChild(btn);box.appendChild(e);return;
+    e.appendChild(btn);box.appendChild(e);updateMemoDock();return;
   }
   if(!getActiveRound(k))s.activeId=s.rounds[s.rounds.length-1].id;
 
@@ -691,6 +725,7 @@ function renderCompany(k){
     round.configs.forEach(cfg=>grid.appendChild(buildCfgCard(k,round,cfg)));
     box.appendChild(grid);
   }
+  updateMemoDock();
 }
 
 function buildAgg(k,round){
@@ -709,17 +744,23 @@ function buildAgg(k,round){
   }
 
   round.setSales=round.setSales||{};
-  const sh=document.createElement('div');sh.className='agg-sub';sh.textContent='세트별 판매 수량 입력';body.appendChild(sh);
+  const sh=document.createElement('div');sh.className='agg-sub';sh.textContent='세트별 판매 수량 입력 (발주일별)';body.appendChild(sh);
   const inWrap=document.createElement('div');
-  const shd=document.createElement('div');shd.className='set-row set-head';shd.innerHTML='<span>세트 (공급단가)</span><span style="text-align:center;">판매 세트 수</span><span style="text-align:right;">매출액</span>';inWrap.appendChild(shd);
   round.configs.forEach(cfg=>{
-    const ct=configTotals(cfg);const qty=parseFloat(round.setSales[cfg.id])||0;
-    const row=document.createElement('div');row.className='set-row';row.dataset.cfg=cfg.id;
-    const nm=document.createElement('div');nm.className='set-name';nm.innerHTML='<b>'+(cfg.title||'제안 구성')+'</b><span class="set-unit">'+fmt(ct.price)+'원'+(ct.manual!==null?' · 수기':'')+'</span>';
-    const qi=document.createElement('input');qi.type='number';qi.className='q';qi.min='0';qi.placeholder='0';qi.value=(round.setSales[cfg.id]!=null?round.setSales[cfg.id]:'');
-    qi.addEventListener('input',e=>{round.setSales[cfg.id]=e.target.value;persistLib();updateAgg(k,round,agg);});
-    const rev=document.createElement('div');rev.className='set-rev';rev.textContent=fmt(qty*ct.price)+'원';
-    row.append(nm,qi,rev);inWrap.appendChild(row);
+    const ct=configTotals(cfg);const entries=normEntries(round,cfg.id);
+    const setQty=entries.reduce((a,e)=>a+(parseFloat(e.qty)||0),0);
+    const block=document.createElement('div');block.className='set-block';block.dataset.cfg=cfg.id;
+    const bh=document.createElement('div');bh.className='set-block-head';
+    bh.innerHTML='<div class="sb-name"><b>'+(cfg.title||'제안 구성')+'</b><span class="set-unit">'+fmt(ct.price)+'원/세트'+(ct.manual!==null?' · 수기':'')+'</span></div><div class="set-block-rev">'+fmt(setQty)+'세트 · '+fmt(setQty*ct.price)+'원</div>';
+    block.appendChild(bh);
+    const dr=document.createElement('div');dr.className='date-rows';
+    const dh=document.createElement('div');dh.className='date-row date-head';dh.innerHTML='<span>발주일</span><span style="text-align:center;">판매 세트 수</span><span></span>';dr.appendChild(dh);
+    entries.forEach((en,idx)=>dr.appendChild(buildDateRow(k,round,cfg,idx,agg)));
+    block.appendChild(dr);
+    const addBtn=document.createElement('button');addBtn.className='add-date';addBtn.textContent='＋ 발주일 추가';
+    addBtn.addEventListener('click',()=>{normEntries(round,cfg.id).push({date:'',qty:''});persistLib();renderCompany(k);});
+    block.appendChild(addBtn);
+    inWrap.appendChild(block);
   });
   body.appendChild(inWrap);
 
@@ -743,11 +784,29 @@ function renderAggSummary(box,round){
   }
   const tot=document.createElement('div');tot.className='agg-total';tot.innerHTML='<span>총 판매 <span class="num-mono">'+fmt(ag.totalSets)+'</span>세트</span><span>총 매출액 <span class="num-mono">'+fmt(ag.totalRev)+'</span>원</span>';box.appendChild(tot);
 }
+function normEntries(round,cfgId){
+  round.setSales=round.setSales||{};
+  let v=round.setSales[cfgId];
+  if(!Array.isArray(v)){v=(v!=null&&v!==''&&!isNaN(parseFloat(v)))?[{date:'',qty:String(v)}]:[];round.setSales[cfgId]=v;}
+  if(!v.length)v.push({date:'',qty:''});
+  return v;
+}
+function buildDateRow(k,round,cfg,idx,agg){
+  const en=round.setSales[cfg.id][idx];
+  const d=document.createElement('div');d.className='date-row';
+  const di=document.createElement('input');di.type='date';di.className='d';di.value=en.date||'';
+  di.addEventListener('change',e=>{en.date=e.target.value;persistLib();});
+  const qi=document.createElement('input');qi.type='number';qi.className='q';qi.min='0';qi.placeholder='0';qi.value=en.qty||'';
+  qi.addEventListener('input',e=>{en.qty=e.target.value;persistLib();updateAgg(k,round,agg);});
+  const del=document.createElement('button');del.className='del-btn';del.textContent='✕';
+  del.addEventListener('click',()=>{round.setSales[cfg.id].splice(idx,1);persistLib();renderCompany(k);});
+  d.append(di,qi,del);return d;
+}
 function updateAgg(k,round,aggEl){
   const ag=aggregate(round);
   if(!aggEl)return;
   const s=aggEl.querySelector('.ah-sum');if(s)s.textContent='총 '+fmt(ag.totalSets)+'세트 · 매출 '+fmt(ag.totalRev)+'원';
-  aggEl.querySelectorAll('.set-row[data-cfg]').forEach(row=>{const cfg=(round.configs||[]).find(c=>c.id===row.dataset.cfg);if(!cfg)return;const ct=configTotals(cfg);const qty=parseFloat(round.setSales[cfg.id])||0;const rev=row.querySelector('.set-rev');if(rev)rev.textContent=fmt(qty*ct.price)+'원';});
+  ag.lines.forEach(l=>{const el=aggEl.querySelector('.set-block[data-cfg="'+l.id+'"] .set-block-rev');if(el)el.textContent=fmt(l.qty)+'세트 · '+fmt(l.rev)+'원';});
   const box=aggEl.querySelector('#aggSummary');if(box)renderAggSummary(box,round);
 }
 
@@ -903,9 +962,28 @@ function switchView(view){
   const cv=document.getElementById('view-company');
   if(view==='calc'){cv.hidden=true;}
   else{cv.hidden=false;renderCompany(view);}
+  updateMemoDock();
   window.scrollTo(0,0);
 }
 document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
+
+/* ===== 차수 플로팅 메모 ===== */
+let memoOpen=(localStorage.getItem('setPriceCalc:memoOpen')==='1');
+function memoCtx(){if(currentView==='calc')return null;const round=getActiveRound(currentView);return round?{k:currentView,round}:null;}
+function updateMemoDock(){
+  const dock=document.getElementById('memoDock');const ctx=memoCtx();
+  if(!ctx){dock.hidden=true;return;}
+  dock.hidden=false;
+  const meta=companyMeta(ctx.k);const c=getCompany(ctx.k);const brand=c.brands?(' · '+JP_BRANDS.find(b=>b.key===c.activeBrand).name):'';
+  document.getElementById('memoTitle').textContent=meta.name+brand+' · '+ctx.round.label+' 메모';
+  const ta=document.getElementById('memoText');if(document.activeElement!==ta)ta.value=ctx.round.memo||'';
+  document.getElementById('memoDot').hidden=!(ctx.round.memo&&ctx.round.memo.trim());
+  document.getElementById('memoTab').hidden=memoOpen;
+  document.getElementById('memoPanel').hidden=!memoOpen;
+}
+document.getElementById('memoTab').addEventListener('click',()=>{memoOpen=true;localStorage.setItem('setPriceCalc:memoOpen','1');updateMemoDock();document.getElementById('memoText').focus();});
+document.getElementById('memoClose').addEventListener('click',()=>{memoOpen=false;localStorage.setItem('setPriceCalc:memoOpen','0');updateMemoDock();});
+document.getElementById('memoText').addEventListener('input',e=>{const ctx=memoCtx();if(!ctx)return;ctx.round.memo=e.target.value;document.getElementById('memoDot').hidden=!(e.target.value&&e.target.value.trim());persistLib();});
 
 /* ============================================================
    계산기 이벤트
