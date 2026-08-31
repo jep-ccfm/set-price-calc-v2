@@ -177,6 +177,11 @@
   .ch-item{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px;}
   .ch-item b{display:block;font-size:10.5px;color:var(--ink-soft);font-weight:700;margin-bottom:2px;}
   .ch-item .open-v{color:var(--warn);font-weight:700;}
+  .new-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#FFF6DB;border:1.5px solid #E8B93B;border-left-width:4px;border-radius:10px;padding:12px 15px;margin-bottom:14px;}
+  .new-bar .nb-t{font-size:13px;font-weight:800;color:#8A5B14;}
+  .new-bar .nb-s{font-size:11.5px;color:#8A5B14;opacity:.85;margin-top:2px;}
+  .new-badge{display:inline-block;background:#E8B93B;color:#4A3A0C;font-size:9.5px;font-weight:800;padding:1px 6px;border-radius:8px;margin-left:5px;vertical-align:1px;}
+  tr.is-new td{background:#FFFBF0;}
   .ord-table{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;}
   .ord-table th{padding:9px 8px;background:#F3F0EA;text-align:left;font-size:11px;color:var(--ink-soft);}
   .ord-table td{padding:8px;border-top:1px solid var(--line);vertical-align:top;}
@@ -1110,7 +1115,7 @@ async function importPdfs(id,files,logEl,onDone){
       led.months[mk]=led.months[mk]||{docs:[]};
       const exists=led.months[mk].docs.some(d=>d.file===doc.file&&d.serial===doc.serial);
       if(exists){dup++;log.push('· 중복 건너뜀: '+f.name);}
-      else{led.months[mk].docs.push(doc);ok++;log.push((doc.warn?'⚠ ':'✓ ')+f.name+' → '+doc.branch+' / '+doc.qty+'개 / '+fmt(doc.total)+'원'+(doc.warn?' ('+doc.warn+')':''));}
+      else{doc.isNew=true;led.months[mk].docs.push(doc);ok++;log.push((doc.warn?'⚠ ':'✓ ')+f.name+' → '+doc.branch+' / '+doc.qty+'개 / '+fmt(doc.total)+'원'+(doc.warn?' ('+doc.warn+')':''));}
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
     logEl.textContent=(i+1)+' / '+arr.length+' 처리 중…\n'+log.slice(-8).join('\n');
   }
@@ -1135,7 +1140,7 @@ function aggLedger(led,mk){
   });
   return out;
 }
-function ledgerRefresh(){const v=currentView;if(v==='ready')renderCompany('ready');else if(v&&v.indexOf('ph_')===0)renderPharm(v);}
+function ledgerRefresh(){if(typeof refreshCurrentView==='function')refreshCurrentView();}
 
 /* ---------- 원장 UI ---------- */
 function buildLedger(id,opts){
@@ -1167,6 +1172,18 @@ function buildLedger(id,opts){
   uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');importPdfs(id,e.dataTransfer.files,log,ledgerRefresh);});
   wrap.appendChild(uz);
 
+  // 신규 건 알림
+  const newDocs=[];
+  Object.keys(led.months).forEach(m=>(led.months[m].docs||[]).forEach(d=>{if(d.isNew)newDocs.push(d);}));
+  if(newDocs.length){
+    const nb=document.createElement('div');nb.className='new-bar';
+    const left=document.createElement('div');
+    const nq=newDocs.reduce((a,b)=>a+(b.qty||0),0), nt=newDocs.reduce((a,b)=>a+(b.total||0),0);
+    left.innerHTML='<div class="nb-t">🔔 신규 '+newDocs.length+'건</div><div class="nb-s">'+(nq?fmt(nq)+'개 · ':'')+fmt(nt)+'원 · 마지막 업로드에서 새로 확인된 건입니다</div>';
+    const okBtn=document.createElement('button');okBtn.className='btn btn-primary btn-sm';okBtn.textContent='확인 완료';
+    okBtn.addEventListener('click',()=>{newDocs.forEach(d=>{delete d.isNew;});persistLib();ledgerRefresh();});
+    nb.append(left,okBtn);wrap.appendChild(nb);
+  }
   const months=Object.keys(led.months).sort();
   if(!months.length){const e=document.createElement('div');e.className='empty-box';e.innerHTML='아직 등록된 거래명세서가 없습니다.<br>위에서 월별 폴더를 올려보세요.';wrap.appendChild(e);return wrap;}
   if(!led.activeMonth||!led.months[led.activeMonth])led.activeMonth=months[months.length-1];
@@ -1220,7 +1237,8 @@ function buildLedger(id,opts){
   ag.docs.forEach(d=>{
     const tr=document.createElement('tr');
     const names=(d.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
-    tr.innerHTML='<td>'+(d.date||d.file)+'</td><td><b>'+d.branch+'</b></td><td style="font-size:11.5px;">'+(names||'-')+(d.warn?'<div style="color:var(--warn);font-size:10.5px;">⚠ '+d.warn+'</div>':'')+'</td><td class="num-cell">'+fmt(d.qty)+'</td><td class="num-cell">'+fmt(d.total)+'</td>';
+    if(d.isNew)tr.className='is-new';
+    tr.innerHTML='<td>'+(d.date||d.file)+(d.isNew?'<span class="new-badge">NEW</span>':'')+'</td><td><b>'+d.branch+'</b></td><td style="font-size:11.5px;">'+(names||'-')+(d.warn?'<div style="color:var(--warn);font-size:10.5px;">⚠ '+d.warn+'</div>':'')+'</td><td class="num-cell">'+fmt(d.qty)+'</td><td class="num-cell">'+fmt(d.total)+'</td>';
     const td=document.createElement('td');const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
     x.addEventListener('click',()=>{if(!confirm('이 명세서를 삭제할까요?\n'+d.file))return;const a2=led.months[mk].docs;const i2=a2.indexOf(d);if(i2>=0)a2.splice(i2,1);if(!a2.length){delete led.months[mk];led.activeMonth=null;}persistLib();ledgerRefresh();});
     td.appendChild(x);tr.appendChild(td);dtb.appendChild(tr);
@@ -1581,7 +1599,7 @@ async function importBarofarm(id,files,logEl,onDone){
         led.months[mk]=led.months[mk]||{docs:[]};
         const exists=led.months[mk].docs.some(d=>d.serial&&d.serial===doc.serial);
         if(exists){dup++;return;}
-        led.months[mk].docs.push(doc);ok++;
+        doc.isNew=true;led.months[mk].docs.push(doc);ok++;
       });
       log.push('✓ '+f.name+' — '+docs.length+'건 확인');
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
@@ -1948,7 +1966,7 @@ async function importHK(id,files,logEl,onDone){
       led.months[mk]=led.months[mk]||{docs:[]};
       const exists=led.months[mk].docs.some(d=>d.file===doc.file);
       if(exists){dup++;log.push('· 중복 건너뜀: '+f.name);}
-      else{led.months[mk].docs.push(doc);ok++;
+      else{doc.isNew=true;led.months[mk].docs.push(doc);ok++;
         log.push('✓ '+f.name+' → '+doc.date+' / '+doc.serial+' / '+doc.qty+'개 / '+fmt(doc.total)+'원');}
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
   }
