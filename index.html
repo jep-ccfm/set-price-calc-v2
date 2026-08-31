@@ -1134,8 +1134,8 @@ function aggLedger(led,mk){
   out.docs.forEach(d=>{
     out.qty+=d.qty||0;out.supply+=d.supply||0;out.total+=d.total||0;if(d.warn)out.warns++;
     const b=d.branch||'미상';
-    out.byBranch[b]=out.byBranch[b]||{qty:0,total:0,docs:0};
-    out.byBranch[b].qty+=d.qty||0;out.byBranch[b].total+=d.total||0;out.byBranch[b].docs++;
+    out.byBranch[b]=out.byBranch[b]||{qty:0,total:0,supply:0,docs:0};
+    out.byBranch[b].qty+=d.qty||0;out.byBranch[b].total+=d.total||0;out.byBranch[b].supply+=d.supply||0;out.byBranch[b].docs++;
     (d.items||[]).forEach(it=>{out.byItem[it.name]=out.byItem[it.name]||{qty:0,supply:0};out.byItem[it.name].qty+=it.qty;out.byItem[it.name].supply+=it.supply;});
   });
   return out;
@@ -1204,6 +1204,7 @@ function buildLedger(id,opts){
     '<div class="stat-card"><div class="sc-l">명세서 건수</div><div class="sc-v">'+fmt(ag.docs.length)+'건</div></div>';
   wrap.appendChild(sr);
   if(ag.warns){const w=document.createElement('div');w.className='cc-warn';w.style.marginBottom='10px';w.textContent='⚠ 확인 필요 '+ag.warns+'건 (아래 명세서 상세에서 ⚠ 표시)';wrap.appendChild(w);}
+  wrap.appendChild(buildReconcile(id,mk));
 
   const bh=document.createElement('div');bh.className='sec-h';
   const bhs=document.createElement('span');bhs.textContent='지점별 판매';bh.appendChild(bhs);
@@ -1996,6 +1997,127 @@ function buildHKUploader(id){
   uz.addEventListener('dragleave',()=>uz.classList.remove('drag'));
   uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');importHK(id,e.dataTransfer.files,log,refresh);});
   return uz;
+}
+
+/* ============================================================
+   세금계산서 ↔ 거래명세서 자동 대사
+   ============================================================ */
+function branchOfTaxItem(name){
+  const m=String(name||'').match(/[(（]([^)）]+)[)）]/);
+  return m?m[1].trim():String(name||'').trim();
+}
+function isAggTaxItem(name){return /외\s*\d+\s*건/.test(String(name||''));}
+function reconcile(id,mk){
+  const led=ledgerOf(id);
+  const ag=aggLedger(led,mk);
+  const taxes=taxDocsOf(id).filter(t=>String(t.date||'').slice(0,7)===mk);
+  const taxSupply=taxes.reduce((a,b)=>a+(b.supply||0),0);
+  const taxTotal=taxes.reduce((a,b)=>a+(b.total||0),0);
+  const r={mk,taxes,hasTax:taxes.length>0,
+    ledSupply:ag.supply,ledTotal:ag.total,ledDocs:ag.docs.length,
+    taxSupply,taxTotal,
+    diffSupply:ag.supply-taxSupply,diffTotal:ag.total-taxTotal,
+    rows:[],candidates:[]};
+  if(!taxes.length)return r;
+  // 세금계산서 품목(지점) 모으기
+  const taxByBranch={};let aggItem=null;
+  taxes.forEach(t=>(t.items||[]).forEach(it=>{
+    if(isAggTaxItem(it.name)){aggItem=aggItem||{name:it.name,supply:0};aggItem.supply+=it.supply||0;return;}
+    const b=branchOfTaxItem(it.name);
+    taxByBranch[b]=(taxByBranch[b]||0)+(it.supply||0);
+  }));
+  const named=Object.keys(taxByBranch);
+  if(named.length){
+    named.forEach(b=>{
+      const l=(ag.byBranch[b]||{}).supply||0;
+      r.rows.push({branch:b,tax:taxByBranch[b],led:l,diff:l-taxByBranch[b]});
+    });
+    if(aggItem){
+      const rest=Object.keys(ag.byBranch).filter(b=>named.indexOf(b)<0);
+      const l=rest.reduce((a,b)=>a+(ag.byBranch[b].supply||0),0);
+      r.rows.push({branch:aggItem.name,tax:aggItem.supply,led:l,diff:l-aggItem.supply,group:rest});
+    }else{
+      Object.keys(ag.byBranch).filter(b=>named.indexOf(b)<0).forEach(b=>{
+        r.rows.push({branch:b,tax:0,led:ag.byBranch[b].supply||0,diff:ag.byBranch[b].supply||0});
+      });
+    }
+  }
+  // 차이 금액과 일치하는 명세서 찾기 — 차이가 난 지점으로 좁힘
+  const d=Math.abs(r.diffTotal);
+  if(d>0){
+    const bset={};
+    r.rows.filter(x=>x.diff!==0).forEach(x=>{
+      if(x.group&&x.group.length)x.group.forEach(g=>bset[g]=1);
+      else bset[x.branch]=1;
+    });
+    const keys=Object.keys(bset);
+    r.candidates=ag.docs.filter(x=>Math.abs(x.total||0)===d&&(!keys.length||bset[x.branch]));
+    r.narrowed=keys.length>0;
+  }
+  return r;
+}
+function buildReconcile(id,mk){
+  const r=reconcile(id,mk);
+  const p=document.createElement('div');p.className='ch-panel open';p.style.marginBottom='16px';
+  const okAll=r.hasTax&&r.diffTotal===0;
+  const h=document.createElement('div');h.className='ch-head';
+  h.style.cssText=r.hasTax?(okAll?'background:#EDF6F0;':'background:#FFF6DB;'):'';
+  const badge=!r.hasTax?'<span style="color:var(--ink-soft);font-weight:700;">세금계산서 미등록</span>'
+    :(okAll?'<span style="color:var(--good);font-weight:800;">✓ 일치</span>'
+           :'<span style="color:var(--warn);font-weight:800;">⚠ 차이 '+fmt(Math.abs(r.diffTotal))+'원</span>');
+  h.innerHTML='<span><span class="chev">▶</span> 🔍 '+mkLabel(mk)+' 대사 (세금계산서 ↔ 거래명세서)</span>'+badge;
+  h.addEventListener('click',()=>p.classList.toggle('open'));
+  p.appendChild(h);
+  const b=document.createElement('div');b.className='ch-body';
+  if(!r.hasTax){
+    const e=document.createElement('div');e.className='hint';
+    e.innerHTML='이 달의 세금계산서가 등록되지 않았습니다. 아래 <b>「🧾 세금계산서」</b>에 등록하면 금액이 맞는지 자동으로 대조해 드립니다.';
+    b.appendChild(e);p.appendChild(b);return p;
+  }
+  // 요약
+  const sr=document.createElement('div');sr.className='stat-row';sr.style.marginBottom='12px';
+  sr.innerHTML=
+    '<div class="stat-card"><div class="sc-l">거래명세서 ('+r.ledDocs+'건)</div><div class="sc-v">'+fmt(r.ledTotal)+'원</div></div>'+
+    '<div class="stat-card"><div class="sc-l">세금계산서 ('+r.taxes.length+'건)</div><div class="sc-v">'+fmt(r.taxTotal)+'원</div></div>'+
+    '<div class="stat-card"'+(r.diffTotal?' style="background:#FFF6DB;border-color:#E8B93B;"':'')+'><div class="sc-l">차이 (VAT 포함)</div><div class="sc-v"'+(r.diffTotal?' style="color:#8A5B14;"':' style="color:var(--good);"')+'>'+(r.diffTotal>0?'+':'')+fmt(r.diffTotal)+'원</div></div>'+
+    '<div class="stat-card"><div class="sc-l">공급가액 차이</div><div class="sc-v"'+(r.diffSupply?' style="color:#8A5B14;"':' style="color:var(--good);"')+'>'+(r.diffSupply>0?'+':'')+fmt(r.diffSupply)+'원</div></div>';
+  b.appendChild(sr);
+  if(r.diffTotal===0){
+    const okd=document.createElement('div');okd.className='hint';okd.style.color='var(--good)';
+    okd.textContent='✓ 세금계산서와 거래명세서 금액이 정확히 일치합니다.';
+    b.appendChild(okd);
+  }
+  // 지점별 대조
+  if(r.rows.length){
+    const st=document.createElement('div');st.className='agg-sub';st.textContent='지점별 대조 (공급가액)';b.appendChild(st);
+    const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='520px';
+    t.innerHTML='<thead><tr><th>지점</th><th style="text-align:right;">세금계산서</th><th style="text-align:right;">거래명세서</th><th style="text-align:right;">차이</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    r.rows.sort((a,b2)=>Math.abs(b2.diff)-Math.abs(a.diff)).forEach(row=>{
+      const tr=document.createElement('tr');
+      if(row.diff)tr.style.background='#FFFBF0';
+      tr.innerHTML='<td>'+row.branch+(row.group&&row.group.length?'<div style="color:var(--ink-soft);font-size:10.5px;">'+row.group.join(', ')+'</div>':'')+'</td>'+
+        '<td class="num-cell">'+fmt(row.tax)+'</td><td class="num-cell">'+fmt(row.led)+'</td>'+
+        '<td class="num-cell" style="font-weight:800;color:'+(row.diff?'#8A5B14':'var(--good)')+';">'+(row.diff>0?'+':'')+fmt(row.diff)+'</td>';
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.appendChild(t);b.appendChild(box);
+  }
+  // 차이 후보
+  if(r.candidates.length){
+    const cd=document.createElement('div');cd.className='agg-sub';cd.style.color='var(--warn)';
+    cd.textContent='차이 금액과 일치하는 명세서 '+r.candidates.length+'건'+(r.narrowed?' (차이 난 지점 기준)':'')+' — 세금계산서 누락 여부를 확인하세요';
+    b.appendChild(cd);
+    const ul=document.createElement('div');ul.className='empty-box';ul.style.cssText='padding:12px;text-align:left;background:#FFFBF0;border-style:solid;border-color:#E8B93B;';
+    ul.innerHTML=r.candidates.map(c=>'· <b>'+(c.date||'')+' '+c.branch+'</b> — '+fmt(c.total)+'원 <span style="color:var(--ink-soft);">('+c.file+')</span>').join('<br>');
+    b.appendChild(ul);
+  }else if(r.diffTotal!==0){
+    const cd=document.createElement('div');cd.className='hint';cd.style.marginTop='10px';
+    cd.textContent='차이 금액과 정확히 일치하는 단일 명세서는 없습니다. 여러 건이 합쳐졌거나 반품·수정 발행 가능성을 확인하세요.';
+    b.appendChild(cd);
+  }
+  p.appendChild(b);return p;
 }
 
 /* ---------- 개인약국 뷰 ---------- */
