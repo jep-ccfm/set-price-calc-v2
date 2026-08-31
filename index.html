@@ -1694,7 +1694,7 @@ function taxDocsOf(id){lib.taxDocs=lib.taxDocs||{};lib.taxDocs[id]=lib.taxDocs[i
 /* 전자세금계산서 PDF에서 작성일자·공급가액·세액·합계를 최대한 읽어옵니다(실패해도 수기 입력 가능) */
 function parseTaxInvoice(lines){
   const out={date:'',supply:0,vat:0,total:0,approval:'',partner:'',items:[]};
-  const N=v=>parseInt(String(v).replace(/[^0-9]/g,''),10)||0;
+  const N=v=>parseInt(String(v).replace(/[^0-9-]/g,''),10)||0;
   const P2=v=>String(v).padStart(2,'0');
   let m;
   // 승인번호 (예: 20260430-10260508-34475557)
@@ -1711,14 +1711,21 @@ function parseTaxInvoice(lines){
       }
     }
   }
-  // 품목(지점별) 행: 04 30 레디영약국(홍대점) 1,423,636 142,364
+  // 품목 행: 지점형(품목 공급가액 세액) / 조정형(품목 수량 단가 공급가액 세액 비고)
   lines.forEach(L=>{
     const t=L.replace(/\s{2,}/g,' ').trim();
-    const mm=t.match(/^(\d{1,2})\s+(\d{1,2})\s+(.+?)\s+([\d,]{3,})\s+([\d,]{3,})$/);
-    if(mm&&!/^\d{4}/.test(mm[1])){
-      const nm=mm[3].trim();
-      if(nm&&!/합계|공급가액|세액/.test(nm))out.items.push({name:nm,supply:N(mm[4]),vat:N(mm[5])});
-    }
+    const mm=t.match(/^(\d{1,2})\s+(\d{1,2})\s+(.+)$/);
+    if(!mm||/^\d{4}/.test(mm[1]))return;
+    let toks=mm[3].split(/\s+/);
+    const note=[];
+    while(toks.length&&!/^-?[\d,]+$/.test(toks[toks.length-1]))note.unshift(toks.pop());
+    if(toks.length<2)return;
+    const vat=N(toks.pop()), supply=N(toks.pop());
+    while(toks.length&&/^-?[\d,]+$/.test(toks[toks.length-1]))toks.pop();
+    const nm=toks.join(' ').trim();
+    if(!nm||/합계|공급가액|세액/.test(nm))return;
+    out.items.push({name:nm,supply,vat,note:note.join(' '),
+      isBranch:/[(（].+[)）]/.test(nm)});
   });
   // 품목 합으로 공급가액·세액 보정
   if(out.items.length){
@@ -2002,6 +2009,13 @@ function buildHKUploader(id){
 /* ============================================================
    세금계산서 ↔ 거래명세서 자동 대사
    ============================================================ */
+function normBranch(v){
+  let t=String(v||'').replace(/\s+/g,'');
+  t=t.replace(/^레디영약국/,'').replace(/^레디영/,'');
+  t=t.replace(/레디영약국점$/,'점').replace(/레디영약국$/,'');
+  t=t.replace(/^지마켓$|^G마켓$|^지마켓점$|^G마켓점$/i,'지마켓');
+  return t||String(v||'').trim();
+}
 function branchOfTaxItem(name){
   const m=String(name||'').match(/[(（]([^)）]+)[)）]/);
   return m?m[1].trim():String(name||'').trim();
@@ -2019,26 +2033,36 @@ function reconcile(id,mk){
     diffSupply:ag.supply-taxSupply,diffTotal:ag.total-taxTotal,
     rows:[],candidates:[]};
   if(!taxes.length)return r;
-  // 세금계산서 품목(지점) 모으기
-  const taxByBranch={};let aggItem=null;
+  // 세금계산서 품목: 지점 / 조정(반품 등) 분리
+  const taxByBranch={};let aggItem=null;r.adjust=[];r.adjustSupply=0;
   taxes.forEach(t=>(t.items||[]).forEach(it=>{
+    const isBr=(it.isBranch!==undefined)?it.isBranch:/[(（].+[)）]/.test(it.name);
+    if(!isBr){r.adjust.push(it);r.adjustSupply+=it.supply||0;return;}
     if(isAggTaxItem(it.name)){aggItem=aggItem||{name:it.name,supply:0};aggItem.supply+=it.supply||0;return;}
-    const b=branchOfTaxItem(it.name);
+    const b=normBranch(branchOfTaxItem(it.name));
     taxByBranch[b]=(taxByBranch[b]||0)+(it.supply||0);
   }));
+  // 명세서 지점도 정규화하여 합산
+  const ledByNorm={},normLabel={};
+  Object.keys(ag.byBranch).forEach(b=>{
+    const k=normBranch(b);
+    ledByNorm[k]=(ledByNorm[k]||0)+(ag.byBranch[b].supply||0);
+    normLabel[k]=normLabel[k]?(normLabel[k]+' / '+b):b;
+  });
   const named=Object.keys(taxByBranch);
   if(named.length){
     named.forEach(b=>{
-      const l=(ag.byBranch[b]||{}).supply||0;
-      r.rows.push({branch:b,tax:taxByBranch[b],led:l,diff:l-taxByBranch[b]});
+      const l=ledByNorm[b]||0;
+      r.rows.push({branch:normLabel[b]||b,tax:taxByBranch[b],led:l,diff:l-taxByBranch[b]});
     });
     if(aggItem){
-      const rest=Object.keys(ag.byBranch).filter(b=>named.indexOf(b)<0);
-      const l=rest.reduce((a,b)=>a+(ag.byBranch[b].supply||0),0);
-      r.rows.push({branch:aggItem.name,tax:aggItem.supply,led:l,diff:l-aggItem.supply,group:rest});
+      const rest=Object.keys(ledByNorm).filter(b=>named.indexOf(b)<0);
+      const l=rest.reduce((a,b)=>a+ledByNorm[b],0);
+      r.rows.push({branch:aggItem.name,tax:aggItem.supply,led:l,diff:l-aggItem.supply,
+        group:rest.map(x=>normLabel[x]||x)});
     }else{
-      Object.keys(ag.byBranch).filter(b=>named.indexOf(b)<0).forEach(b=>{
-        r.rows.push({branch:b,tax:0,led:ag.byBranch[b].supply||0,diff:ag.byBranch[b].supply||0});
+      Object.keys(ledByNorm).filter(b=>named.indexOf(b)<0).forEach(b=>{
+        r.rows.push({branch:normLabel[b]||b,tax:0,led:ledByNorm[b],diff:ledByNorm[b]});
       });
     }
   }
@@ -2047,11 +2071,12 @@ function reconcile(id,mk){
   if(d>0){
     const bset={};
     r.rows.filter(x=>x.diff!==0).forEach(x=>{
-      if(x.group&&x.group.length)x.group.forEach(g=>bset[g]=1);
-      else bset[x.branch]=1;
+      const add=v=>String(v).split(' / ').forEach(g=>bset[normBranch(g)]=1);
+      if(x.group&&x.group.length)x.group.forEach(add);
+      else add(x.branch);
     });
     const keys=Object.keys(bset);
-    r.candidates=ag.docs.filter(x=>Math.abs(x.total||0)===d&&(!keys.length||bset[x.branch]));
+    r.candidates=ag.docs.filter(x=>Math.abs(x.total||0)===d&&(!keys.length||bset[normBranch(x.branch)]));
     r.narrowed=keys.length>0;
   }
   return r;
@@ -2086,6 +2111,15 @@ function buildReconcile(id,mk){
     const okd=document.createElement('div');okd.className='hint';okd.style.color='var(--good)';
     okd.textContent='✓ 세금계산서와 거래명세서 금액이 정확히 일치합니다.';
     b.appendChild(okd);
+  }
+  // 반품·조정 내역
+  if(r.adjust&&r.adjust.length){
+    const at=document.createElement('div');at.className='agg-sub';at.textContent='세금계산서 내 조정 항목 (반품 등)';b.appendChild(at);
+    const ab=document.createElement('div');ab.className='empty-box';
+    ab.style.cssText='padding:11px;text-align:left;background:#F7F5FF;border-style:solid;border-color:#B9AEE8;';
+    ab.innerHTML=r.adjust.map(x=>'· '+x.name+' — 공급가액 <b>'+fmt(x.supply)+'</b>원'+(x.note?' <span style="color:var(--ink-soft);">('+x.note+')</span>':'')).join('<br>')
+      +'<div style="margin-top:6px;font-weight:800;">조정 합계 '+fmt(r.adjustSupply)+'원 (VAT 포함 '+fmt(Math.round(r.adjustSupply*1.1))+'원)</div>';
+    b.appendChild(ab);
   }
   // 지점별 대조
   if(r.rows.length){
