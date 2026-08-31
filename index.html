@@ -579,6 +579,7 @@
       <div><label>업태 / 종목</label><input type="text" id="pfBiztype" placeholder="예: 소매업 / 양약·의료기기"></div>
       <div><label>약사 면허번호</label><input type="text" id="pfLicense"></div>
       <div><label>계약일</label><input type="text" id="pfContract" placeholder="예: 2026-08-27"></div>
+      <div class="fg-full"><label>결제 조건</label><input type="text" id="pfPay" placeholder="예: 공급 후 1주일 이내 입금"></div>
       <div class="fg-full"><label>배송지 / 수령인</label><input type="text" id="pfShip"></div>
       <div class="fg-full"><label>정산 계좌</label><input type="text" id="pfBank" placeholder="은행 / 계좌번호 / 예금주"></div>
       <div class="fg-full"><label>비고</label><textarea id="pfNote"></textarea></div>
@@ -845,6 +846,15 @@ function renderCompany(k){
   box.appendChild(head);
 
   // 레디영: 정산 시트 + 월별 거래명세서 원장
+  // 홍콩: 발주서(XLSX) 업로드 → 월별 집계
+  if(k==='hk'){
+    box.appendChild(buildHKUploader('hk'));
+    box.appendChild(buildLedger('hk',{}));
+    box.appendChild(buildTaxDocs('hk'));
+    const dv2=document.createElement('div');dv2.style.cssText='border-top:1px solid var(--line);margin:26px 0 18px;';box.appendChild(dv2);
+    const sh3=document.createElement('div');sh3.className='sec-h';sh3.style.marginTop='0';sh3.textContent='세트 제안 저장소 (차수별)';box.appendChild(sh3);
+  }
+
   if(k==='ready'){
     box.appendChild(buildBranchStock());
     box.appendChild(buildPriceTable('ready',false));
@@ -1496,7 +1506,6 @@ function renderChannel(view){
   const head=document.createElement('header');head.className='page-head';
   head.innerHTML='<div class="eyebrow">약국 채널</div><h1><span class="flag">'+meta.ic+'</span>'+meta.name+'</h1><p class="sub">'+meta.desc+'</p>';
   box.appendChild(head);
-  box.appendChild(buildChannelPanel());
   box.appendChild(buildPriceTable(meta.id,true));
   if(meta.id==='barofarm'){
     // 바로팜: 발주·출고는 파트너센터에서 처리 → 여기서는 조회 전용
@@ -1509,7 +1518,6 @@ function renderChannel(view){
     box.appendChild(nt);
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
-    box.appendChild(buildTaxDocs(meta.id));
     box.appendChild(buildTaxDocs(meta.id));
     const lh2=document.createElement('div');lh2.className='sec-h';lh2.textContent='주문 내역 (월별 집계)';box.appendChild(lh2);
     box.appendChild(buildLedger(meta.id,{}));
@@ -1666,20 +1674,52 @@ function taxDocsOf(id){lib.taxDocs=lib.taxDocs||{};lib.taxDocs[id]=lib.taxDocs[i
 
 /* 전자세금계산서 PDF에서 작성일자·공급가액·세액·합계를 최대한 읽어옵니다(실패해도 수기 입력 가능) */
 function parseTaxInvoice(lines){
-  const txt=lines.join('\n');
-  const num=v=>parseInt(String(v).replace(/[^0-9]/g,''),10)||0;
-  const out={date:'',supply:0,vat:0,total:0,partner:''};
+  const out={date:'',supply:0,vat:0,total:0,approval:'',partner:'',items:[]};
+  const N=v=>parseInt(String(v).replace(/[^0-9]/g,''),10)||0;
+  const P2=v=>String(v).padStart(2,'0');
   let m;
-  if((m=txt.match(/작성일자[^0-9]{0,12}(\d{4})[^0-9]{0,3}(\d{1,2})[^0-9]{0,3}(\d{1,2})/)))
-    out.date=m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
-  else if((m=txt.match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})/)))
-    out.date=m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
-  if((m=txt.match(/공\s*급\s*가\s*액[^0-9]{0,20}([0-9,]{3,})/)))out.supply=num(m[1]);
-  if((m=txt.match(/세\s*액[^0-9]{0,20}([0-9,]{3,})/)))out.vat=num(m[1]);
-  if((m=txt.match(/(합\s*계\s*금\s*액|총\s*합\s*계)[^0-9]{0,20}([0-9,]{3,})/)))out.total=num(m[2]);
-  if(!out.total&&(out.supply||out.vat))out.total=out.supply+out.vat;
-  if(!out.vat&&out.supply&&out.total)out.vat=out.total-out.supply;
-  if((m=txt.match(/상\s*호[^가-힣A-Za-z0-9]{0,6}([^\n]{2,30})/)))out.partner=m[1].trim().slice(0,30);
+  // 승인번호 (예: 20260430-10260508-34475557)
+  for(const L of lines){ if((m=L.match(/(\d{8}-\d{8}-\d{8})/))){out.approval=m[1];break;} }
+  // '작성일자' 헤더 다음 줄: 2026-04-30  35,443,634  3,544,366
+  for(let i=0;i<lines.length&&!out.date;i++){
+    if(!/작성일자/.test(lines[i]))continue;
+    for(let j=i;j<Math.min(i+4,lines.length);j++){
+      if((m=lines[j].match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})\s+([\d,]{3,})\s+([\d,]{3,})/))){
+        out.date=m[1]+'-'+P2(m[2])+'-'+P2(m[3]);out.supply=N(m[4]);out.vat=N(m[5]);break;
+      }
+      if((m=lines[j].match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})/))&&!out.date){
+        out.date=m[1]+'-'+P2(m[2])+'-'+P2(m[3]);
+      }
+    }
+  }
+  // 품목(지점별) 행: 04 30 레디영약국(홍대점) 1,423,636 142,364
+  lines.forEach(L=>{
+    const t=L.replace(/\s{2,}/g,' ').trim();
+    const mm=t.match(/^(\d{1,2})\s+(\d{1,2})\s+(.+?)\s+([\d,]{3,})\s+([\d,]{3,})$/);
+    if(mm&&!/^\d{4}/.test(mm[1])){
+      const nm=mm[3].trim();
+      if(nm&&!/합계|공급가액|세액/.test(nm))out.items.push({name:nm,supply:N(mm[4]),vat:N(mm[5])});
+    }
+  });
+  // 품목 합으로 공급가액·세액 보정
+  if(out.items.length){
+    const s=out.items.reduce((a,b)=>a+b.supply,0),v=out.items.reduce((a,b)=>a+b.vat,0);
+    if(!out.supply)out.supply=s;
+    if(!out.vat)out.vat=v;
+  }
+  // 합계금액: '합계금액' 이후 줄에서 공급가액 이상인 첫 숫자
+  for(let i=0;i<lines.length&&!out.total;i++){
+    if(!/합\s*계\s*금\s*액/.test(lines[i]))continue;
+    for(let j=i;j<Math.min(i+6,lines.length);j++){
+      const cands=(lines[j].match(/[\d,]{5,}/g)||[]).map(N).filter(x=>x>=out.supply);
+      if(cands.length){out.total=Math.max.apply(null,cands);break;}
+    }
+  }
+  if(!out.total)out.total=out.supply+out.vat;
+  // 공급받는자 상호 (…성명 ○○○ [외 n명] <상호> 성명 …)
+  for(const L of lines){
+    if((m=L.match(/성명\s+\S+(?:\s*외\s*\d+\s*명)?\s+(.{2,25}?)\s+성명/))){out.partner=m[1].trim();break;}
+  }
   return out;
 }
 
@@ -1817,6 +1857,129 @@ function buildTaxDocs(id){
   return p;
 }
 
+/* ============================================================
+   홍콩 라이브 커머스 발주서(XLSX) 업로드
+   양식: 발주일자 / 발주번호(차수) / NO·품목·유형·단가·수량·공급가액·메모 / total
+   ============================================================ */
+function xlSerialToDate(v){
+  if(v instanceof Date&&!isNaN(v))return v.toISOString().slice(0,10);
+  const n=Number(v);
+  if(isFinite(n)&&n>20000&&n<80000){
+    const ms=Math.round((n-25569)*86400000);
+    const d=new Date(ms);
+    if(!isNaN(d))return d.toISOString().slice(0,10);
+  }
+  const s=String(v||'').trim();
+  let m=s.match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})/);
+  if(m)return m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
+  return '';
+}
+function hkParse(rows,fileName){
+  const g=(r,c)=>String((rows[r]&&rows[r][c]!=null?rows[r][c]:'')).trim();
+  const R=rows.length;
+  const N=v=>{const n=parseInt(String(v).replace(/[^0-9.-]/g,''),10);return isFinite(n)?n:0;};
+  let date='',round='',buyer='';
+  for(let r=0;r<R;r++){
+    for(let c=0;c<(rows[r]||[]).length;c++){
+      const v=g(r,c);
+      if(!date&&/발주일자/.test(v)){
+        for(let k=c+1;k<c+8;k++){const d=xlSerialToDate(rows[r][k]);if(d){date=d;break;}}
+      }
+      if(!round&&/발주번호/.test(v)){
+        for(let k=c+1;k<c+6;k++){const t=g(r,k);if(t){round=t;break;}}
+      }
+      if(!buyer&&/상\s*호/.test(v)){
+        for(let k=c+1;k<c+6;k++){const t=g(r,k);if(t){buyer=t;break;}}
+      }
+    }
+  }
+  if(!date){const m=fileName.match(/(\d{2})(\d{2})(\d{2})/);if(m)date='20'+m[1]+'-'+m[2]+'-'+m[3];}
+  // 헤더 행 찾기 (NO / 품목)
+  let hr=-1,cNo=-1,cName=-1,cType=-1,cUnit=-1,cQty=-1,cAmt=-1,cMemo=-1;
+  for(let r=0;r<R&&hr<0;r++){
+    const cells=(rows[r]||[]).map(x=>String(x||'').replace(/\s|\r|\n/g,''));
+    const iNo=cells.findIndex(x=>x==='NO'), iNm=cells.findIndex(x=>x==='품목');
+    if(iNo>=0&&iNm>=0){
+      hr=r;cNo=iNo;cName=iNm;
+      cType=cells.findIndex(x=>x==='유형');
+      cUnit=cells.findIndex(x=>/^단가/.test(x));
+      cQty=cells.findIndex(x=>/^수량/.test(x));
+      cAmt=cells.findIndex(x=>/^공급가액/.test(x));
+      cMemo=cells.findIndex(x=>/^메모/.test(x));
+    }
+  }
+  if(hr<0)throw new Error('발주서 양식이 아닙니다 (NO/품목 헤더 없음)');
+  const items=[];
+  for(let r=hr+1;r<R;r++){
+    const first=g(r,cNo);
+    if(/^total$/i.test(first)||/^합\s*계$/.test(first))break;
+    const name=g(r,cName);
+    if(!name)continue;
+    const qty=N(cQty>=0?rows[r][cQty]:0);
+    if(qty<=0)continue;
+    const unit=N(cUnit>=0?rows[r][cUnit]:0);
+    const amt=cAmt>=0?N(rows[r][cAmt]):qty*unit;
+    items.push({name,qty,unit,supply:amt,vat:0,type:cType>=0?g(r,cType):'',memo:cMemo>=0?g(r,cMemo).replace(/\r?\n/g,' / '):''});
+  }
+  if(!items.length)throw new Error('읽을 품목이 없습니다');
+  const qty=items.reduce((a,b)=>a+b.qty,0);
+  const supply=items.reduce((a,b)=>a+b.supply,0);
+  return {file:fileName,serial:round||fileName,date,branch:round?('발주 '+round):'발주',
+    items,qty,supply,vat:0,total:supply,src:'hk',
+    meta:{매입자:buyer},
+    warn:null};
+}
+async function importHK(id,files,logEl,onDone){
+  if(typeof XLSX==='undefined'){showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)');return;}
+  const led=ledgerOf(id);let ok=0,dup=0,fail=0;const log=[];
+  const arr=[].slice.call(files).filter(f=>/\.(xlsx|xls)$/i.test(f.name));
+  if(!arr.length){showToast('엑셀(.xlsx) 발주서가 없습니다');return;}
+  logEl.classList.add('show');logEl.textContent='처리 중…';
+  for(const f of arr){
+    try{
+      const wb=XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:'array',cellDates:true});
+      let doc=null,err=null;
+      for(const sn of wb.SheetNames){
+        try{doc=hkParse(XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}),f.name);break;}
+        catch(e){err=e;}
+      }
+      if(!doc)throw err||new Error('읽기 실패');
+      const mk=doc.date?doc.date.slice(0,7):'기타';
+      led.months[mk]=led.months[mk]||{docs:[]};
+      const exists=led.months[mk].docs.some(d=>d.file===doc.file);
+      if(exists){dup++;log.push('· 중복 건너뜀: '+f.name);}
+      else{led.months[mk].docs.push(doc);ok++;
+        log.push('✓ '+f.name+' → '+doc.date+' / '+doc.serial+' / '+doc.qty+'개 / '+fmt(doc.total)+'원');}
+    }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
+  }
+  Object.keys(led.months).forEach(m=>{led.months[m].docs.sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)));});
+  const months=Object.keys(led.months).sort();
+  if(months.length&&(!led.activeMonth||!led.months[led.activeMonth]))led.activeMonth=months[months.length-1];
+  persistLib();
+  logEl.textContent='완료 — 등록 '+ok+'건'+(dup?' · 중복 '+dup+'건':'')+(fail?' · 실패 '+fail+'건':'')+'\n'+log.join('\n');
+  showToast('발주서 '+ok+'건이 등록되었습니다');
+  if(onDone)onDone();
+}
+function buildHKUploader(id){
+  const uz=document.createElement('div');uz.className='up-zone';
+  const t1=document.createElement('div');t1.className='uz-title';t1.textContent='📋 홍콩 발주서 업로드 (.xlsx)';
+  const t2=document.createElement('div');t2.className='uz-desc';
+  t2.innerHTML='파트너사에서 받은 <b>발주서 엑셀</b>을 그대로 올리세요. 여러 개 한 번에 가능합니다.<br>발주일자·차수·품목·수량·공급가액을 자동으로 읽어 <b>월별로 집계</b>합니다. (영세율 — 부가세 없음)';
+  uz.append(t1,t2);
+  const btns=document.createElement('div');btns.className='up-btns';
+  const fi=document.createElement('input');fi.type='file';fi.accept='.xlsx,.xls';fi.multiple=true;fi.hidden=true;
+  const b=document.createElement('button');b.className='up-btn';b.textContent='발주서 파일 선택';
+  btns.appendChild(b);uz.append(btns,fi);
+  const log=document.createElement('div');log.className='up-log';uz.appendChild(log);
+  const refresh=()=>{if(currentView==='hk')renderCompany('hk');};
+  b.addEventListener('click',()=>fi.click());
+  fi.addEventListener('change',e=>{importHK(id,e.target.files,log,refresh);e.target.value='';});
+  uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('drag');});
+  uz.addEventListener('dragleave',()=>uz.classList.remove('drag'));
+  uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');importHK(id,e.dataTransfer.files,log,refresh);});
+  return uz;
+}
+
 /* ---------- 개인약국 뷰 ---------- */
 function renderPharm(view){
   const meta=pharmMeta(view);if(!meta)return;
@@ -1832,18 +1995,42 @@ function renderPharm(view){
   const bEdit=document.createElement('button');bEdit.className='icon-btn';bEdit.textContent='📋 약국정보 확인 / 수정';
   bEdit.addEventListener('click',()=>openPharmInfo(pid,meta.name));
   sh.appendChild(bEdit);box.appendChild(sh);
+  // 핵심 4칸
   const ig=document.createElement('div');ig.className='info-grid';
-  [['약국명',info.name||meta.name],['요양기호',info.ykiho],['사업자등록번호',info.biz],['대표자',info.owner],['전화번호',info.tel],['FAX',info.fax],['이메일',info.email],['주소',info.addr],['개업연월일',info.open],['업태 / 종목',info.biztype],['약사 면허번호',info.license],['계약일',info.contract],['배송지 / 수령인',info.ship],['정산 계좌',info.bank]].forEach(function(p){
+  const cell=(l,v,multi)=>{
     const d=document.createElement('div');d.className='info-item';
-    const l=document.createElement('div');l.className='ii-l';l.textContent=p[0];
-    const v=document.createElement('div');v.className='ii-v'+(p[1]?'':' empty');v.textContent=p[1]||'미입력';
-    d.append(l,v);ig.appendChild(d);
-  });
+    const lb=document.createElement('div');lb.className='ii-l';lb.textContent=l;
+    const vv=document.createElement('div');vv.className='ii-v'+(v?'':' empty');
+    if(multi)vv.style.whiteSpace='pre-wrap';
+    vv.textContent=v||'미입력';
+    d.append(lb,vv);return d;
+  };
+  [['약국명',info.name||meta.name],['배송지 / 수령인',info.ship],['전화번호',info.tel],['결제 조건',info.pay]]
+    .forEach(p=>ig.appendChild(cell(p[0],p[1])));
   box.appendChild(ig);
-  if(info.note){const n=document.createElement('div');n.className='info-item';n.style.marginTop='10px';
-    const l=document.createElement('div');l.className='ii-l';l.textContent='비고';
-    const v=document.createElement('div');v.className='ii-v';v.style.fontWeight='500';v.style.whiteSpace='pre-wrap';v.textContent=info.note;
-    n.append(l,v);box.appendChild(n);}
+
+  // 상세 정보 토글
+  const dKey='setPriceCalc:phDetail:'+pid;
+  const dOpen=localStorage.getItem(dKey)==='1';
+  const dp=document.createElement('div');dp.className='ch-panel'+(dOpen?' open':'');dp.style.marginTop='10px';
+  const dh=document.createElement('div');dh.className='ch-head';
+  dh.innerHTML='<span><span class="chev">▶</span> 상세 정보 (사업자·계약·계좌·비고)</span>';
+  dh.addEventListener('click',()=>{dp.classList.toggle('open');localStorage.setItem(dKey,dp.classList.contains('open')?'1':'0');});
+  dp.appendChild(dh);
+  const db2=document.createElement('div');db2.className='ch-body';
+  const ig2=document.createElement('div');ig2.className='info-grid';
+  [['요양기호',info.ykiho],['사업자등록번호',info.biz],['대표자',info.owner],['FAX',info.fax],
+   ['이메일',info.email],['사업장 주소',info.addr],['개업연월일',info.open],['업태 / 종목',info.biztype],
+   ['약사 면허번호',info.license],['계약일',info.contract],['정산 계좌',info.bank]]
+    .forEach(p=>ig2.appendChild(cell(p[0],p[1])));
+  db2.appendChild(ig2);
+  const nb=document.createElement('div');nb.className='info-item';nb.style.marginTop='10px';
+  const nl=document.createElement('div');nl.className='ii-l';nl.textContent='비고';
+  const nv=document.createElement('div');nv.className='ii-v'+(info.note?'':' empty');
+  nv.style.cssText='font-weight:500;white-space:pre-wrap;line-height:1.6;font-size:12.5px;';
+  nv.textContent=info.note||'미입력';
+  nb.append(nl,nv);db2.appendChild(nb);
+  dp.appendChild(db2);box.appendChild(dp);
 
   const fh=document.createElement('div');fh.className='sec-h';
   const fhs=document.createElement('span');fhs.textContent='첨부 서류 ('+info.files.length+')';fh.appendChild(fhs);
@@ -1914,7 +2101,7 @@ function openPharmInfo(pid,fallbackName){
   const setv=(id,val)=>{document.getElementById(id).value=val||'';};
   setv('pfName',info.name||fallbackName);setv('pfYkiho',info.ykiho);setv('pfBiz',info.biz);setv('pfOwner',info.owner);
   setv('pfTel',info.tel);setv('pfFax',info.fax);setv('pfEmail',info.email);setv('pfAddr',info.addr);setv('pfNote',info.note);
-  setv('pfOpen',info.open);setv('pfBiztype',info.biztype);setv('pfLicense',info.license);setv('pfContract',info.contract);setv('pfShip',info.ship);setv('pfBank',info.bank);
+  setv('pfOpen',info.open);setv('pfBiztype',info.biztype);setv('pfLicense',info.license);setv('pfContract',info.contract);setv('pfShip',info.ship);setv('pfBank',info.bank);setv('pfPay',info.pay);
   const md=document.getElementById('phInfoModal');md.dataset.pid=pid;md.hidden=false;
 }
 document.getElementById('pfCancel').addEventListener('click',()=>{document.getElementById('phInfoModal').hidden=true;});
@@ -1924,7 +2111,7 @@ document.getElementById('pfSave').addEventListener('click',()=>{
   const g=id=>document.getElementById(id).value.trim();
   info.name=g('pfName');info.ykiho=g('pfYkiho');info.biz=g('pfBiz');info.owner=g('pfOwner');
   info.tel=g('pfTel');info.fax=g('pfFax');info.email=g('pfEmail');info.addr=g('pfAddr');info.note=g('pfNote');
-  info.open=g('pfOpen');info.biztype=g('pfBiztype');info.license=g('pfLicense');info.contract=g('pfContract');info.ship=g('pfShip');info.bank=g('pfBank');
+  info.open=g('pfOpen');info.biztype=g('pfBiztype');info.license=g('pfLicense');info.contract=g('pfContract');info.ship=g('pfShip');info.bank=g('pfBank');info.pay=g('pfPay');
   persistLib();document.getElementById('phInfoModal').hidden=true;showToast('약국 정보가 저장되었습니다');
   if(currentView&&currentView.indexOf('ph_')===0)renderPharm(currentView);
 });
