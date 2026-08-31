@@ -653,6 +653,7 @@ const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 const SB_T=SB_URL+'/rest/v1/set_calc_state';
 const SB_H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
 let pendingPush=0,libPushT=null,dbPushT=null;
+let ioBusy=0,libRev=0;
 function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)'};el.textContent=m[s]||s;}
 async function sbGet(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=payload',{headers:SB_H});if(!r.ok)return{ok:false,row:null};const a=await r.json();return{ok:true,row:(a&&a.length?a[0]:null)};}catch(e){return{ok:false,row:null};}}
 async function sbUpsert(id,payload){try{const r=await fetch(SB_T,{method:'POST',headers:{...SB_H,Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id,payload,updated_at:new Date().toISOString()})});return r.ok;}catch(e){return false;}}
@@ -662,9 +663,12 @@ function hasLibData(l){return Object.values((l&&l.companies)||{}).some(c=>c.bran
 function ensureCompanies(){COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]=(c.key==='jp'?{brands:{merable:{rounds:[],activeId:null},lusolve:{rounds:[],activeId:null}},activeBrand:'merable'}:{rounds:[],activeId:null});});}
 function rerenderAll(){refreshDatalist();render();updateBadges();const v=currentView;if(v&&v.indexOf('ph_')===0){if(typeof renderPharm==='function')renderPharm(v);}else if(v&&v.indexOf('ch_')===0){if(typeof renderChannel==='function')renderChannel(v);}else if(v!=='calc')renderCompany(v);}
 async function syncPull(){
+  if(ioBusy>0){setSync('synced');return;}
   setSync('pull');
+  const rev=libRev;
   const [libR,dbR]=await Promise.all([sbGet('libraryV2'),sbGet('costDB')]);
   if(!libR.ok||!dbR.ok){setSync('error');return;}
+  if(rev!==libRev||ioBusy>0){setSync('synced');return;}
   if(dbR.row&&dbR.row.payload&&Object.keys(dbR.row.payload).length){costDB=dbR.row.payload;sSet('costDB',costDB);}
   else if(Object.keys(costDB).length){pushCostDBSoon();}
   if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sortAllStreams();sSet('libraryV2',lib);}
@@ -687,7 +691,7 @@ function loadState(){
 }
 let saveT=null;
 function persist(){clearTimeout(saveT);saveT=setTimeout(()=>{const ok=sSet('costDB',costDB)&&sSet('currentSet',{margin,roundupUnit,setRoundUnit,rows:rows.map(r=>({name:r.name,qty:r.qty}))});document.getElementById('saveState').textContent=ok?'저장됨 · '+new Date().toLocaleTimeString('ko-KR'):'저장 실패';},300);}
-function persistLib(){sSet('libraryV2',lib);updateBadges();pushLibSoon();}
+function persistLib(){libRev++;sSet('libraryV2',lib);updateBadges();pushLibSoon();}
 function migrateJp(){
   const jp=lib.companies.jp;if(!jp)return;
   if(!jp.brands){jp.brands={merable:{rounds:jp.rounds||[],activeId:jp.activeId||null},lusolve:{rounds:[],activeId:null}};jp.activeBrand='merable';delete jp.rounds;delete jp.activeId;}
@@ -1470,12 +1474,13 @@ function renderChannel(view){
   if(meta.id==='barofarm'){
     // 바로팜: 발주·출고는 파트너센터에서 처리 → 여기서는 조회 전용
     const lb=document.createElement('div');lb.className='link-bar';
-    const a=document.createElement('a');a.className='link-btn alt';a.href='https://partner.barofarm.co.kr/';a.target='_blank';a.rel='noopener';
+    const a=document.createElement('a');a.className='link-btn alt';a.href='https://partner.baropharm.com/dashboard';a.target='_blank';a.rel='noopener';
     a.textContent='🛒 바로팜 파트너센터 열기 (발주·출고 처리)';
     lb.appendChild(a);box.appendChild(lb);
     const nt=document.createElement('div');nt.className='hint';nt.style.margin='-6px 0 14px';
     nt.innerHTML='발주 확인·출고 처리는 <b>바로팜 파트너센터</b>에서 진행합니다. 이 화면은 주문내역을 내려받아 <b>확인·집계</b>하는 용도입니다.';
     box.appendChild(nt);
+    box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
     const lh2=document.createElement('div');lh2.className='sec-h';lh2.textContent='주문 내역 (월별 집계)';box.appendChild(lh2);
     box.appendChild(buildLedger(meta.id,{}));
@@ -1571,6 +1576,59 @@ function buildBarofarmUploader(id){
   return uz;
 }
 
+/* ---------- 바로팜 등록 상품 현황 (상품목록 2026-08-31 기준) ---------- */
+const BAROFARM_UPDATED='2026-08-31';
+/* [상품명, 규격, 정상가, 판매가, 재고, 최소주문수량, 주문단위] */
+const BAROFARM_ITEMS=[
+  ['메라블 루비알엔 앰플 클렌저','150ml',38000,12600,300,10,1],
+  ['메라블 루비알엔 토닝샷 앰플','55ml',69000,19800,300,5,1],
+  ['메라블 루비알엔 피코샷 크림','55ml',69000,19800,300,5,1],
+  ['메라블 루비알엔 앰플 겔 마스크','35g',9000,4200,200,20,1],
+  ['메라블 유쎄라블 리프팅샷 900 아이크림','15ml',69000,19800,282,5,1],
+  ['메라블 유쎄라블 타이트닝샷 600 아이크림','15ml',69000,19800,300,5,1],
+  ['메라블 유쎄라블 2X 볼륨필인 앰플','55ml',70000,21100,300,5,1],
+  ['메라블 유쎄라블 실프팅 4D 크림','55ml',79000,23400,300,5,1],
+  ['메라블 유쎄라블 부스트업 앰플 클렌저','150ml',38000,12600,300,10,1],
+  ['메라블 유쎄라블 앰플 겔 마스크','35g',9000,4200,200,20,1],
+  ['메라블 유쎄라블 올페이스 텐션 마스크팩','30ml',6000,3600,200,20,1],
+  ['메라블 포어시그널 딥 멜팅 폼클렌저','100g',36000,12000,300,10,1],
+  ['메라블 포어시그널 타이트락셀 앰플','55ml',59000,17200,0,5,1],
+  ['메라블 포어시그널 셀텐자 크림','80g',59000,17200,300,5,1],
+  ['메라블 비타터닝 나노샷 앰플','30ml',72000,22800,300,5,1],
+  ['메라블 비타터닝 액티브 캡슐 크림','30ml',72000,22800,300,5,1],
+  ['메라블 비타터닝 UV 쉴드 선크림','30ml',38000,12600,300,10,1],
+  ['메라블 클리어 클렌징 패드','15매',6900,4200,200,20,1]
+];
+function buildBarofarmItems(){
+  const lsKey='setPriceCalc:bfItemsOpen';
+  const open=localStorage.getItem(lsKey)!=='0';
+  const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
+  const soldout=BAROFARM_ITEMS.filter(r=>!r[4]).length;
+  const h=document.createElement('div');h.className='ch-head';
+  h.innerHTML='<span><span class="chev">▶</span> 📦 바로팜 등록 상품 ('+BAROFARM_ITEMS.length+'개'+(soldout?' · <span style="color:var(--warn)">품절 '+soldout+'</span>':'')+')</span><span style="font-size:10.5px;color:var(--ink-soft);font-weight:600;">갱신 '+BAROFARM_UPDATED+'</span>';
+  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  p.appendChild(h);
+  const b=document.createElement('div');b.className='ch-body';
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  const t=document.createElement('table');t.className='led-table';t.style.minWidth='620px';
+  t.innerHTML='<thead><tr><th>상품명</th><th style="width:64px;">규격</th><th style="text-align:right;">정상가</th><th style="text-align:right;background:#E4EDF7;">판매가</th><th style="text-align:right;width:64px;">재고</th><th style="text-align:right;width:78px;">최소주문</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  BAROFARM_ITEMS.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td>'+r[0]+'</td><td style="color:var(--ink-soft);font-size:11.5px;">'+r[1]+'</td>'+
+      '<td class="num-cell" style="color:var(--ink-soft);">'+fmt(r[2])+'</td>'+
+      '<td class="num-cell" style="font-weight:800;background:#F2F7FC;">'+fmt(r[3])+'</td>'+
+      '<td class="num-cell"'+(r[4]?'':' style="color:var(--warn);font-weight:800;"')+'>'+(r[4]?fmt(r[4]):'품절')+'</td>'+
+      '<td class="num-cell" style="font-size:11.5px;">'+r[5]+'개</td>';
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);box.appendChild(t);b.appendChild(box);
+  const n=document.createElement('div');n.className='hint';n.style.marginTop='8px';
+  n.innerHTML='※ 바로팜 파트너센터 <b>상품 관리</b>에 등록된 실제 값입니다. 재고·가격 변경은 파트너센터에서 하고, 이 표는 참고용입니다.<br>※ 포어시그널 타이트락셀 앰플의 정상가는 판매가표(49,000원)와 바로팜 등록값(59,000원)이 다릅니다 — 확인이 필요합니다.';
+  b.appendChild(n);p.appendChild(b);
+  return p;
+}
+
 /* ---------- 개인약국 뷰 ---------- */
 function renderPharm(view){
   const meta=pharmMeta(view);if(!meta)return;
@@ -1606,10 +1664,20 @@ function renderPharm(view){
   bUp.addEventListener('click',()=>fInput.click());
   fInput.addEventListener('change',async e=>{
     const files=[].slice.call(e.target.files);if(!files.length)return;
-    bUp.textContent='업로드 중…';bUp.disabled=true;
-    let ok=0;
-    for(const f of files){try{info.files.push(await uploadPharmFile(pid,f));ok++;}catch(err){showToast(f.name+' — '+err.message);}}
-    persistLib();showToast(ok+'개 파일이 첨부되었습니다');renderPharm(view);
+    bUp.textContent='업로드 중…';bUp.disabled=true;ioBusy++;
+    const recs=[];let fail=0;
+    for(const f of files){
+      try{recs.push(await uploadPharmFile(pid,f));}
+      catch(err){fail++;showToast(f.name+' — '+err.message);}
+    }
+    ioBusy=Math.max(0,ioBusy-1);
+    const inf=pharmInfoOf(pid);
+    recs.forEach(r=>inf.files.push(r));
+    persistLib();
+    if(recs.length)showToast(recs.length+'개 파일이 첨부되었습니다'+(fail?' · '+fail+'건 실패':''));
+    else if(fail)showToast('업로드에 실패했습니다 ('+fail+'건)');
+    e.target.value='';
+    renderPharm(view);
   });
   fh.append(bUp,fInput);box.appendChild(fh);
   if(!info.files.length){const e=document.createElement('div');e.className='empty-box';e.innerHTML='첨부된 서류가 없습니다.<br>사업자등록증·약국 명함 등을 올려두면 팀원 모두가 볼 수 있습니다.';box.appendChild(e);}
@@ -1628,8 +1696,20 @@ function renderPharm(view){
       const ac=document.createElement('div');ac.className='file-acts';
       const a=document.createElement('a');a.href=rec.url;a.target='_blank';a.rel='noopener';a.textContent='열기';
       const del=document.createElement('button');del.textContent='삭제';
-      del.addEventListener('click',async()=>{if(!confirm('첨부를 삭제할까요?\n'+rec.name))return;await deletePharmFile(rec);info.files.splice(i,1);persistLib();renderPharm(view);});
-      ac.append(a,del);c.append(th,mt,ac);fg.appendChild(c);
+      del.addEventListener('click',async()=>{
+        if(!confirm('첨부를 삭제할까요? '+rec.name))return;
+        ioBusy++;await deletePharmFile(rec);ioBusy=Math.max(0,ioBusy-1);
+        const inf=pharmInfoOf(pid);
+        const j=inf.files.findIndex(x=>x.path===rec.path);
+        if(j>=0)inf.files.splice(j,1);
+        persistLib();renderPharm(view);
+      });
+      const ren=document.createElement('button');ren.textContent='이름변경';
+      ren.addEventListener('click',()=>openModal({title:'첨부 이름 변경',desc:'표시 이름만 바뀝니다 (파일 자체는 그대로 유지).',value:rec.name,confirmText:'변경',onConfirm:v=>{
+        const inf=pharmInfoOf(pid);const t=inf.files.find(x=>x.path===rec.path);
+        if(t){t.name=v;persistLib();renderPharm(view);showToast('이름이 변경되었습니다');}
+      }}));
+      ac.append(a,ren,del);c.append(th,mt,ac);fg.appendChild(c);
     });
     box.appendChild(fg);
   }
