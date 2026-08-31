@@ -611,6 +611,30 @@
     </div>
   </div>
 </div>
+
+<div class="modal-overlay" id="taxModal" hidden>
+  <div class="modal">
+    <h3 id="txModalTitle">세금계산서 등록</h3>
+    <p>PDF를 첨부하면 작성일자·공급가액·세액을 자동으로 읽어옵니다. 값을 확인하고 저장하세요.</p>
+    <div class="form-grid">
+      <div><label>작성일자</label><input type="date" id="txDate"></div>
+      <div><label>공급가액</label><input type="number" id="txSupply" placeholder="0"></div>
+      <div><label>세액</label><input type="number" id="txVat" placeholder="0"></div>
+      <div><label>합계</label><input type="number" id="txTotal" placeholder="0"></div>
+      <div class="fg-full"><label>비고</label><input type="text" id="txNote" placeholder="예: 8월분 정산"></div>
+    </div>
+    <label class="flabel">첨부 파일</label>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button class="icon-btn" id="txFileBtn" type="button">📎 파일 첨부</button>
+      <span id="txFileInfo" style="font-size:12px;color:var(--ink-soft);">첨부 없음</span>
+      <input type="file" id="txFile" accept="application/pdf,image/*" hidden>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="txCancel">취소</button>
+      <button class="btn btn-primary" id="txSave">저장</button>
+    </div>
+  </div>
+</div>
 <div class="lightbox" id="lightbox" hidden></div>
 
 <div id="memoDock" class="memo-dock" hidden>
@@ -824,6 +848,7 @@ function renderCompany(k){
   if(k==='ready'){
     box.appendChild(buildBranchStock());
     box.appendChild(buildPriceTable('ready',false));
+    box.appendChild(buildTaxDocs('ready'));
     box.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
     const dv=document.createElement('div');dv.style.cssText='border-top:1px solid var(--line);margin:26px 0 18px;';box.appendChild(dv);
     const sh2=document.createElement('div');sh2.className='sec-h';sh2.style.marginTop='0';sh2.textContent='세트 제안 저장소 (차수별)';box.appendChild(sh2);
@@ -1113,7 +1138,7 @@ function buildLedger(id,opts){
   }
   const uz=document.createElement('div');uz.className='up-zone';
   const t1=document.createElement('div');t1.className='uz-title';t1.textContent='📄 거래명세서 업로드';
-  const t2=document.createElement('div');t2.className='uz-desc';t2.innerHTML='월별 폴더를 통째로 올리거나, PDF 여러 개를 선택/드래그하세요.<br>지점·품목·수량·금액을 자동으로 읽어 월별로 집계합니다.';
+  const t2=document.createElement('div');t2.className='uz-desc';t2.innerHTML='월별 폴더를 통째로 올리거나, PDF 여러 개를 선택/드래그하세요.<br>지점·품목·수량·금액을 자동으로 읽어 월별로 집계합니다.<br><span style="color:var(--warn)">※ 세금계산서는 아래 「🧾 세금계산서」 칸에 등록하세요 (여기서는 인식되지 않습니다)</span>';
   uz.append(t1,t2);
   const btns=document.createElement('div');btns.className='up-btns';
   const fInput=document.createElement('input');fInput.type='file';fInput.accept='.pdf';fInput.multiple=true;fInput.hidden=true;
@@ -1198,8 +1223,10 @@ function buildLedger(id,opts){
 const SB_BUCKET='pharmacy-files';
 function encPath(p){return p.split('/').map(encodeURIComponent).join('/');}
 async function uploadPharmFile(pid,file){
-  const safe=file.name.replace(/[^\w.\-가-힣]/g,'_');
-  const path=pid+'/'+Date.now()+'_'+safe;
+  // Supabase Storage는 비ASCII 키를 거부(InvalidKey)하므로 저장 키는 ASCII로 생성하고, 원본 파일명은 표시용으로 보관
+  const _m=file.name.match(/\.[A-Za-z0-9]{1,8}$/);
+  const _ext=_m?_m[0].toLowerCase():'';
+  const path=pid+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,8)+_ext;
   const r=await fetch(SB_URL+'/storage/v1/object/'+SB_BUCKET+'/'+encPath(path),
     {method:'POST',headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':file.type||'application/octet-stream','x-upsert':'true'},body:file});
   if(!r.ok)throw new Error('업로드 실패 ('+r.status+')');
@@ -1482,11 +1509,14 @@ function renderChannel(view){
     box.appendChild(nt);
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
+    box.appendChild(buildTaxDocs(meta.id));
+    box.appendChild(buildTaxDocs(meta.id));
     const lh2=document.createElement('div');lh2.className='sec-h';lh2.textContent='주문 내역 (월별 집계)';box.appendChild(lh2);
     box.appendChild(buildLedger(meta.id,{}));
     return;
   }
   box.appendChild(buildOrders(meta.id,view));
+  box.appendChild(buildTaxDocs(meta.id));
   const lh=document.createElement('div');lh.className='sec-h';lh.textContent='거래명세서 (월별 집계)';box.appendChild(lh);
   box.appendChild(buildLedger(meta.id,{}));
 }
@@ -1592,7 +1622,7 @@ const BAROFARM_ITEMS=[
   ['메라블 유쎄라블 앰플 겔 마스크','35g',9000,4200,200,20,1],
   ['메라블 유쎄라블 올페이스 텐션 마스크팩','30ml',6000,3600,200,20,1],
   ['메라블 포어시그널 딥 멜팅 폼클렌저','100g',36000,12000,300,10,1],
-  ['메라블 포어시그널 타이트락셀 앰플','55ml',59000,17200,0,5,1],
+  ['메라블 포어시그널 타이트락셀 앰플','55ml',49000,17200,0,5,1],
   ['메라블 포어시그널 셀텐자 크림','80g',59000,17200,300,5,1],
   ['메라블 비타터닝 나노샷 앰플','30ml',72000,22800,300,5,1],
   ['메라블 비타터닝 액티브 캡슐 크림','30ml',72000,22800,300,5,1],
@@ -1624,8 +1654,166 @@ function buildBarofarmItems(){
   });
   t.appendChild(tb);box.appendChild(t);b.appendChild(box);
   const n=document.createElement('div');n.className='hint';n.style.marginTop='8px';
-  n.innerHTML='※ 바로팜 파트너센터 <b>상품 관리</b>에 등록된 실제 값입니다. 재고·가격 변경은 파트너센터에서 하고, 이 표는 참고용입니다.<br>※ 포어시그널 타이트락셀 앰플의 정상가는 판매가표(49,000원)와 바로팜 등록값(59,000원)이 다릅니다 — 확인이 필요합니다.';
+  n.innerHTML='※ 바로팜 파트너센터 <b>상품 관리</b>에 등록된 실제 값입니다. 재고·가격 변경은 파트너센터에서 하고, 이 표는 참고용입니다.<br>※ 포어시그널 타이트락셀 앰플 정상가는 <b>49,000원</b>이 기준입니다. 바로팜에 59,000원으로 등록돼 있다면 파트너센터에서 수정해 주세요.';
   b.appendChild(n);p.appendChild(b);
+  return p;
+}
+
+/* ============================================================
+   세금계산서 보관·집계
+   ============================================================ */
+function taxDocsOf(id){lib.taxDocs=lib.taxDocs||{};lib.taxDocs[id]=lib.taxDocs[id]||[];return lib.taxDocs[id];}
+
+/* 전자세금계산서 PDF에서 작성일자·공급가액·세액·합계를 최대한 읽어옵니다(실패해도 수기 입력 가능) */
+function parseTaxInvoice(lines){
+  const txt=lines.join('\n');
+  const num=v=>parseInt(String(v).replace(/[^0-9]/g,''),10)||0;
+  const out={date:'',supply:0,vat:0,total:0,partner:''};
+  let m;
+  if((m=txt.match(/작성일자[^0-9]{0,12}(\d{4})[^0-9]{0,3}(\d{1,2})[^0-9]{0,3}(\d{1,2})/)))
+    out.date=m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
+  else if((m=txt.match(/(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})/)))
+    out.date=m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
+  if((m=txt.match(/공\s*급\s*가\s*액[^0-9]{0,20}([0-9,]{3,})/)))out.supply=num(m[1]);
+  if((m=txt.match(/세\s*액[^0-9]{0,20}([0-9,]{3,})/)))out.vat=num(m[1]);
+  if((m=txt.match(/(합\s*계\s*금\s*액|총\s*합\s*계)[^0-9]{0,20}([0-9,]{3,})/)))out.total=num(m[2]);
+  if(!out.total&&(out.supply||out.vat))out.total=out.supply+out.vat;
+  if(!out.vat&&out.supply&&out.total)out.vat=out.total-out.supply;
+  if((m=txt.match(/상\s*호[^가-힣A-Za-z0-9]{0,6}([^\n]{2,30})/)))out.partner=m[1].trim().slice(0,30);
+  return out;
+}
+
+let txDraft=null;
+function openTaxModal(id,recId){
+  const list=taxDocsOf(id);
+  const ex=recId?list.find(r=>r.id===recId):null;
+  txDraft={id,recId,file:ex?ex.file:null};
+  document.getElementById('txModalTitle').textContent=ex?'세금계산서 수정':'세금계산서 등록';
+  document.getElementById('txDate').value=ex?(ex.date||''):'';
+  document.getElementById('txSupply').value=ex?(ex.supply||''):'';
+  document.getElementById('txVat').value=ex?(ex.vat||''):'';
+  document.getElementById('txTotal').value=ex?(ex.total||''):'';
+  document.getElementById('txNote').value=ex?(ex.note||''):'';
+  renderTxFile();
+  document.getElementById('taxModal').hidden=false;
+}
+function renderTxFile(){
+  const el=document.getElementById('txFileInfo');
+  if(txDraft&&txDraft.file){
+    el.innerHTML='';
+    const a=document.createElement('a');a.href=txDraft.file.url;a.target='_blank';a.rel='noopener';
+    a.style.cssText='color:var(--input-blue);font-weight:700;text-decoration:none;';a.textContent='📎 '+txDraft.file.name;
+    const x=document.createElement('button');x.className='del-btn';x.textContent='✕';x.title='첨부 제거';
+    x.addEventListener('click',()=>{txDraft.file=null;renderTxFile();});
+    el.append(a,x);
+  }else el.textContent='첨부 없음';
+}
+document.getElementById('txFileBtn').addEventListener('click',()=>document.getElementById('txFile').click());
+document.getElementById('txFile').addEventListener('change',async e=>{
+  const f=e.target.files[0];if(!f)return;
+  const btn=document.getElementById('txFileBtn');btn.textContent='업로드 중…';btn.disabled=true;ioBusy++;
+  try{
+    txDraft.file=await uploadPharmFile('tax_'+txDraft.id,f);
+    // PDF면 금액 자동 인식 시도
+    if(/pdf/i.test(f.type)||/\.pdf$/i.test(f.name)){
+      try{
+        pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const doc=await pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;
+        let lines=[];
+        for(let p=1;p<=doc.numPages;p++)lines=lines.concat(pdfLines(await (await doc.getPage(p)).getTextContent()));
+        const g=parseTaxInvoice(lines);
+        const set=(el,v)=>{const t=document.getElementById(el);if(v&&!t.value)t.value=v;};
+        set('txDate',g.date);set('txSupply',g.supply||'');set('txVat',g.vat||'');set('txTotal',g.total||'');
+        if(g.date||g.total)showToast('PDF에서 금액을 읽었습니다 — 값을 확인해주세요');
+      }catch(err){}
+    }
+  }catch(err){showToast(err.message);}
+  ioBusy=Math.max(0,ioBusy-1);
+  btn.textContent='📎 파일 첨부';btn.disabled=false;e.target.value='';renderTxFile();
+});
+document.getElementById('txSupply').addEventListener('input',()=>{
+  const s=parseInt(document.getElementById('txSupply').value,10)||0;
+  if(s&&!document.getElementById('txVat').value)document.getElementById('txVat').value=Math.round(s*0.1);
+  const v=parseInt(document.getElementById('txVat').value,10)||0;
+  if(s)document.getElementById('txTotal').value=s+v;
+});
+document.getElementById('txCancel').addEventListener('click',()=>{document.getElementById('taxModal').hidden=true;txDraft=null;});
+document.getElementById('taxModal').addEventListener('click',e=>{if(e.target.id==='taxModal'){document.getElementById('taxModal').hidden=true;txDraft=null;}});
+document.getElementById('txSave').addEventListener('click',()=>{
+  if(!txDraft)return;
+  const g=id=>document.getElementById(id).value;
+  const date=g('txDate');
+  if(!date){showToast('작성일자를 입력해주세요');return;}
+  const supply=parseInt(g('txSupply'),10)||0, vat=parseInt(g('txVat'),10)||0;
+  const total=parseInt(g('txTotal'),10)||(supply+vat);
+  const list=taxDocsOf(txDraft.id);
+  if(txDraft.recId){const r=list.find(x=>x.id===txDraft.recId);if(r){r.date=date;r.supply=supply;r.vat=vat;r.total=total;r.note=g('txNote').trim();r.file=txDraft.file;}}
+  else list.push({id:uid('tax'),date,supply,vat,total,note:g('txNote').trim(),file:txDraft.file});
+  list.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  persistLib();
+  const kid=txDraft.id;txDraft=null;
+  document.getElementById('taxModal').hidden=true;showToast('세금계산서가 저장되었습니다');
+  refreshCurrentView();
+});
+function refreshCurrentView(){
+  const v=currentView;
+  if(v==='calc')return;
+  if(v.indexOf('ph_')===0)renderPharm(v);
+  else if(v.indexOf('ch_')===0)renderChannel(v);
+  else renderCompany(v);
+}
+function buildTaxDocs(id){
+  const list=taxDocsOf(id);
+  const lsKey='setPriceCalc:taxOpen:'+id;
+  const open=localStorage.getItem(lsKey)==='1';
+  const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
+  const sum=list.reduce((a,b)=>a+(b.total||0),0);
+  const h=document.createElement('div');h.className='ch-head';
+  h.innerHTML='<span><span class="chev">▶</span> 🧾 세금계산서 ('+list.length+'건)</span><span style="font-size:11px;color:var(--ink-soft);font-weight:700;font-family:var(--mono);">합계 '+fmt(sum)+'원</span>';
+  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  p.appendChild(h);
+  const b=document.createElement('div');b.className='ch-body';
+  const bar=document.createElement('div');bar.style.cssText='display:flex;justify-content:flex-end;margin-bottom:9px;';
+  const add=document.createElement('button');add.className='icon-btn';add.textContent='＋ 세금계산서 등록';
+  add.addEventListener('click',()=>openTaxModal(id,null));
+  bar.appendChild(add);b.appendChild(bar);
+  if(!list.length){
+    const e=document.createElement('div');e.className='empty-box';e.style.padding='20px';
+    e.innerHTML='등록된 세금계산서가 없습니다.<br>PDF를 첨부하면 작성일자·공급가액·세액을 자동으로 읽어옵니다 (확인 후 저장).';
+    b.appendChild(e);
+  }else{
+    const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='560px';
+    t.innerHTML='<thead><tr><th style="width:96px;">작성일자</th><th style="text-align:right;">공급가액</th><th style="text-align:right;">세액</th><th style="text-align:right;">합계</th><th>첨부 / 비고</th><th style="width:56px;"></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    list.forEach(r=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td>'+r.date+'</td><td class="num-cell">'+fmt(r.supply)+'</td><td class="num-cell">'+fmt(r.vat)+'</td><td class="num-cell" style="font-weight:800;">'+fmt(r.total)+'</td>';
+      const tdF=document.createElement('td');tdF.style.fontSize='11.5px';
+      if(r.file){const a=document.createElement('a');a.href='#';a.style.cssText='color:var(--input-blue);font-weight:700;text-decoration:none;';a.textContent='📎 '+r.file.name;
+        a.addEventListener('click',ev=>{ev.preventDefault();openLightbox(r.file);});tdF.appendChild(a);}
+      else{const sp=document.createElement('span');sp.style.color='var(--ink-soft)';sp.textContent='첨부 없음';tdF.appendChild(sp);}
+      if(r.note){const d=document.createElement('div');d.style.cssText='color:var(--ink-soft);font-size:10.5px;margin-top:2px;';d.textContent=r.note;tdF.appendChild(d);}
+      tr.appendChild(tdF);
+      const tdA=document.createElement('td');
+      const ed=document.createElement('button');ed.className='del-btn';ed.textContent='✎';ed.title='수정';
+      ed.addEventListener('click',()=>openTaxModal(id,r.id));
+      const dl=document.createElement('button');dl.className='del-btn';dl.textContent='✕';dl.title='삭제';
+      dl.addEventListener('click',async()=>{
+        if(!confirm('이 세금계산서를 삭제할까요? '+r.date))return;
+        if(r.file){ioBusy++;await deletePharmFile(r.file);ioBusy=Math.max(0,ioBusy-1);}
+        const l2=taxDocsOf(id);const j=l2.findIndex(x=>x.id===r.id);if(j>=0)l2.splice(j,1);
+        persistLib();refreshCurrentView();
+      });
+      tdA.append(ed,dl);tr.appendChild(tdA);tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.appendChild(t);b.appendChild(box);
+    const tot=document.createElement('div');tot.className='agg-total';
+    const ts=list.reduce((a,x)=>a+(x.supply||0),0),tv=list.reduce((a,x)=>a+(x.vat||0),0);
+    tot.innerHTML='<span>공급가액 <span class="num-mono">'+fmt(ts)+'</span>원</span><span>세액 <span class="num-mono">'+fmt(tv)+'</span>원</span><span>합계 <span class="num-mono">'+fmt(sum)+'</span>원</span>';
+    b.appendChild(tot);
+  }
+  p.appendChild(b);
   return p;
 }
 
@@ -1716,6 +1904,7 @@ function renderPharm(view){
 
   box.appendChild(buildOrders(pid,view));
 
+  box.appendChild(buildTaxDocs(pid));
   const lh=document.createElement('div');lh.className='sec-h';lh.textContent='거래명세서 (월별 집계)';box.appendChild(lh);
   box.appendChild(buildLedger(pid,{}));
 }
