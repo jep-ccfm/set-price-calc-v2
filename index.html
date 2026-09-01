@@ -749,21 +749,40 @@ const SB_T=SB_URL+'/rest/v1/set_calc_state';
 const SB_H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
 let pendingPush=0,libPushT=null,dbPushT=null;
 let ioBusy=0,libRev=0;
-function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)'};el.textContent=m[s]||s;}
-async function sbGet(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=payload',{headers:SB_H});if(!r.ok)return{ok:false,row:null};const a=await r.json();return{ok:true,row:(a&&a.length?a[0]:null)};}catch(e){return{ok:false,row:null};}}
+function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)',conflict:'⚠ 다른 사람이 먼저 저장함 — 최신본을 불러왔습니다'};el.textContent=m[s]||s;}
+let lastRemoteAt=null;   // 마지막으로 확인한 서버 저장 시각
+async function sbGet(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=payload,updated_at',{headers:SB_H});if(!r.ok)return{ok:false,row:null};const a=await r.json();return{ok:true,row:(a&&a.length?a[0]:null)};}catch(e){return{ok:false,row:null};}}
+async function sbStamp(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=updated_at',{headers:SB_H});if(!r.ok)return undefined;const a=await r.json();return a&&a.length?a[0].updated_at:null;}catch(e){return undefined;}}
 async function sbUpsert(id,payload){try{const r=await fetch(SB_T,{method:'POST',headers:{...SB_H,Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id,payload,updated_at:new Date().toISOString()})});return r.ok;}catch(e){return false;}}
-function pushLibSoon(){clearTimeout(libPushT);setSync('saving');pendingPush++;libPushT=setTimeout(async()=>{const ok=await sbUpsert('libraryV2',lib);pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');},600);}
+function pushLibSoon(){
+  clearTimeout(libPushT);setSync('saving');pendingPush++;
+  libPushT=setTimeout(async()=>{
+    /* 내가 마지막으로 본 이후 다른 사람이 저장했는지 확인 — 남의 작업을 덮어쓰지 않기 위함 */
+    const remote=await sbStamp('libraryV2');
+    if(remote!==undefined&&lastRemoteAt&&remote&&remote!==lastRemoteAt){
+      pendingPush=Math.max(0,pendingPush-1);
+      setSync('conflict');
+      showToast('다른 사람이 먼저 저장했습니다 — 최신본을 불러옵니다. 방금 변경한 내용은 다시 입력해 주세요.');
+      await syncPull(true);
+      return;
+    }
+    const ok=await sbUpsert('libraryV2',lib);
+    if(ok)lastRemoteAt=await sbStamp('libraryV2');
+    pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');
+  },600);
+}
 function pushCostDBSoon(){clearTimeout(dbPushT);setSync('saving');pendingPush++;dbPushT=setTimeout(async()=>{const ok=await sbUpsert('costDB',costDB);pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');},600);}
 function hasLibData(l){return Object.values((l&&l.companies)||{}).some(c=>c.brands?Object.values(c.brands).some(b=>(b.rounds||[]).length):(c.rounds||[]).length);}
 function ensureCompanies(){COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]=(c.key==='jp'?{brands:{merable:{rounds:[],activeId:null},lusolve:{rounds:[],activeId:null}},activeBrand:'merable'}:{rounds:[],activeId:null});});}
 function rerenderAll(){refreshDatalist();render();updateBadges();const v=currentView;if(v==='home'){if(typeof renderHome==='function')renderHome();}else if(v==='geo'){if(typeof renderGeo==='function')renderGeo();}else if(v==='trash'){if(typeof renderTrash==='function')renderTrash();}else if(v&&v.indexOf('ph_')===0){if(typeof renderPharm==='function')renderPharm(v);}else if(v&&v.indexOf('ch_')===0){if(typeof renderChannel==='function')renderChannel(v);}else if(v!=='calc')renderCompany(v);}
-async function syncPull(){
-  if(ioBusy>0){setSync('synced');return;}
+async function syncPull(force){
+  if(ioBusy>0&&!force){setSync('synced');return;}
   setSync('pull');
   const rev=libRev;
   const [libR,dbR]=await Promise.all([sbGet('libraryV2'),sbGet('costDB')]);
   if(!libR.ok||!dbR.ok){setSync('error');return;}
-  if(rev!==libRev||ioBusy>0){setSync('synced');return;}
+  if(!force&&(rev!==libRev||ioBusy>0)){setSync('synced');return;}
+  if(libR.row)lastRemoteAt=libR.row.updated_at||lastRemoteAt;
   if(dbR.row&&dbR.row.payload&&Object.keys(dbR.row.payload).length){costDB=dbR.row.payload;sSet('costDB',costDB);}
   else if(Object.keys(costDB).length){pushCostDBSoon();}
   if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sortAllStreams();sSet('libraryV2',lib);}
@@ -771,6 +790,15 @@ async function syncPull(){
   rerenderAll();
   setSync('synced');
 }
+
+/* 60초마다 조용히 최신본 확인 (입력 중·저장 중에는 건너뜀) */
+setInterval(async()=>{
+  if(document.hidden||ioBusy>0||pendingPush>0)return;
+  const ae=document.activeElement;
+  if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;
+  const remote=await sbStamp('libraryV2');
+  if(remote&&lastRemoteAt&&remote!==lastRemoteAt)syncPull();
+},60000);
 
 function loadState(){
   const db=sGet('costDB');costDB=db||{...DEFAULT_DB};
