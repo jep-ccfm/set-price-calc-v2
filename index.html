@@ -1590,6 +1590,7 @@ function renderChannel(view){
     box.appendChild(nt);
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
+    box.appendChild(buildChannelGeo('barofarm','바로팜'));
     box.appendChild(buildTaxDocs(meta.id));
     const lh2=document.createElement('div');lh2.className='sec-h';lh2.textContent='주문 내역 (월별 집계)';box.appendChild(lh2);
     box.appendChild(buildLedger(meta.id,{}));
@@ -1598,6 +1599,7 @@ function renderChannel(view){
   if(meta.id==='pharmmall'){
     box.appendChild(buildMallSync());
     box.appendChild(buildMallOrders());
+    box.appendChild(buildChannelGeo('pharmmall','자사몰'));
     box.appendChild(buildApplicants());
   }
   box.appendChild(buildOrders(meta.id,view));
@@ -2235,21 +2237,25 @@ function haversineM(a,b){
   const s=Math.sin(dLat/2)**2+Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLng/2)**2;
   return Math.round(2*R*Math.asin(Math.sqrt(s)));
 }
-/* 카카오 지도 SDK 동적 로드 (JavaScript 키 — 각자 브라우저에만 저장) */
-let _kakaoP=null;
+/* 구글 지도 JS API 동적 로드 (키는 각자 브라우저에만 저장) */
+let _gmapsP=null;
 function loadMaps(){
-  if(window.kakao&&window.kakao.maps&&window.kakao.maps.services)return Promise.resolve();
-  if(_kakaoP)return _kakaoP;
+  if(window.google&&google.maps&&google.maps.Geocoder)return Promise.resolve();
+  if(_gmapsP)return _gmapsP;
   const k=mapsKey();
-  if(!k)return Promise.reject(new Error('카카오 JavaScript 키가 없습니다 (아래 설정에서 입력)'));
-  _kakaoP=new Promise((ok,no)=>{
+  if(!k)return Promise.reject(new Error('구글 지도 API 키가 없습니다 (아래 설정에서 입력)'));
+  _gmapsP=new Promise((ok,no)=>{
+    window.gm_authFailure=function(){_gmapsP=null;no(new Error('인증 실패 — 키가 잘못됐거나 리퍼러 제한/결제계정 설정을 확인하세요'));};
     const s=document.createElement('script');
-    s.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(k)+'&libraries=services&autoload=false';
-    s.onload=()=>{try{window.kakao.maps.load(()=>ok());}catch(e){_kakaoP=null;no(new Error('카카오 SDK 초기화 실패'));}};
-    s.onerror=()=>{_kakaoP=null;no(new Error('카카오 SDK 로드 실패 (키·플랫폼 도메인 등록 확인)'));};
+    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR&loading=async';
+    s.async=true;
+    s.onload=()=>{ if(window.google&&google.maps&&google.maps.Geocoder)ok();
+      else setTimeout(()=>{ if(window.google&&google.maps&&google.maps.Geocoder)ok();
+        else{_gmapsP=null;no(new Error('지도 API 초기화 실패'));} },800); };
+    s.onerror=()=>{_gmapsP=null;no(new Error('지도 API 로드 실패 (네트워크·키 확인)'));};
     document.head.appendChild(s);
   });
-  return _kakaoP;
+  return _gmapsP;
 }
 /* 상세주소가 붙으면 검색이 실패하므로 단계적으로 줄여가며 재시도 */
 function addrVariants(addr){
@@ -2257,50 +2263,35 @@ function addrVariants(addr){
   const out=[];
   const push=v=>{v=String(v||'').replace(/\s{2,}/g,' ').trim();if(v&&out.indexOf(v)<0)out.push(v);};
   push(base);
-  push(base.replace(/[(（][^)）]*[)）]/g,' '));                 // 괄호 제거
-  push(base.split(',')[0]);                                    // 쉼표 앞(본 주소)만
+  push(base.replace(/[(（][^)）]*[)）]/g,' '));
+  push(base.split(',')[0]);
   push(base.replace(/[(（][^)）]*[)）]/g,' ').split(',')[0]);
-  // 뒤 토큰을 하나씩 떼며 재시도 (예: '... 275 두타몰 B2층' → '... 275')
   let toks=base.replace(/[(（][^)）]*[)）]/g,' ').split(',')[0].trim().split(/\s+/);
   while(toks.length>3){toks=toks.slice(0,-1);push(toks.join(' '));}
   return out;
 }
-function kakaoAddressSearch(geo,q){
+function gGeocode(gc,q){
   return new Promise(ok=>{
-    geo.addressSearch(q,(res,st)=>{
-      if(st===kakao.maps.services.Status.OK&&res&&res[0]){
-        const r=res[0];
-        ok({hit:{lat:parseFloat(r.y),lng:parseFloat(r.x),
-            formatted:(r.road_address&&r.road_address.address_name)||r.address_name||q},status:st});
-      }else ok({hit:null,status:String(st)});
-    });
-  });
-}
-function kakaoKeywordSearch(q){
-  return new Promise(ok=>{
-    const ps=new kakao.maps.services.Places();
-    ps.keywordSearch(q,(res,st)=>{
-      if(st===kakao.maps.services.Status.OK&&res&&res[0]){
-        const r=res[0];
-        ok({hit:{lat:parseFloat(r.y),lng:parseFloat(r.x),
-            formatted:(r.road_address_name||r.address_name||q)},status:st});
+    gc.geocode({address:q,region:'KR'},(res,st)=>{
+      if(st==='OK'&&res&&res[0]){
+        const l=res[0].geometry.location;
+        ok({hit:{lat:l.lat(),lng:l.lng(),formatted:res[0].formatted_address||q},status:st});
       }else ok({hit:null,status:String(st)});
     });
   });
 }
 async function geocodeAddr(addr){
   await loadMaps();
-  const geo=new kakao.maps.services.Geocoder();
+  const gc=new google.maps.Geocoder();
   const tried=[];let last='';
   for(const v of addrVariants(addr)){
-    const r=await kakaoAddressSearch(geo,v);
+    const r=await gGeocode(gc,v);
     if(r.hit)return r.hit;
     tried.push(v);last=r.status;
+    if(r.status==='REQUEST_DENIED')throw new Error('요청 거부(REQUEST_DENIED) — Geocoding API 사용설정·리퍼러 제한 확인');
+    if(r.status==='OVER_QUERY_LIMIT')throw new Error('호출 한도 초과(OVER_QUERY_LIMIT) — 결제 계정 확인');
   }
-  // 주소 검색 실패 → 장소(키워드) 검색으로 재시도
-  const kw=await kakaoKeywordSearch(String(addr||'').trim());
-  if(kw.hit)return kw.hit;
-  throw new Error('주소 인식 실패 ('+(last||kw.status)+') · 시도: '+tried.slice(0,3).join(' / '));
+  throw new Error('주소 인식 실패 ('+last+') · 시도: '+tried.slice(0,3).join(' / '));
 }
 /* 좌표가 등록된 레디영 지점과의 최단거리 판정 */
 function judgePoint(pt){
@@ -2338,18 +2329,18 @@ function renderGeo(){
   // API 키 설정
   const kp=document.createElement('div');kp.className='ch-panel'+(mapsKey()?'':' open');
   const kh=document.createElement('div');kh.className='ch-head';
-  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ 카카오 지도 API 키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
+  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ 구글 지도 API 키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
   kh.addEventListener('click',()=>kp.classList.toggle('open'));
   kp.appendChild(kh);
   const kb=document.createElement('div');kb.className='ch-body';
   const kn=document.createElement('div');kn.className='hint';kn.style.marginBottom='9px';
-  kn.innerHTML='주소를 좌표로 바꾸려면 키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br>1) <b>카카오 개발자센터</b>(developers.kakao.com) 로그인 → 애플리케이션 추가<br>2) <b>앱 키 → JavaScript 키</b> 복사해서 아래에 붙여넣기<br>3) <b>플랫폼 → Web</b>에 <code>https://jep-ccfm.github.io</code> 등록 (필수)<br>4) <b>카카오맵</b> 제품 사용 설정 — 신용카드 등록 불필요, 무료 한도 충분';
+  kn.innerHTML='주소를 좌표로 바꾸려면 키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br>1) <b>Google Cloud Console</b> → 프로젝트 생성 → <b>Maps JavaScript API</b> + <b>Geocoding API</b> 사용 설정<br>2) <b>사용자 인증 정보 → API 키</b> 생성 후 아래에 붙여넣기<br>3) 키 <b>애플리케이션 제한 → HTTP 리퍼러</b>에 <code>jep-ccfm.github.io/*</code> 등록<br>4) 결제 계정 연결 필요(월 $200 무료 크레딧 — 지오코딩 약 4만 건까지 무료)';
   kb.appendChild(kn);
   const kr=document.createElement('div');kr.style.cssText='display:flex;gap:8px;flex-wrap:wrap;';
-  const ki=document.createElement('input');ki.type='password';ki.placeholder='카카오 JavaScript 키';ki.value=mapsKey();
+  const ki=document.createElement('input');ki.type='password';ki.placeholder='AIza…';ki.value=mapsKey();
   ki.style.cssText='flex:1;min-width:220px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:var(--mono);';
   const kbtn=document.createElement('button');kbtn.className='btn btn-primary btn-sm';kbtn.textContent='저장';
-  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_kakaoP=null;showToast('키가 저장되었습니다');renderGeo();});
+  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_gmapsP=null;showToast('키가 저장되었습니다');renderGeo();});
   kr.append(ki,kbtn);kb.appendChild(kr);kp.appendChild(kb);box.appendChild(kp);
 
   // 레디영 지점 좌표
@@ -2365,7 +2356,7 @@ function renderGeo(){
     const lg=document.getElementById('geoLog');lg.classList.add('show');lg.textContent='변환 중…';
     let ok=0,fail=0;const lines=[];
     try{ await loadMaps(); }
-    catch(e){ lg.textContent='✕ '+e.message+NL+NL+'확인하세요:'+NL+'· 카카오 개발자센터 → 앱 키 → JavaScript 키가 맞는지'+NL+'· 플랫폼 → Web 에 https://jep-ccfm.github.io 등록했는지'+NL+'· 카카오맵 제품 사용 설정을 켰는지';
+      catch(e){ lg.textContent='✕ '+e.message+NL+NL+'확인하세요:'+NL+'· Maps JavaScript API · Geocoding API 사용 설정했는지'+NL+'· API 키 리퍼러 제한에 jep-ccfm.github.io/* 등록했는지'+NL+'· 결제 계정이 연결돼 있는지(월 $200 무료 크레딧)';
       geoAll.textContent='📍 주소 일괄 변환';geoAll.disabled=false;return; }
     for(const st of g.sites){
       if(!st.addr){lines.push('· '+st.name+' — 주소 없음');continue;}
@@ -2390,20 +2381,20 @@ function renderGeo(){
     const out=[];
     const k=mapsKey();
     out.push('① 현재 도메인: '+location.origin);
-    out.push('   → 카카오 개발자센터 [내 애플리케이션 → 앱 설정 → 플랫폼 → Web]에');
-    out.push('      정확히 이 값이 등록돼 있어야 합니다 (경로 없이 도메인만)');
-    out.push('② 키: '+(k?('입력됨 · 앞 6자리 '+k.slice(0,6)+'… · 길이 '+k.length+(k.length===32?' (JavaScript 키 형식 정상)':' (⚠ JavaScript 키는 보통 32자입니다)')):'없음'));
+    out.push('   → Google Cloud [API 키 → 애플리케이션 제한 → HTTP 리퍼러]에');
+    out.push('      jep-ccfm.github.io/* 형태로 등록돼 있어야 합니다');
+    out.push('② 키: '+(k?('입력됨 · 앞 6자리 '+k.slice(0,6)+'… · 길이 '+k.length+(/^AIza/.test(k)?' (구글 키 형식 정상)':' (⚠ 구글 키는 보통 AIza로 시작합니다)')):'없음'));
     if(!k){lg.textContent=out.join(NL);return;}
     // SDK 응답 직접 확인
     out.push('③ SDK 응답 확인…');
     lg.textContent=out.join(NL);
-    const url='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(k)+'&libraries=services&autoload=false';
+    const url='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR';
     try{
       const r=await fetch(url,{method:'GET'});
       const body=(await r.text()).slice(0,300);
       out.push('   HTTP '+r.status+' '+(r.statusText||''));
-      if(r.status===401)out.push('   ⛔ 401 = 키가 틀렸거나 이 도메인이 등록되지 않았습니다');
-      else if(r.status===403)out.push('   ⛔ 403 = 도메인 미등록 또는 카카오맵 사용설정 꺼짐');
+      if(r.status===403)out.push('   ⛔ 403 = 리퍼러 제한에 이 도메인이 없거나 API 미사용 설정');
+      else if(r.status===401)out.push('   ⛔ 401 = 키가 유효하지 않습니다');
       else if(r.status===200)out.push('   ✅ 응답 정상');
       if(body&&r.status!==200)out.push('   응답: '+body.replace(/\s+/g,' ').slice(0,200));
     }catch(e){
@@ -2415,7 +2406,7 @@ function renderGeo(){
     out.push('④ SDK 로드 시도…');lg.textContent=out.join(NL);
     try{await loadMaps();out.push('   ✅ 로드 성공');}
     catch(e){out.push('   ⛔ 실패 — '+e.message);lg.textContent=out.join(NL);return;}
-    out.push('⑤ services: '+(!!(window.kakao&&kakao.maps&&kakao.maps.services)?'사용 가능':'사용 불가'));
+    out.push('⑤ Geocoder: '+(!!(window.google&&google.maps&&google.maps.Geocoder)?'사용 가능':'사용 불가'));
     try{const p=await geocodeAddr('서울특별시 강남구 테헤란로5길 51-16');
       out.push('⑥ 샘플 주소 변환: ✅ 성공 → '+p.formatted+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
     catch(e){out.push('⑥ 샘플 주소 변환: ⛔ 실패 — '+e.message);}
@@ -2996,6 +2987,95 @@ function renderHome(){
   const a2=document.createElement('a');a2.className='link-btn';a2.href=MALL_SHEET_URL;a2.target='_blank';a2.rel='noopener';
   a2.textContent='📊 자사몰 주문 시트';qb.appendChild(a2);
   box.appendChild(qb);
+}
+
+/* ---------- 채널별 주문 약국 좌표·2km 판정 ---------- */
+function collectChannelPharmacies(id){
+  const out={},led=ledgerOf(id);
+  Object.keys(led.months||{}).forEach(m=>(led.months[m].docs||[]).forEach(d=>{
+    const nm=d.branch||'';if(!nm)return;
+    const addr=(d.meta&&(d.meta.배송지||d.meta.약국주소))||'';
+    if(!out[nm])out[nm]={name:nm,addr,orders:0,total:0};
+    if(addr&&!out[nm].addr)out[nm].addr=addr;
+    out[nm].orders++;out[nm].total+=d.total||0;
+  }));
+  return Object.values(out).sort((a,b)=>b.total-a.total);
+}
+function buildChannelGeo(id,label){
+  const list=collectChannelPharmacies(id);
+  const g=geoStore();
+  const wrap=document.createElement('div');
+  const lsKey='setPriceCalc:chGeo:'+id;
+  const open=localStorage.getItem(lsKey)==='1';
+  const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
+  let okC=0,ngC=0,unC=0;
+  list.forEach(x=>{
+    const c=x.addr?g.checks[x.addr]:null;
+    const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+    if(j&&j.ok===true)okC++;else if(j&&j.ok===false)ngC++;else unC++;
+  });
+  const h=document.createElement('div');h.className='ch-head';
+  h.innerHTML='<span><span class="chev">▶</span> 📍 '+label+' 약국 좌표 · 2km 판정 ('+list.length+'곳)</span>'+
+    '<span style="font-size:11px;font-weight:700;">'+
+    (okC?'<span style="color:var(--good);">가능 '+okC+'</span> ':'')+
+    (ngC?'<span style="color:var(--warn);">불가 '+ngC+'</span> ':'')+
+    (unC?'<span style="color:var(--ink-soft);">미판정 '+unC+'</span>':'')+'</span>';
+  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  p.appendChild(h);
+  const b=document.createElement('div');b.className='ch-body';
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-bottom:9px;flex-wrap:wrap;';
+  const run=document.createElement('button');run.className='icon-btn';run.textContent='📍 좌표 변환 · 판정';
+  const lg=document.createElement('div');lg.className='up-log';lg.style.cssText='max-height:180px;margin-bottom:9px;white-space:pre-wrap;';
+  run.addEventListener('click',async()=>{
+    const NL=String.fromCharCode(10);
+    run.textContent='판정 중…';run.disabled=true;lg.classList.add('show');lg.textContent='시작…';
+    const lines=[];let ok=0,fail=0;
+    try{await loadMaps();}
+    catch(e){lg.textContent='✕ '+e.message;run.textContent='📍 좌표 변환 · 판정';run.disabled=false;return;}
+    for(const x of list){
+      if(!x.addr){lines.push('· '+x.name+' — 주소 없음');continue;}
+      try{const r=await judgeAddress(x.addr);ok++;
+        lines.push((r.ok===true?'✅ ':(r.ok===false?'⛔ ':'· '))+x.name+' — '+
+          (r.ok===null?(r.reason||''):(r.nearest+' '+distLabel(r.dist))));}
+      catch(e){fail++;lines.push('✕ '+x.name+' — '+e.message);}
+      lg.textContent=lines.join(NL);
+    }
+    lg.textContent='완료 — 판정 '+ok+'곳'+(fail?' · 실패 '+fail+'곳':'')+NL+lines.join(NL);
+    run.textContent='📍 좌표 변환 · 판정';run.disabled=false;
+    const keep=lg.textContent;refreshCurrentView();
+    showToast(label+' 약국 '+ok+'곳 판정 완료');
+  });
+  bar.appendChild(run);b.append(bar,lg);
+  if(!list.length){
+    const e=document.createElement('div');e.className='empty-box';e.style.padding='18px';
+    e.innerHTML='주문 내역이 없습니다. 주문을 먼저 등록하면 약국 주소가 여기로 모입니다.';
+    b.appendChild(e);
+  }else{
+    const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='700px';
+    t.innerHTML='<thead><tr><th style="width:130px;">약국</th><th>주소</th><th style="width:130px;">좌표</th>'+
+      '<th style="text-align:right;width:60px;">주문</th><th style="width:150px;">판정</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    list.forEach(x=>{
+      const c=x.addr?g.checks[x.addr]:null;
+      const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+      let v='<span style="color:var(--ink-soft);">미판정</span>';
+      if(!x.addr)v='<span style="color:var(--warn);">주소 없음</span>';
+      else if(j&&j.ok===true)v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+      else if(j&&j.ok===false)v='<span style="color:var(--warn);font-weight:800;">⛔ 불가</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+      else if(j&&j.ok===null)v='<span style="color:var(--warn);">지점 좌표 필요</span>';
+      const tr=document.createElement('tr');
+      if(j&&j.ok===false)tr.style.background='#FBEDE6';else if(j&&j.ok===true)tr.style.background='#F4FAF6';
+      tr.innerHTML='<td><b>'+x.name+'</b></td>'+
+        '<td style="font-size:11px;color:var(--ink-soft);">'+(x.addr||'-')+'</td>'+
+        '<td class="num-cell" style="font-size:10.5px;">'+((c&&typeof c.lat==='number')?(c.lat.toFixed(5)+', '+c.lng.toFixed(5)):'<span style="color:var(--warn);">미변환</span>')+'</td>'+
+        '<td class="num-cell">'+x.orders+'건</td><td style="font-size:12px;">'+v+'</td>';
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.appendChild(t);b.appendChild(box);
+  }
+  p.appendChild(b);wrap.appendChild(p);
+  return wrap;
 }
 
 /* ---------- 개인약국 뷰 ---------- */
