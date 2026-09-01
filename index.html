@@ -667,6 +667,14 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="docModal" hidden>
+  <div class="modal modal-lg" style="max-width:680px;">
+    <h3 id="docModalTitle">상세</h3>
+    <div id="docModalBody" style="max-height:66vh;overflow-y:auto;"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="docClose">닫기</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="applicantModal" hidden>
   <div class="modal modal-lg">
     <h3 id="apModalTitle">가입 신청 등록</h3>
@@ -678,6 +686,8 @@
       <div><label>대표자 / 약사명</label><input type="text" id="apOwner"></div>
       <div><label>약사 면허번호</label><input type="text" id="apLicense"></div>
       <div><label>연락처</label><input type="text" id="apTel"></div>
+      <div><label>자사몰 가입 아이디</label><input type="text" id="apUid"></div>
+      <div><label>생년월일</label><input type="text" id="apBirth" placeholder="예: 1988-12-09"></div>
       <div class="fg-full"><label>사업장 주소 (사업자등록증 기준)</label><input type="text" id="apAddr" placeholder="예: 서울특별시 강남구 도산대로 107"></div>
       <div class="fg-full"><label>비고</label><input type="text" id="apNote"></div>
     </div>
@@ -900,8 +910,12 @@ function renderCompany(k){
   const box=document.getElementById('view-company');box.innerHTML='';
   const brandInfo=c.brands?JP_BRANDS.find(b=>b.key===c.activeBrand):null;
   const head=document.createElement('header');head.className='page-head';
-  head.innerHTML='<div class="eyebrow">SET LIBRARY · 세트 저장소</div><h1><span class="flag">'+meta.flag+'</span>'+meta.name+(brandInfo?' <span style="color:var(--accent);">· '+brandInfo.name+'</span>':'')+'</h1><p class="sub">'+meta.desc+'</p>';
+  head.innerHTML='<div class="eyebrow">SET LIBRARY · 세트 저장소</div>'+
+    '<h1><span class="flag">'+meta.flag+'</span>'+meta.name+(brandInfo?' <span style="color:var(--accent);">· '+brandInfo.name+'</span>':'')+
+    (k==='ready'?' <button class="icon-btn" id="readyCtrBtn" style="vertical-align:middle;margin-left:9px;font-size:12px;">📄 계약서 확인</button>':'')+'</h1>'+
+    '<p class="sub">'+meta.desc+'</p>';
   box.appendChild(head);
+  if(k==='ready')document.getElementById('readyCtrBtn').addEventListener('click',openReadyContract);
 
   // 레디영: 정산 시트 + 월별 거래명세서 원장
   // 홍콩: 발주서(XLSX) 업로드 → 월별 집계
@@ -2349,6 +2363,28 @@ function renderGeo(){
     '<p class="sub">레디영 계약상 <b>레디영 지점 반경 2km 이내</b> 약국은 거래할 수 없습니다. 지점 좌표를 등록해두면 약국 주소만 넣어도 가능/불가를 자동 판정합니다.</p>';
   box.appendChild(head);
 
+  // 계약 근거
+  const bp=document.createElement('div');bp.className='ch-panel';
+  const bh2=document.createElement('div');bh2.className='ch-head';
+  bh2.innerHTML='<span><span class="chev">▶</span> 📄 판정 기준 — 계약 근거</span>'+
+    '<span style="font-size:11px;font-weight:700;color:var(--ink-soft);">직선거리 2,000m</span>';
+  bh2.addEventListener('click',()=>bp.classList.toggle('open'));
+  bp.appendChild(bh2);
+  const bb2=document.createElement('div');bb2.className='ch-body';
+  bb2.innerHTML='<div style="border-left:3px solid var(--line);padding:2px 0 2px 11px;margin-bottom:11px;font-size:12.5px;line-height:1.75;">'+
+    '<b>㈜레디영 판매 공급 계약서</b> (2025-10-17 날인 · 유효기간 2025-10-20 ~ 2027-10-19)<br>'+
+    '<b>제4조(판매매권) 4항</b><br>'+
+    '<i>“을”은 “갑”이 판매하고 있는 동일 상권의 다른 동일 상권에서 <b>반경 2km 이내</b> ‘레디영 약국이 아닌 다른 약국’에는 유통하지 않는다</i>'+
+    '</div>'+
+    '<div class="hint" style="line-height:1.8;">'+
+    '· <b>“반경”이므로 직선거리</b>로 계산합니다 (Haversine, 지구반경 6,371km). 도보·차량 경로 거리가 아닙니다.<br>'+
+    '· 의무 주체는 <b>“을”(당사)</b>입니다 — 레디영 지점 2km 안의 다른 약국에 당사가 유통하지 않을 의무입니다.<br>'+
+    '· <b>레디영 지점끼리는 대상이 아닙니다</b> (“레디영 약국이 아닌 다른 약국”).<br>'+
+    '· 대상 채널: <b>바로팜 · 자사몰 약사 전용관 · 개인약국</b> (국내 약국 유통). 일본라방·홍콩은 해당 없음.<br>'+
+    '· 레디영 신규 출점 시 <b>지점 좌표를 추가</b>해야 판정이 정확합니다.'+
+    '</div>';
+  bp.appendChild(bb2);box.appendChild(bp);
+
   // API 키 설정
   const kp=document.createElement('div');kp.className='ch-panel'+(mapsKey()?'':' open');
   const kh=document.createElement('div');kh.className='ch-head';
@@ -2534,6 +2570,131 @@ function renderPharmJudge(box,list){
 }
 
 /* ============================================================
+   공용 상세 모달 (계약서 · 약사회원 서류)
+   ============================================================ */
+const SB_PUB=SB_URL+'/storage/v1/object/public/'+SB_BUCKET+'/';
+const READY_CONTRACT=[
+  {name:'레디영 판매 공급 계약서 (날인 완료).pdf',url:SB_PUB+'contracts/redyoung_signed.pdf',type:'application/pdf',tag:'원본 · 날인본'},
+  {name:'레디영 판매 공급 계약서 (수정본).docx',url:SB_PUB+'contracts/redyoung_final.docx',type:'docx',tag:'편집용 워드'}
+];
+function docModalOpen(title,build){
+  document.getElementById('docModalTitle').textContent=title;
+  const b=document.getElementById('docModalBody');b.innerHTML='';build(b);
+  document.getElementById('docModal').hidden=false;
+}
+document.getElementById('docClose').addEventListener('click',()=>{document.getElementById('docModal').hidden=true;});
+document.getElementById('docModal').addEventListener('click',e=>{if(e.target.id==='docModal')document.getElementById('docModal').hidden=true;});
+/* 정보 행 */
+function kvGrid(pairs){
+  const g=document.createElement('div');g.className='info-grid';
+  pairs.forEach(([l,v])=>{
+    const d=document.createElement('div');d.className='info-item';
+    const a=document.createElement('div');a.className='ii-l';a.textContent=l;
+    const c=document.createElement('div');c.className='ii-v'+(v?'':' empty');c.textContent=v||'미입력';
+    d.append(a,c);g.appendChild(d);
+  });
+  return g;
+}
+/* 파일 카드 (이미지·PDF는 미리보기, 그 외는 내려받기) */
+function fileCards(files){
+  const w=document.createElement('div');
+  w.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;';
+  files.forEach(f=>{
+    const c=document.createElement('div');
+    c.style.cssText='border:1px solid var(--line);border-radius:10px;padding:9px;width:172px;background:#fff;';
+    if(isImgRec(f)){
+      const im=document.createElement('img');im.src=f.url;im.alt=f.name;im.loading='lazy';
+      im.style.cssText='width:100%;height:120px;object-fit:cover;border-radius:6px;cursor:zoom-in;background:#F3F0EA;';
+      im.addEventListener('click',()=>openLightbox(f));c.appendChild(im);
+    }else{
+      const ic=document.createElement('div');
+      ic.style.cssText='height:120px;display:flex;align-items:center;justify-content:center;font-size:38px;background:#F3F0EA;border-radius:6px;'+(isPdfRec(f)?'cursor:zoom-in;':'');
+      ic.textContent=isPdfRec(f)?'📄':'📝';
+      if(isPdfRec(f))ic.addEventListener('click',()=>openLightbox(f));
+      c.appendChild(ic);
+    }
+    const nm=document.createElement('div');
+    nm.style.cssText='font-size:11px;font-weight:700;margin:7px 0 5px;line-height:1.4;word-break:break-all;';
+    nm.textContent=f.name;c.appendChild(nm);
+    if(f.tag){const tg=document.createElement('div');tg.style.cssText='font-size:10px;color:var(--ink-soft);margin-bottom:5px;';tg.textContent=f.tag;c.appendChild(tg);}
+    const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;';
+    if(isImgRec(f)||isPdfRec(f)){
+      const v=document.createElement('button');v.className='icon-btn';v.style.fontSize='11px';v.textContent='🔍 크게';
+      v.addEventListener('click',()=>openLightbox(f));row.appendChild(v);
+    }
+    const dl=document.createElement('a');dl.className='icon-btn';dl.style.cssText='font-size:11px;text-decoration:none;';
+    dl.href=f.url;dl.target='_blank';dl.rel='noopener';dl.textContent='⬇ 원본';row.appendChild(dl);
+    c.appendChild(row);w.appendChild(c);
+  });
+  return w;
+}
+/* 레디영 계약서 */
+function openReadyContract(){
+  docModalOpen('레디영 판매 공급 계약서',b=>{
+    const p1=document.createElement('p');p1.style.cssText='margin:0 0 14px;font-size:12.5px;color:var(--ink-soft);line-height:1.6;';
+    p1.innerHTML='㈜레디영(갑) ↔ ㈜고지식바이오 · 메라블(을) · <b>2025-10-17 날인</b>';
+    b.appendChild(p1);
+    b.appendChild(kvGrid([
+      ['유효기간','2025-10-20 ~ 2027-10-19 (2년)'],
+      ['판매기한','2025-10-30 ~ 2027-10-29 (2년)'],
+      ['정산','매월 1개월분 → 익월 10일 현금 (부가세 별도)'],
+      ['연체손해금','1일당 결제예정금액 × 3/100'],
+      ['가격 정책','“을”이 지정한 가격 판매 · 임의 하향 불가'],
+      ['반품·교환','수령 후 30일 이내 불량·파손 처리'],
+      ['공급 기한','발주일로부터 7일 이내 · 운송비 “을” 부담'],
+      ['관할','“갑”(레디영) 주소지 관할 지방법원']
+    ]));
+    const q=document.createElement('div');
+    q.style.cssText='border-left:3px solid var(--accent);padding:8px 0 8px 12px;margin:16px 0 6px;font-size:12.5px;line-height:1.75;background:#FAF8F4;border-radius:0 8px 8px 0;';
+    q.innerHTML='<b>제4조(판매매권) 4항 — 2km 규약</b><br>'+
+      '<i>“을”은 “갑”이 판매하고 있는 동일 상권의 다른 동일 상권에서 <b>반경 2km 이내</b> ‘레디영 약국이 아닌 다른 약국’에는 유통하지 않는다</i><br>'+
+      '<span style="color:var(--ink-soft);font-size:11.5px;">→ “반경”이므로 <b>직선거리</b> 기준으로 판정합니다.</span>';
+    b.appendChild(q);
+    const q2=document.createElement('div');
+    q2.style.cssText='font-size:11.5px;color:var(--ink-soft);line-height:1.7;margin-bottom:16px;';
+    q2.innerHTML='<b>제14조 특약</b> — 납품율·마케팅·판매 내역 등 모든 관련 정보는 <b>대외비</b>이며 계약 종료 후에도 유효합니다. 외부 공유에 주의하세요.';
+    b.appendChild(q2);
+    const fh=document.createElement('div');fh.style.cssText='font-size:12px;font-weight:800;color:var(--ink-soft);margin-bottom:6px;';
+    fh.textContent='계약서 원본';b.appendChild(fh);
+    b.appendChild(fileCards(READY_CONTRACT));
+  });
+}
+/* 약사 전용관 회원 상세 */
+function openApplicantDetail(a){
+  docModalOpen(a.name,b=>{
+    const g=geoStore();
+    const c=a.addr?g.checks[a.addr]:null;
+    const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+    const st=a.status||'대기';
+    const bar=document.createElement('div');bar.style.cssText='display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px;';
+    const chip=(t,col,bg)=>{const e=document.createElement('span');
+      e.style.cssText='font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:999px;color:'+col+';background:'+bg+';';
+      e.textContent=t;bar.appendChild(e);};
+    chip(st,st==='승인'?'var(--good)':(st==='거절'?'var(--warn)':'var(--ink-soft)'),st==='승인'?'#F4FAF6':(st==='거절'?'#FBEDE6':'#F3F0EA'));
+    if(j&&j.ok===true)chip('✅ 2km 규약 가능 · '+j.nearest+' '+distLabel(j.dist),'var(--good)','#F4FAF6');
+    else if(j&&j.ok===false)chip('⛔ 2km 이내 · '+j.nearest+' '+distLabel(j.dist),'var(--warn)','#FBEDE6');
+    else chip('📍 거리 미판정','var(--ink-soft)','#F3F0EA');
+    b.appendChild(bar);
+    b.appendChild(kvGrid([
+      ['약국명',a.name],['대표자 / 약사명',a.owner],['생년월일',a.birth],
+      ['약사 면허번호',a.license],['사업자등록번호',a.biz],['자사몰 가입 아이디',a.uid],
+      ['연락처',a.tel],['신청일',a.date]
+    ]));
+    const ad=document.createElement('div');ad.style.cssText='margin:12px 0 4px;';
+    ad.appendChild(kvGrid([['사업장 주소 (사업자등록증 기준)',a.addr],['비고',a.note]]));
+    b.appendChild(ad);
+    const fh=document.createElement('div');fh.style.cssText='font-size:12px;font-weight:800;color:var(--ink-soft);margin:16px 0 6px;';
+    fh.textContent='제출 서류 ('+((a.files||[]).length)+')';b.appendChild(fh);
+    if((a.files||[]).length)b.appendChild(fileCards(a.files));
+    else{const e=document.createElement('div');e.className='hint';e.textContent='제출된 서류가 없습니다.';b.appendChild(e);}
+    const act=document.createElement('div');act.style.cssText='display:flex;gap:8px;margin-top:16px;';
+    const ed=document.createElement('button');ed.className='icon-btn';ed.textContent='✏️ 정보 수정';
+    ed.addEventListener('click',()=>{document.getElementById('docModal').hidden=true;openApplicantModal(a.id);});
+    act.appendChild(ed);b.appendChild(act);
+  });
+}
+
+/* ============================================================
    자사몰 약사 전용관 — 회원가입 심사 (2km 규약 자동 판정)
    ============================================================ */
 function applicantsOf(){lib.applicants=lib.applicants||[];return lib.applicants;}
@@ -2545,6 +2706,7 @@ function openApplicantModal(appId){
   document.getElementById('apModalTitle').textContent=ex?'가입 신청 수정':'가입 신청 등록';
   const v=(id,val)=>{document.getElementById(id).value=val||'';};
   v('apName',ex&&ex.name);v('apBiz',ex&&ex.biz);v('apOwner',ex&&ex.owner);
+  v('apUid',ex&&ex.uid);v('apBirth',ex&&ex.birth);
   v('apAddr',ex&&ex.addr);v('apLicense',ex&&ex.license);v('apTel',ex&&ex.tel);
   v('apNote',ex&&ex.note);v('apDate',ex?ex.date:new Date().toISOString().slice(0,10));
   renderApFiles();
@@ -2579,7 +2741,7 @@ document.getElementById('apSave').addEventListener('click',()=>{
   if(!name){showToast('약국명을 입력해주세요');return;}
   const list=applicantsOf();
   const data={name,biz:g('apBiz'),owner:g('apOwner'),addr:g('apAddr'),license:g('apLicense'),
-    tel:g('apTel'),note:g('apNote'),date:g('apDate'),files:apDraft.files};
+    tel:g('apTel'),uid:g('apUid'),birth:g('apBirth'),note:g('apNote'),date:g('apDate'),files:apDraft.files};
   if(apDraft.appId){const t=list.find(a=>a.id===apDraft.appId);if(t)Object.assign(t,data);}
   else list.push({id:uid('ap'),status:'대기',...data});
   list.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
@@ -2628,9 +2790,17 @@ function buildApplicants(){
     else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 2km 이내</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
     else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
     tr.innerHTML='<td style="font-size:11.5px;">'+(a.date||'-')+'</td>'+
-      '<td><b>'+a.name+'</b>'+(a.biz?'<div style="color:var(--ink-soft);font-size:10.5px;">'+a.biz+'</div>':'')+'</td>'+
+      '<td class="ap-name"></td>'+
       '<td style="font-size:11.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.note?'<div style="font-size:10.5px;">'+a.note+'</div>':'')+'</td>'+
       '<td style="font-size:12px;">'+verdict+'</td>';
+    // 약국명 = 상세 보기 버튼
+    const tdN=tr.querySelector('.ap-name');
+    const nb=document.createElement('button');nb.className='icon-btn';
+    nb.style.cssText='font-size:12px;font-weight:800;width:100%;text-align:left;';
+    nb.textContent=a.name;nb.title=a.name+' 상세 · 서류 보기';
+    nb.addEventListener('click',()=>openApplicantDetail(a));
+    tdN.appendChild(nb);
+    if(a.biz){const sb2=document.createElement('div');sb2.style.cssText='color:var(--ink-soft);font-size:10.5px;margin-top:3px;';sb2.textContent=a.biz;tdN.appendChild(sb2);}
     // 서류
     const tdF=document.createElement('td');tdF.style.fontSize='11px';
     if((a.files||[]).length){
