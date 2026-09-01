@@ -2254,11 +2254,15 @@ function loadMaps(){
 /* 상세주소가 붙으면 검색이 실패하므로 단계적으로 줄여가며 재시도 */
 function addrVariants(addr){
   const base=String(addr||'').trim();
-  const out=[base];
-  const noParen=base.replace(/[(（][^)）]*[)）]/g,' ').replace(/\s{2,}/g,' ').trim();
-  if(noParen&&noParen!==base)out.push(noParen);
-  let toks=noParen.split(/\s+/);
-  while(toks.length>3){toks=toks.slice(0,-1);const v=toks.join(' ');if(out.indexOf(v)<0)out.push(v);}
+  const out=[];
+  const push=v=>{v=String(v||'').replace(/\s{2,}/g,' ').trim();if(v&&out.indexOf(v)<0)out.push(v);};
+  push(base);
+  push(base.replace(/[(（][^)）]*[)）]/g,' '));                 // 괄호 제거
+  push(base.split(',')[0]);                                    // 쉼표 앞(본 주소)만
+  push(base.replace(/[(（][^)）]*[)）]/g,' ').split(',')[0]);
+  // 뒤 토큰을 하나씩 떼며 재시도 (예: '... 275 두타몰 B2층' → '... 275')
+  let toks=base.replace(/[(（][^)）]*[)）]/g,' ').split(',')[0].trim().split(/\s+/);
+  while(toks.length>3){toks=toks.slice(0,-1);push(toks.join(' '));}
   return out;
 }
 function kakaoAddressSearch(geo,q){
@@ -2266,9 +2270,9 @@ function kakaoAddressSearch(geo,q){
     geo.addressSearch(q,(res,st)=>{
       if(st===kakao.maps.services.Status.OK&&res&&res[0]){
         const r=res[0];
-        ok({lat:parseFloat(r.y),lng:parseFloat(r.x),
-            formatted:(r.road_address&&r.road_address.address_name)||r.address_name||q});
-      }else ok(null);
+        ok({hit:{lat:parseFloat(r.y),lng:parseFloat(r.x),
+            formatted:(r.road_address&&r.road_address.address_name)||r.address_name||q},status:st});
+      }else ok({hit:null,status:String(st)});
     });
   });
 }
@@ -2278,22 +2282,25 @@ function kakaoKeywordSearch(q){
     ps.keywordSearch(q,(res,st)=>{
       if(st===kakao.maps.services.Status.OK&&res&&res[0]){
         const r=res[0];
-        ok({lat:parseFloat(r.y),lng:parseFloat(r.x),
-            formatted:(r.road_address_name||r.address_name||q)});
-      }else ok(null);
+        ok({hit:{lat:parseFloat(r.y),lng:parseFloat(r.x),
+            formatted:(r.road_address_name||r.address_name||q)},status:st});
+      }else ok({hit:null,status:String(st)});
     });
   });
 }
 async function geocodeAddr(addr){
   await loadMaps();
   const geo=new kakao.maps.services.Geocoder();
+  const tried=[];let last='';
   for(const v of addrVariants(addr)){
-    const hit=await kakaoAddressSearch(geo,v);
-    if(hit)return hit;
+    const r=await kakaoAddressSearch(geo,v);
+    if(r.hit)return r.hit;
+    tried.push(v);last=r.status;
   }
+  // 주소 검색 실패 → 장소(키워드) 검색으로 재시도
   const kw=await kakaoKeywordSearch(String(addr||'').trim());
-  if(kw)return kw;
-  throw new Error('주소를 찾지 못했습니다: '+addr);
+  if(kw.hit)return kw.hit;
+  throw new Error('주소 인식 실패 ('+(last||kw.status)+') · 시도: '+tried.slice(0,3).join(' / '));
 }
 /* 좌표가 등록된 레디영 지점과의 최단거리 판정 */
 function judgePoint(pt){
@@ -2353,16 +2360,46 @@ function renderGeo(){
   addBtn.addEventListener('click',()=>{g.sites.push({id:uid('site'),name:'',addr:'',lat:null,lng:null});persistLib();renderGeo();});
   const geoAll=document.createElement('button');geoAll.className='icon-btn';geoAll.textContent='📍 주소 일괄 변환';
   geoAll.addEventListener('click',async()=>{
-    geoAll.textContent='변환 중…';geoAll.disabled=true;let ok=0,fail=0;
-    for(const s of g.sites){
-      if(!s.addr||typeof s.lat==='number')continue;
-      try{const p=await geocodeAddr(s.addr);s.lat=p.lat;s.lng=p.lng;ok++;}catch(e){fail++;}
+    const NL=String.fromCharCode(10);
+    geoAll.textContent='변환 중…';geoAll.disabled=true;
+    const lg=document.getElementById('geoLog');lg.classList.add('show');lg.textContent='변환 중…';
+    let ok=0,fail=0;const lines=[];
+    try{ await loadMaps(); }
+    catch(e){ lg.textContent='✕ '+e.message+NL+NL+'확인하세요:'+NL+'· 카카오 개발자센터 → 앱 키 → JavaScript 키가 맞는지'+NL+'· 플랫폼 → Web 에 https://jep-ccfm.github.io 등록했는지'+NL+'· 카카오맵 제품 사용 설정을 켰는지';
+      geoAll.textContent='📍 주소 일괄 변환';geoAll.disabled=false;return; }
+    for(const st of g.sites){
+      if(!st.addr){lines.push('· '+st.name+' — 주소 없음');continue;}
+      if(typeof st.lat==='number'){lines.push('· '+st.name+' — 이미 변환됨');continue;}
+      try{const p=await geocodeAddr(st.addr);st.lat=p.lat;st.lng=p.lng;ok++;
+        lines.push('✓ '+st.name+' → '+(p.formatted||'')+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
+      catch(e){fail++;lines.push('✕ '+st.name+' — '+e.message);}
     }
-    persistLib();showToast('좌표 '+ok+'건 변환'+(fail?' · '+fail+'건 실패':''));renderGeo();
+    persistLib();
+    const txt='완료 — 성공 '+ok+'건'+(fail?' · 실패 '+fail+'건':'')+NL+lines.join(NL);
+    showToast('좌표 '+ok+'건 변환'+(fail?' · '+fail+'건 실패':''));
+    geoAll.textContent='📍 주소 일괄 변환';geoAll.disabled=false;
+    renderGeo();
+    const lg2=document.getElementById('geoLog');if(lg2){lg2.classList.add('show');lg2.textContent=txt;}
   });
   const preset=document.createElement('button');preset.className='icon-btn';preset.textContent='레디영 지점 불러오기';
   preset.addEventListener('click',()=>{const n=loadRedyoungPreset();showToast(n?n+'개 지점을 추가했습니다':'이미 모두 등록되어 있습니다');renderGeo();});
-  tools.append(preset,geoAll,addBtn);sh.appendChild(tools);box.appendChild(sh);
+  const diag=document.createElement('button');diag.className='icon-btn';diag.textContent='🔧 진단';
+  diag.addEventListener('click',async()=>{
+    const NL=String.fromCharCode(10);
+    const lg=document.getElementById('geoLog');lg.classList.add('show');lg.textContent='진단 중…';
+    const out=[];
+    out.push('키 설정: '+(mapsKey()?('있음 · 앞 6자리 '+mapsKey().slice(0,6)+'… · 길이 '+mapsKey().length):'없음'));
+    try{await loadMaps();out.push('SDK 로드: 성공');}
+    catch(e){out.push('SDK 로드: 실패 — '+e.message);lg.textContent=out.join(NL);return;}
+    out.push('services 사용 가능: '+(!!(window.kakao&&kakao.maps&&kakao.maps.services)));
+    try{const p=await geocodeAddr('서울특별시 강남구 테헤란로5길 51-16');
+      out.push('샘플 주소 변환: 성공 → '+p.formatted+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
+    catch(e){out.push('샘플 주소 변환: 실패 — '+e.message);}
+    lg.textContent=out.join(NL);
+  });
+  tools.append(diag,preset,geoAll,addBtn);sh.appendChild(tools);box.appendChild(sh);
+  const geoLog=document.createElement('div');geoLog.className='up-log';geoLog.id='geoLog';
+  geoLog.style.cssText='max-height:220px;margin:0 0 12px;white-space:pre-wrap;';box.appendChild(geoLog);
 
   if(!g.sites.length){
     const e=document.createElement('div');e.className='empty-box';
