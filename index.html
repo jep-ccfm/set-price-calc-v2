@@ -645,6 +645,33 @@
     </div>
   </div>
 </div>
+
+<div class="modal-overlay" id="applicantModal" hidden>
+  <div class="modal modal-lg">
+    <h3 id="apModalTitle">가입 신청 등록</h3>
+    <p>사업자등록증·약사면허증 기준으로 입력하세요. 주소를 넣으면 레디영 2km 규약이 자동 판정됩니다.</p>
+    <div class="form-grid">
+      <div><label>신청일</label><input type="date" id="apDate"></div>
+      <div><label>약국명</label><input type="text" id="apName"></div>
+      <div><label>사업자등록번호</label><input type="text" id="apBiz"></div>
+      <div><label>대표자 / 약사명</label><input type="text" id="apOwner"></div>
+      <div><label>약사 면허번호</label><input type="text" id="apLicense"></div>
+      <div><label>연락처</label><input type="text" id="apTel"></div>
+      <div class="fg-full"><label>사업장 주소 (사업자등록증 기준)</label><input type="text" id="apAddr" placeholder="예: 서울특별시 강남구 도산대로 107"></div>
+      <div class="fg-full"><label>비고</label><input type="text" id="apNote"></div>
+    </div>
+    <label class="flabel">제출 서류</label>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button class="icon-btn" id="apFileBtn" type="button">📎 서류 첨부</button>
+      <span id="apFileList" style="font-size:12px;"></span>
+      <input type="file" id="apFile" accept="image/*,application/pdf" multiple hidden>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="apCancel">취소</button>
+      <button class="btn btn-primary" id="apSave">저장</button>
+    </div>
+  </div>
+</div>
 <div class="lightbox" id="lightbox" hidden></div>
 
 <div id="memoDock" class="memo-dock" hidden>
@@ -1546,6 +1573,7 @@ function renderChannel(view){
     box.appendChild(buildLedger(meta.id,{}));
     return;
   }
+  if(meta.id==='pharmmall')box.appendChild(buildApplicants());
   box.appendChild(buildOrders(meta.id,view));
   box.appendChild(buildTaxDocs(meta.id));
   const lh=document.createElement('div');lh.className='sec-h';lh.textContent='거래명세서 (월별 집계)';box.appendChild(lh);
@@ -2175,31 +2203,65 @@ function haversineM(a,b){
   const s=Math.sin(dLat/2)**2+Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLng/2)**2;
   return Math.round(2*R*Math.asin(Math.sqrt(s)));
 }
-/* Google Maps JS API 동적 로드 (키는 각자 브라우저에만 저장) */
-let _gmapsP=null;
+/* 카카오 지도 SDK 동적 로드 (JavaScript 키 — 각자 브라우저에만 저장) */
+let _kakaoP=null;
 function loadMaps(){
-  if(typeof google!=='undefined'&&google.maps&&google.maps.Geocoder)return Promise.resolve();
-  if(_gmapsP)return _gmapsP;
+  if(window.kakao&&window.kakao.maps&&window.kakao.maps.services)return Promise.resolve();
+  if(_kakaoP)return _kakaoP;
   const k=mapsKey();
-  if(!k)return Promise.reject(new Error('구글 지도 API 키가 없습니다 (아래 설정에서 입력)'));
-  _gmapsP=new Promise((ok,no)=>{
+  if(!k)return Promise.reject(new Error('카카오 JavaScript 키가 없습니다 (아래 설정에서 입력)'));
+  _kakaoP=new Promise((ok,no)=>{
     const s=document.createElement('script');
-    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR';
-    s.onload=()=>ok();s.onerror=()=>{_gmapsP=null;no(new Error('지도 API 로드 실패 (키·도메인 제한 확인)'));};
+    s.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(k)+'&libraries=services&autoload=false';
+    s.onload=()=>{try{window.kakao.maps.load(()=>ok());}catch(e){_kakaoP=null;no(new Error('카카오 SDK 초기화 실패'));}};
+    s.onerror=()=>{_kakaoP=null;no(new Error('카카오 SDK 로드 실패 (키·플랫폼 도메인 등록 확인)'));};
     document.head.appendChild(s);
   });
-  return _gmapsP;
+  return _kakaoP;
+}
+/* 상세주소가 붙으면 검색이 실패하므로 단계적으로 줄여가며 재시도 */
+function addrVariants(addr){
+  const base=String(addr||'').trim();
+  const out=[base];
+  const noParen=base.replace(/[(（][^)）]*[)）]/g,' ').replace(/\s{2,}/g,' ').trim();
+  if(noParen&&noParen!==base)out.push(noParen);
+  let toks=noParen.split(/\s+/);
+  while(toks.length>3){toks=toks.slice(0,-1);const v=toks.join(' ');if(out.indexOf(v)<0)out.push(v);}
+  return out;
+}
+function kakaoAddressSearch(geo,q){
+  return new Promise(ok=>{
+    geo.addressSearch(q,(res,st)=>{
+      if(st===kakao.maps.services.Status.OK&&res&&res[0]){
+        const r=res[0];
+        ok({lat:parseFloat(r.y),lng:parseFloat(r.x),
+            formatted:(r.road_address&&r.road_address.address_name)||r.address_name||q});
+      }else ok(null);
+    });
+  });
+}
+function kakaoKeywordSearch(q){
+  return new Promise(ok=>{
+    const ps=new kakao.maps.services.Places();
+    ps.keywordSearch(q,(res,st)=>{
+      if(st===kakao.maps.services.Status.OK&&res&&res[0]){
+        const r=res[0];
+        ok({lat:parseFloat(r.y),lng:parseFloat(r.x),
+            formatted:(r.road_address_name||r.address_name||q)});
+      }else ok(null);
+    });
+  });
 }
 async function geocodeAddr(addr){
   await loadMaps();
-  return new Promise((ok,no)=>{
-    new google.maps.Geocoder().geocode({address:addr,region:'KR'},(res,st)=>{
-      if(st==='OK'&&res&&res[0]){
-        const l=res[0].geometry.location;
-        ok({lat:l.lat(),lng:l.lng(),formatted:res[0].formatted_address});
-      }else no(new Error('주소를 찾지 못했습니다 ('+st+')'));
-    });
-  });
+  const geo=new kakao.maps.services.Geocoder();
+  for(const v of addrVariants(addr)){
+    const hit=await kakaoAddressSearch(geo,v);
+    if(hit)return hit;
+  }
+  const kw=await kakaoKeywordSearch(String(addr||'').trim());
+  if(kw)return kw;
+  throw new Error('주소를 찾지 못했습니다: '+addr);
 }
 /* 좌표가 등록된 레디영 지점과의 최단거리 판정 */
 function judgePoint(pt){
@@ -2237,18 +2299,18 @@ function renderGeo(){
   // API 키 설정
   const kp=document.createElement('div');kp.className='ch-panel'+(mapsKey()?'':' open');
   const kh=document.createElement('div');kh.className='ch-head';
-  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ 구글 지도 API 키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
+  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ 카카오 지도 API 키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
   kh.addEventListener('click',()=>kp.classList.toggle('open'));
   kp.appendChild(kh);
   const kb=document.createElement('div');kb.className='ch-body';
   const kn=document.createElement('div');kn.className='hint';kn.style.marginBottom='9px';
-  kn.innerHTML='주소를 좌표로 바꾸려면 키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br>Google Cloud → Maps JavaScript API + Geocoding API 사용 설정 후, <b>HTTP 리퍼러 제한</b>을 <code>jep-ccfm.github.io/*</code> 로 걸어주세요.';
+  kn.innerHTML='주소를 좌표로 바꾸려면 키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br>1) <b>카카오 개발자센터</b>(developers.kakao.com) 로그인 → 애플리케이션 추가<br>2) <b>앱 키 → JavaScript 키</b> 복사해서 아래에 붙여넣기<br>3) <b>플랫폼 → Web</b>에 <code>https://jep-ccfm.github.io</code> 등록 (필수)<br>4) <b>카카오맵</b> 제품 사용 설정 — 신용카드 등록 불필요, 무료 한도 충분';
   kb.appendChild(kn);
   const kr=document.createElement('div');kr.style.cssText='display:flex;gap:8px;flex-wrap:wrap;';
-  const ki=document.createElement('input');ki.type='password';ki.placeholder='AIza...';ki.value=mapsKey();
+  const ki=document.createElement('input');ki.type='password';ki.placeholder='카카오 JavaScript 키';ki.value=mapsKey();
   ki.style.cssText='flex:1;min-width:220px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:var(--mono);';
   const kbtn=document.createElement('button');kbtn.className='btn btn-primary btn-sm';kbtn.textContent='저장';
-  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_gmapsP=null;showToast('키가 저장되었습니다');renderGeo();});
+  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_kakaoP=null;showToast('키가 저장되었습니다');renderGeo();});
   kr.append(ki,kbtn);kb.appendChild(kr);kp.appendChild(kb);box.appendChild(kp);
 
   // 레디영 지점 좌표
@@ -2380,6 +2442,141 @@ function renderPharmJudge(box,list){
     tb.appendChild(tr);
   });
   t.appendChild(tb);box.appendChild(t);
+}
+
+/* ============================================================
+   자사몰 약사 전용관 — 회원가입 심사 (2km 규약 자동 판정)
+   ============================================================ */
+function applicantsOf(){lib.applicants=lib.applicants||[];return lib.applicants;}
+let apDraft=null;
+function openApplicantModal(appId){
+  const list=applicantsOf();
+  const ex=appId?list.find(a=>a.id===appId):null;
+  apDraft={appId,files:ex?(ex.files||[]).slice():[]};
+  document.getElementById('apModalTitle').textContent=ex?'가입 신청 수정':'가입 신청 등록';
+  const v=(id,val)=>{document.getElementById(id).value=val||'';};
+  v('apName',ex&&ex.name);v('apBiz',ex&&ex.biz);v('apOwner',ex&&ex.owner);
+  v('apAddr',ex&&ex.addr);v('apLicense',ex&&ex.license);v('apTel',ex&&ex.tel);
+  v('apNote',ex&&ex.note);v('apDate',ex?ex.date:new Date().toISOString().slice(0,10));
+  renderApFiles();
+  document.getElementById('applicantModal').hidden=false;
+}
+function renderApFiles(){
+  const el=document.getElementById('apFileList');el.innerHTML='';
+  if(!apDraft.files.length){el.innerHTML='<span style="color:var(--ink-soft);font-size:12px;">첨부 없음 (사업자등록증·약사면허증)</span>';return;}
+  apDraft.files.forEach((f,i)=>{
+    const w=document.createElement('span');w.style.cssText='display:inline-flex;align-items:center;gap:3px;margin:0 8px 5px 0;';
+    const a=document.createElement('a');a.href='#';a.textContent='📎 '+f.name;
+    a.style.cssText='color:var(--input-blue);font-weight:700;text-decoration:none;font-size:12px;';
+    a.addEventListener('click',e=>{e.preventDefault();openLightbox(f);});
+    const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
+    x.addEventListener('click',()=>{apDraft.files.splice(i,1);renderApFiles();});
+    w.append(a,x);el.appendChild(w);
+  });
+}
+document.getElementById('apFileBtn').addEventListener('click',()=>document.getElementById('apFile').click());
+document.getElementById('apFile').addEventListener('change',async e=>{
+  const files=[].slice.call(e.target.files);if(!files.length)return;
+  const btn=document.getElementById('apFileBtn');btn.textContent='업로드 중…';btn.disabled=true;ioBusy++;
+  for(const f of files){try{apDraft.files.push(await uploadPharmFile('applicants',f));}catch(err){showToast(f.name+' — '+err.message);}}
+  ioBusy=Math.max(0,ioBusy-1);btn.textContent='📎 서류 첨부';btn.disabled=false;e.target.value='';renderApFiles();
+});
+document.getElementById('apCancel').addEventListener('click',()=>{document.getElementById('applicantModal').hidden=true;apDraft=null;});
+document.getElementById('applicantModal').addEventListener('click',e=>{if(e.target.id==='applicantModal'){document.getElementById('applicantModal').hidden=true;apDraft=null;}});
+document.getElementById('apSave').addEventListener('click',()=>{
+  if(!apDraft)return;
+  const g=id=>document.getElementById(id).value.trim();
+  const name=g('apName');
+  if(!name){showToast('약국명을 입력해주세요');return;}
+  const list=applicantsOf();
+  const data={name,biz:g('apBiz'),owner:g('apOwner'),addr:g('apAddr'),license:g('apLicense'),
+    tel:g('apTel'),note:g('apNote'),date:g('apDate'),files:apDraft.files};
+  if(apDraft.appId){const t=list.find(a=>a.id===apDraft.appId);if(t)Object.assign(t,data);}
+  else list.push({id:uid('ap'),status:'대기',...data});
+  list.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  persistLib();document.getElementById('applicantModal').hidden=true;apDraft=null;
+  showToast('가입 신청이 저장되었습니다');refreshCurrentView();
+});
+function buildApplicants(){
+  const list=applicantsOf();const g=geoStore();
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');hs.textContent='약사 전용관 가입 심사 ('+list.length+')';h.appendChild(hs);
+  const tools=document.createElement('div');tools.className='sh-tools';
+  const chk=document.createElement('button');chk.className='icon-btn';chk.textContent='📍 주소 일괄 판정';
+  chk.addEventListener('click',async()=>{
+    chk.textContent='판정 중…';chk.disabled=true;let ok=0,fail=0;
+    for(const a of list){if(!a.addr)continue;try{await judgeAddress(a.addr);ok++;}catch(e){fail++;}}
+    showToast('판정 '+ok+'건'+(fail?' · 실패 '+fail+'건':''));refreshCurrentView();
+  });
+  const add=document.createElement('button');add.className='icon-btn';add.textContent='＋ 신청 등록';
+  add.addEventListener('click',()=>openApplicantModal(null));
+  tools.append(chk,add);h.appendChild(tools);wrap.appendChild(h);
+
+  const note=document.createElement('div');note.className='hint';note.style.marginBottom='10px';
+  note.innerHTML='자사몰 약사 전용관은 가입 시 <b>사업자등록증·약사면허증</b>이 필수입니다. 사업자등록증 주소를 넣으면 <b>레디영 2km 규약</b>을 자동 판정합니다.';
+  wrap.appendChild(note);
+
+  if(!list.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.innerHTML='등록된 가입 신청이 없습니다.<br><b>「＋ 신청 등록」</b>으로 약국명·사업자등록증 주소·서류를 넣으면 2km 판정과 승인/거절을 관리할 수 있습니다.';
+    wrap.appendChild(e);return wrap;
+  }
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  const t=document.createElement('table');t.className='led-table';t.style.minWidth='800px';
+  t.innerHTML='<thead><tr><th style="width:82px;">신청일</th><th style="width:120px;">약국</th><th>사업자등록증 주소</th>'+
+    '<th style="width:150px;">2km 판정</th><th style="width:96px;">서류</th><th style="width:150px;">승인 상태</th><th style="width:30px;"></th></tr></thead>';
+  const tb=document.createElement('tbody');
+  list.forEach(a=>{
+    const c=a.addr?g.checks[a.addr]:null;
+    const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+    const tr=document.createElement('tr');
+    if(j&&j.ok===false)tr.style.background='#FBEDE6';
+    else if(j&&j.ok===true)tr.style.background='#F4FAF6';
+    let verdict='<span style="color:var(--ink-soft);">미판정</span>';
+    if(!a.addr)verdict='<span style="color:var(--warn);">주소 없음</span>';
+    else if(j&&j.ok===true)verdict='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+    else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 2km 이내</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+    else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
+    tr.innerHTML='<td style="font-size:11.5px;">'+(a.date||'-')+'</td>'+
+      '<td><b>'+a.name+'</b>'+(a.biz?'<div style="color:var(--ink-soft);font-size:10.5px;">'+a.biz+'</div>':'')+'</td>'+
+      '<td style="font-size:11.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.note?'<div style="font-size:10.5px;">'+a.note+'</div>':'')+'</td>'+
+      '<td style="font-size:12px;">'+verdict+'</td>';
+    // 서류
+    const tdF=document.createElement('td');tdF.style.fontSize='11px';
+    if((a.files||[]).length){
+      a.files.forEach(f=>{const l=document.createElement('a');l.href='#';l.textContent='📎';l.title=f.name;
+        l.style.cssText='margin-right:4px;text-decoration:none;';
+        l.addEventListener('click',e=>{e.preventDefault();openLightbox(f);});tdF.appendChild(l);});
+      const cnt=document.createElement('span');cnt.style.color='var(--ink-soft)';cnt.textContent=a.files.length+'건';tdF.appendChild(cnt);
+    }else{const w2=document.createElement('span');w2.style.color='var(--warn)';w2.textContent='미제출';tdF.appendChild(w2);}
+    tr.appendChild(tdF);
+    // 승인 상태
+    const tdS=document.createElement('td');
+    const sel=document.createElement('select');sel.style.cssText='width:100%;padding:5px 6px;border:1px solid #D6D2C8;border-radius:6px;font-size:12px;';
+    ['대기','승인','거절','보류'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;if((a.status||'대기')===v)o.selected=true;sel.appendChild(o);});
+    sel.addEventListener('change',e=>{a.status=e.target.value;a.decidedAt=new Date().toISOString().slice(0,10);persistLib();refreshCurrentView();});
+    const badge=document.createElement('div');badge.style.cssText='font-size:10.5px;margin-top:3px;';
+    if(a.status==='승인')badge.innerHTML='<span style="color:var(--good);font-weight:800;">승인됨</span> '+(a.decidedAt||'');
+    else if(a.status==='거절')badge.innerHTML='<span style="color:var(--warn);font-weight:800;">거절됨</span> '+(a.decidedAt||'');
+    tdS.append(sel,badge);tr.appendChild(tdS);
+    // 편집/삭제
+    const tdA=document.createElement('td');
+    const ed=document.createElement('button');ed.className='del-btn';ed.textContent='✎';ed.title='수정';
+    ed.addEventListener('click',()=>openApplicantModal(a.id));
+    const dl=document.createElement('button');dl.className='del-btn';dl.textContent='✕';dl.title='삭제';
+    dl.addEventListener('click',()=>{if(!confirm('이 신청을 삭제할까요? '+a.name))return;const i=list.indexOf(a);if(i>=0)list.splice(i,1);persistLib();refreshCurrentView();});
+    tdA.append(ed,dl);tr.appendChild(tdA);
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
+  // 요약
+  const cnt={대기:0,승인:0,거절:0,보류:0};list.forEach(a=>cnt[a.status||'대기']++);
+  const sm=document.createElement('div');sm.className='agg-total';
+  sm.innerHTML='<span>대기 <span class="num-mono">'+cnt.대기+'</span></span><span style="color:var(--good);">승인 <span class="num-mono">'+cnt.승인+'</span></span>'+
+    '<span style="color:var(--warn);">거절 <span class="num-mono">'+cnt.거절+'</span></span><span>보류 <span class="num-mono">'+cnt.보류+'</span></span>';
+  wrap.appendChild(sm);
+  return wrap;
 }
 
 /* ---------- 개인약국 뷰 ---------- */
