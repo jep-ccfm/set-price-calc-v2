@@ -2388,13 +2388,37 @@ function renderGeo(){
     const NL=String.fromCharCode(10);
     const lg=document.getElementById('geoLog');lg.classList.add('show');lg.textContent='진단 중…';
     const out=[];
-    out.push('키 설정: '+(mapsKey()?('있음 · 앞 6자리 '+mapsKey().slice(0,6)+'… · 길이 '+mapsKey().length):'없음'));
-    try{await loadMaps();out.push('SDK 로드: 성공');}
-    catch(e){out.push('SDK 로드: 실패 — '+e.message);lg.textContent=out.join(NL);return;}
-    out.push('services 사용 가능: '+(!!(window.kakao&&kakao.maps&&kakao.maps.services)));
+    const k=mapsKey();
+    out.push('① 현재 도메인: '+location.origin);
+    out.push('   → 카카오 개발자센터 [내 애플리케이션 → 앱 설정 → 플랫폼 → Web]에');
+    out.push('      정확히 이 값이 등록돼 있어야 합니다 (경로 없이 도메인만)');
+    out.push('② 키: '+(k?('입력됨 · 앞 6자리 '+k.slice(0,6)+'… · 길이 '+k.length+(k.length===32?' (JavaScript 키 형식 정상)':' (⚠ JavaScript 키는 보통 32자입니다)')):'없음'));
+    if(!k){lg.textContent=out.join(NL);return;}
+    // SDK 응답 직접 확인
+    out.push('③ SDK 응답 확인…');
+    lg.textContent=out.join(NL);
+    const url='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(k)+'&libraries=services&autoload=false';
+    try{
+      const r=await fetch(url,{method:'GET'});
+      const body=(await r.text()).slice(0,300);
+      out.push('   HTTP '+r.status+' '+(r.statusText||''));
+      if(r.status===401)out.push('   ⛔ 401 = 키가 틀렸거나 이 도메인이 등록되지 않았습니다');
+      else if(r.status===403)out.push('   ⛔ 403 = 도메인 미등록 또는 카카오맵 사용설정 꺼짐');
+      else if(r.status===200)out.push('   ✅ 응답 정상');
+      if(body&&r.status!==200)out.push('   응답: '+body.replace(/\s+/g,' ').slice(0,200));
+    }catch(e){
+      out.push('   요청 실패(CORS 또는 네트워크): '+e.message);
+      out.push('   → 브라우저가 차단한 경우로, 도메인 미등록일 가능성이 큽니다');
+    }
+    lg.textContent=out.join(NL);
+    // 실제 SDK 로드 시도
+    out.push('④ SDK 로드 시도…');lg.textContent=out.join(NL);
+    try{await loadMaps();out.push('   ✅ 로드 성공');}
+    catch(e){out.push('   ⛔ 실패 — '+e.message);lg.textContent=out.join(NL);return;}
+    out.push('⑤ services: '+(!!(window.kakao&&kakao.maps&&kakao.maps.services)?'사용 가능':'사용 불가'));
     try{const p=await geocodeAddr('서울특별시 강남구 테헤란로5길 51-16');
-      out.push('샘플 주소 변환: 성공 → '+p.formatted+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
-    catch(e){out.push('샘플 주소 변환: 실패 — '+e.message);}
+      out.push('⑥ 샘플 주소 변환: ✅ 성공 → '+p.formatted+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
+    catch(e){out.push('⑥ 샘플 주소 변환: ⛔ 실패 — '+e.message);}
     lg.textContent=out.join(NL);
   });
   tools.append(diag,preset,geoAll,addBtn);sh.appendChild(tools);box.appendChild(sh);
