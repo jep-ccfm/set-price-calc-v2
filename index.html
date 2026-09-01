@@ -338,6 +338,648 @@
     .side-foot{display:none;}
     .content{padding:20px 14px 50px;}
   }
+
+  /* ==========================================================
+     UI 개편 (2026-09-02) — 가독성 우선
+     · 이 블록만 지우면 이전 디자인으로 완전히 되돌아갑니다.
+     ========================================================== */
+
+  /* --- 1. 색 · 타입 스케일 --- */
+  :root{
+    --bg:#F2F0EC;                 /* 페이지 바닥 */
+    --panel:#FFFFFF;              /* 카드 표면 */
+    --surface-2:#F8F6F2;          /* 한 단계 낮은 표면 */
+    --surface-3:#EFEBE4;          /* 표 머리글 등 */
+    --line:#E3DED5;
+    --line-strong:#CFC7B9;
+    --ink:#16233D;
+    --ink-soft:#4A5470;           /* 본문 보조 — 대비 상향 */
+    --ink-mute:#78819B;           /* 메타 정보 */
+    --accent:#B14E6E;
+    --accent-soft:#F6E7EC;
+    --good:#1F6E4A;
+    --warn:#A8480F;
+    --info:#1A56A8;
+
+    --fs-xs:12px;                 /* 메타·라벨 (기존 10~11px 대체) */
+    --fs-sm:13px;
+    --fs-md:14px;                 /* 본문·표 기본 */
+    --fs-lg:16px;                 /* 섹션 제목 */
+    --fs-xl:20px;
+
+    --sp:8px;
+    --r:12px;                     /* 통일 반경 */
+    --shadow:0 1px 2px rgba(22,35,61,.05);
+    --shadow-lift:0 6px 20px rgba(22,35,61,.10);
+    --side:250px;
+  }
+  body{font-size:var(--fs-md);line-height:1.6;}
+
+  /* --- 2. 사이드바 --- */
+  .sidebar{padding:24px 12px;}
+  .brand{margin-bottom:26px;padding:0 8px;}
+  .brand .b-eyebrow{font-size:11px;letter-spacing:.16em;color:#9AA3BE;margin-bottom:5px;}
+  .brand .b-title{font-size:19px;letter-spacing:-.02em;}
+  .nav{gap:2px;}
+  .nav-section{font-size:11px;letter-spacing:.14em;color:#8B94B0;margin:22px 10px 8px;}
+  .nav-item{font-size:14px;font-weight:600;color:#D3D8E6;padding:11px 12px;border-radius:10px;
+    position:relative;transition:background .12s,color .12s;}
+  .nav-item:hover{background:rgba(255,255,255,.09);color:#fff;}
+  .nav-item.active{background:rgba(255,255,255,.13);color:#fff;font-weight:800;}
+  .nav-item.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;
+    border-radius:0 3px 3px 0;background:var(--accent);}
+  .nav-item .ic{font-size:16px;width:22px;}
+  .nav-item .badge{font-size:12px;background:rgba(255,255,255,.14);color:#E4E8F2;padding:1px 8px;}
+  .nav-item.active .badge{background:var(--accent);color:#fff;}
+  .side-foot{font-size:12px;color:#98A1BC;line-height:1.6;padding:18px 8px 0;}
+  .sync-btn{font-size:13px;padding:10px;}
+  .sync-state-line{font-size:12px;color:#BEC5DA;margin-top:9px;}
+
+  /* --- 3. 본문 폭 · 리듬 --- */
+  .content{padding:32px 28px 72px;}
+  .wrap{max-width:1080px;}
+  header.page-head{margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--line);}
+  .eyebrow{font-size:var(--fs-xs);letter-spacing:.16em;color:var(--ink-mute);margin-bottom:8px;}
+  h1{font-size:26px;line-height:1.25;margin-bottom:8px;letter-spacing:-.02em;}
+  .sub{font-size:var(--fs-md);line-height:1.65;color:var(--ink-soft);max-width:74ch;}
+  .hint{font-size:var(--fs-sm);line-height:1.65;color:var(--ink-soft);}
+
+  /* 섹션 제목 — 좌측 강조선으로 구획을 눈에 띄게 */
+  .sec-h{font-size:var(--fs-lg);margin:32px 0 14px;padding-left:11px;position:relative;line-height:1.4;}
+  .sec-h::before{content:"";position:absolute;left:0;top:.28em;bottom:.28em;width:3px;
+    border-radius:2px;background:var(--ink);}
+  .sec-h .sh-tools{gap:7px;}
+
+  /* --- 4. 패널 · 카드 --- */
+  .panel{border-radius:var(--r);padding:22px;margin-bottom:20px;box-shadow:var(--shadow);}
+  .panel-title{font-size:var(--fs-lg);margin-bottom:16px;gap:10px;}
+  .panel-title .num{width:23px;height:23px;font-size:12px;}
+  .ch-panel{background:var(--panel);border-radius:var(--r);margin-bottom:20px;box-shadow:var(--shadow);}
+  .ch-head{padding:15px 18px;font-size:var(--fs-md);gap:12px;}
+  .ch-panel.open .ch-head{border-bottom:1px solid var(--line);background:var(--surface-2);}
+  .ch-body{padding:18px;}
+  .ch-item{font-size:var(--fs-sm);padding:11px 13px;background:var(--surface-2);}
+  .ch-item b{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:3px;}
+
+  /* --- 5. 표 — 가장 큰 가독성 개선 지점 --- */
+  .led-table,.ord-table{font-size:var(--fs-md);border-radius:10px;border-color:var(--line);}
+  .led-table th,.ord-table th{padding:11px 12px;background:var(--surface-3);font-size:var(--fs-xs);
+    font-weight:800;color:var(--ink-soft);letter-spacing:.02em;border-bottom:1px solid var(--line-strong);}
+  .led-table td,.ord-table td{padding:12px;border-top:1px solid var(--line);line-height:1.55;}
+  .led-table tbody tr:hover,.ord-table tbody tr:hover{background:var(--surface-2);}
+  .led-sub{font-size:var(--fs-sm);padding-left:14px;}
+  table{font-size:var(--fs-md);}
+  th{font-size:var(--fs-xs);padding:9px 8px;color:var(--ink-soft);}
+  td{padding:9px 8px;}
+  /* 숫자는 자릿수가 흔들리지 않게 */
+  .num-cell,.num-mono,.rvalue,.sc-v,td[class*="num"]{font-variant-numeric:tabular-nums;}
+  .num-cell{font-size:var(--fs-md);}
+
+  /* --- 6. 지표 카드 --- */
+  .stat-row{gap:12px;margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}
+  .stat-card{background:var(--panel);border-radius:11px;padding:15px 16px;box-shadow:var(--shadow);}
+  .stat-card .sc-l{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:6px;letter-spacing:.01em;}
+  .stat-card .sc-v{font-size:20px;letter-spacing:-.01em;}
+  .stat-card.hero{box-shadow:none;}
+  .stat-card.hero .sc-l{color:#B9C2D8;}
+  .result-card{background:var(--surface-2);border-radius:11px;padding:14px 16px;}
+  .rlabel{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:5px;}
+  .rvalue{font-size:20px;}
+  .result-card.hero .rvalue{font-size:30px;}
+
+  /* --- 7. 정보 그리드 --- */
+  .info-grid{gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));}
+  .info-item{background:var(--surface-2);border-radius:10px;padding:12px 14px;}
+  .info-item .ii-l{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:5px;letter-spacing:.01em;}
+  .info-item .ii-v{font-size:var(--fs-md);line-height:1.5;word-break:keep-all;overflow-wrap:anywhere;}
+  .info-item .ii-v.empty{color:#A7A093;}
+
+  /* --- 8. 버튼 --- */
+  .btn{border-radius:9px;padding:10px 18px;font-size:var(--fs-md);}
+  .btn-sm{padding:7px 13px;font-size:var(--fs-sm);}
+  .icon-btn{font-size:var(--fs-sm) !important;padding:7px 12px !important;border-radius:8px !important;}
+  .link-btn{font-size:var(--fs-md);padding:10px 17px;border-radius:10px;}
+  .link-bar{gap:9px;margin-bottom:20px;}
+  .month-pill,.round-pill,.ru-btn{font-size:var(--fs-sm);}
+  .month-pill{padding:8px 15px;}
+  .month-pill .mp-sub{font-size:11px;}
+  .del-btn{font-size:17px;padding:3px 7px;}
+
+  /* --- 9. 업로드 존 — 분홍 면적을 줄이고 내용에 시선이 가도록 --- */
+  .up-zone{background:var(--surface-2);border:1.5px dashed var(--line-strong);
+    border-radius:var(--r);padding:22px;text-align:left;margin-bottom:16px;}
+  .up-zone.drag{background:var(--accent-soft);border-color:var(--accent);}
+  .up-zone .uz-title{font-size:var(--fs-lg);color:var(--ink);margin-bottom:7px;}
+  .up-zone .uz-desc{font-size:var(--fs-sm);color:var(--ink-soft);line-height:1.65;margin-bottom:14px;}
+  .up-btns{justify-content:flex-start;gap:9px;}
+  .up-btn{font-size:var(--fs-sm);padding:9px 17px;border-radius:9px;}
+  .up-log{font-size:var(--fs-xs);line-height:1.6;max-height:150px;padding:11px;border:1px solid var(--line);}
+
+  /* --- 10. 알림 --- */
+  .alert-item{padding:13px 16px;border-radius:11px;}
+  .alert-item .ai-t{font-size:var(--fs-md);}
+  .alert-item .ai-s{font-size:var(--fs-sm);color:var(--ink-soft);margin-top:3px;}
+  .new-bar{padding:14px 17px;border-radius:11px;}
+  .new-bar .nb-t{font-size:var(--fs-md);}
+  .new-bar .nb-s{font-size:var(--fs-sm);}
+  .new-badge{font-size:10.5px;padding:2px 7px;}
+
+  /* --- 11. 홈 카드 --- */
+  .home-grid{gap:14px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));}
+  .home-card{padding:18px 19px;border-radius:var(--r);}
+  .home-card:hover{box-shadow:var(--shadow-lift);}
+  .home-card .hc-t{font-size:16px;}
+  .home-card .hc-i{font-size:21px;}
+  .home-card .hc-l{font-size:var(--fs-sm);padding:5px 0;}
+  .home-card .hc-l b{font-size:var(--fs-md);}
+  .home-card .hc-f{font-size:var(--fs-xs);color:var(--ink-mute);margin-top:11px;padding-top:10px;}
+
+  /* --- 12. 폼 · 모달 --- */
+  .form-grid{gap:13px;}
+  .form-grid label{font-size:var(--fs-xs);color:var(--ink-soft);margin-bottom:6px;}
+  .form-grid input,.form-grid textarea{font-size:var(--fs-md);padding:10px 12px;border-radius:9px;}
+  .modal{border-radius:var(--r);padding:26px;}
+  .modal h3{font-size:19px;margin-bottom:8px;}
+  .modal p{font-size:var(--fs-sm);line-height:1.65;margin-bottom:18px;}
+  .modal label.flabel{font-size:var(--fs-xs);}
+  .modal input[type=text],.modal input[type=number],.modal select{font-size:var(--fs-md);padding:10px 13px;}
+  select,input[type=number].qty-input,input[type=text].custom-input{font-size:var(--fs-md);padding:8px 10px;}
+
+  /* --- 13. 파일 카드 --- */
+  .file-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;}
+  .file-thumb{height:118px;}
+  .file-meta{padding:9px 11px;font-size:var(--fs-xs);line-height:1.5;}
+  .file-meta .fm-s{font-size:11px;color:var(--ink-mute);}
+  .file-acts a,.file-acts button{padding:8px;font-size:var(--fs-xs);}
+
+  /* --- 14. 상태 배지 --- */
+  .st-badge{font-size:var(--fs-xs);padding:3px 10px;border-radius:12px;}
+
+  /* --- 15. 브랜드 · 차수 --- */
+  .brand-tab{padding:12px 18px;border-radius:var(--r);min-width:165px;}
+  .brand-tab .bt-name{font-size:16px;}
+  .brand-tab .bt-cnt{font-size:var(--fs-xs);}
+  .brand-tab .bt-lines{font-size:var(--fs-xs);}
+  .brand-label{font-size:var(--fs-xs);}
+  .round-pill{padding:9px 17px;}
+
+  /* --- 16. 기타 --- */
+  .empty-box{font-size:var(--fs-md);line-height:1.7;color:var(--ink-soft);}
+  .toast{font-size:var(--fs-md);padding:12px 22px;}
+  .memo-head #memoTitle{font-size:var(--fs-md);}
+  #memoText{font-size:var(--fs-md);}
+  .agg-total{font-size:var(--fs-md);}
+  .footnote{font-size:var(--fs-sm);}
+
+  /* 포커스 링 — 키보드 이동 시 위치가 보이도록 */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+
+  @media (max-width:900px){
+    .content{padding:24px 18px 60px;}
+    h1{font-size:22px;}
+  }
+
+  /* ==========================================================
+     UI 개편 (2026-09-02) — 가독성 우선
+     · 이 블록만 지우면 이전 디자인으로 완전히 되돌아갑니다.
+     ========================================================== */
+
+  /* --- 1. 색 · 타입 스케일 --- */
+  :root{
+    --bg:#F2F0EC;                 /* 페이지 바닥 */
+    --panel:#FFFFFF;              /* 카드 표면 */
+    --surface-2:#F8F6F2;          /* 한 단계 낮은 표면 */
+    --surface-3:#EFEBE4;          /* 표 머리글 등 */
+    --line:#E3DED5;
+    --line-strong:#CFC7B9;
+    --ink:#16233D;
+    --ink-soft:#4A5470;           /* 본문 보조 — 대비 상향 */
+    --ink-mute:#78819B;           /* 메타 정보 */
+    --accent:#B14E6E;
+    --accent-soft:#F6E7EC;
+    --good:#1F6E4A;
+    --warn:#A8480F;
+    --info:#1A56A8;
+
+    --fs-xs:12px;                 /* 메타·라벨 (기존 10~11px 대체) */
+    --fs-sm:13px;
+    --fs-md:14px;                 /* 본문·표 기본 */
+    --fs-lg:16px;                 /* 섹션 제목 */
+    --fs-xl:20px;
+
+    --sp:8px;
+    --r:12px;                     /* 통일 반경 */
+    --shadow:0 1px 2px rgba(22,35,61,.05);
+    --shadow-lift:0 6px 20px rgba(22,35,61,.10);
+    --side:250px;
+  }
+  body{font-size:var(--fs-md);line-height:1.6;}
+
+  /* --- 2. 사이드바 --- */
+  .sidebar{padding:24px 12px;}
+  .brand{margin-bottom:26px;padding:0 8px;}
+  .brand .b-eyebrow{font-size:11px;letter-spacing:.16em;color:#9AA3BE;margin-bottom:5px;}
+  .brand .b-title{font-size:19px;letter-spacing:-.02em;}
+  .nav{gap:2px;}
+  .nav-section{font-size:11px;letter-spacing:.14em;color:#8B94B0;margin:22px 10px 8px;}
+  .nav-item{font-size:14px;font-weight:600;color:#D3D8E6;padding:11px 12px;border-radius:10px;
+    position:relative;transition:background .12s,color .12s;}
+  .nav-item:hover{background:rgba(255,255,255,.09);color:#fff;}
+  .nav-item.active{background:rgba(255,255,255,.13);color:#fff;font-weight:800;}
+  .nav-item.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;
+    border-radius:0 3px 3px 0;background:var(--accent);}
+  .nav-item .ic{font-size:16px;width:22px;}
+  .nav-item .badge{font-size:12px;background:rgba(255,255,255,.14);color:#E4E8F2;padding:1px 8px;}
+  .nav-item.active .badge{background:var(--accent);color:#fff;}
+  .side-foot{font-size:12px;color:#98A1BC;line-height:1.6;padding:18px 8px 0;}
+  .sync-btn{font-size:13px;padding:10px;}
+  .sync-state-line{font-size:12px;color:#BEC5DA;margin-top:9px;}
+
+  /* --- 3. 본문 폭 · 리듬 --- */
+  .content{padding:32px 28px 72px;}
+  .wrap{max-width:1080px;}
+  header.page-head{margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--line);}
+  .eyebrow{font-size:var(--fs-xs);letter-spacing:.16em;color:var(--ink-mute);margin-bottom:8px;}
+  h1{font-size:26px;line-height:1.25;margin-bottom:8px;letter-spacing:-.02em;}
+  .sub{font-size:var(--fs-md);line-height:1.65;color:var(--ink-soft);max-width:74ch;}
+  .hint{font-size:var(--fs-sm);line-height:1.65;color:var(--ink-soft);}
+
+  /* 섹션 제목 — 좌측 강조선으로 구획을 눈에 띄게 */
+  .sec-h{font-size:var(--fs-lg);margin:32px 0 14px;padding-left:11px;position:relative;line-height:1.4;}
+  .sec-h::before{content:"";position:absolute;left:0;top:.28em;bottom:.28em;width:3px;
+    border-radius:2px;background:var(--ink);}
+  .sec-h .sh-tools{gap:7px;}
+
+  /* --- 4. 패널 · 카드 --- */
+  .panel{border-radius:var(--r);padding:22px;margin-bottom:20px;box-shadow:var(--shadow);}
+  .panel-title{font-size:var(--fs-lg);margin-bottom:16px;gap:10px;}
+  .panel-title .num{width:23px;height:23px;font-size:12px;}
+  .ch-panel{background:var(--panel);border-radius:var(--r);margin-bottom:20px;box-shadow:var(--shadow);}
+  .ch-head{padding:15px 18px;font-size:var(--fs-md);gap:12px;}
+  .ch-panel.open .ch-head{border-bottom:1px solid var(--line);background:var(--surface-2);}
+  .ch-body{padding:18px;}
+  .ch-item{font-size:var(--fs-sm);padding:11px 13px;background:var(--surface-2);}
+  .ch-item b{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:3px;}
+
+  /* --- 5. 표 — 가장 큰 가독성 개선 지점 --- */
+  .led-table,.ord-table{font-size:var(--fs-md);border-radius:10px;border-color:var(--line);}
+  .led-table th,.ord-table th{padding:11px 12px;background:var(--surface-3);font-size:var(--fs-xs);
+    font-weight:800;color:var(--ink-soft);letter-spacing:.02em;border-bottom:1px solid var(--line-strong);}
+  .led-table td,.ord-table td{padding:12px;border-top:1px solid var(--line);line-height:1.55;}
+  .led-table tbody tr:hover,.ord-table tbody tr:hover{background:var(--surface-2);}
+  .led-sub{font-size:var(--fs-sm);padding-left:14px;}
+  table{font-size:var(--fs-md);}
+  th{font-size:var(--fs-xs);padding:9px 8px;color:var(--ink-soft);}
+  td{padding:9px 8px;}
+  /* 숫자는 자릿수가 흔들리지 않게 */
+  .num-cell,.num-mono,.rvalue,.sc-v,td[class*="num"]{font-variant-numeric:tabular-nums;}
+  .num-cell{font-size:var(--fs-md);}
+
+  /* --- 6. 지표 카드 --- */
+  .stat-row{gap:12px;margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}
+  .stat-card{background:var(--panel);border-radius:11px;padding:15px 16px;box-shadow:var(--shadow);}
+  .stat-card .sc-l{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:6px;letter-spacing:.01em;}
+  .stat-card .sc-v{font-size:20px;letter-spacing:-.01em;}
+  .stat-card.hero{box-shadow:none;}
+  .stat-card.hero .sc-l{color:#B9C2D8;}
+  .result-card{background:var(--surface-2);border-radius:11px;padding:14px 16px;}
+  .rlabel{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:5px;}
+  .rvalue{font-size:20px;}
+  .result-card.hero .rvalue{font-size:30px;}
+
+  /* --- 7. 정보 그리드 --- */
+  .info-grid{gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));}
+  .info-item{background:var(--surface-2);border-radius:10px;padding:12px 14px;}
+  .info-item .ii-l{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:5px;letter-spacing:.01em;}
+  .info-item .ii-v{font-size:var(--fs-md);line-height:1.5;word-break:keep-all;overflow-wrap:anywhere;}
+  .info-item .ii-v.empty{color:#A7A093;}
+
+  /* --- 8. 버튼 --- */
+  .btn{border-radius:9px;padding:10px 18px;font-size:var(--fs-md);}
+  .btn-sm{padding:7px 13px;font-size:var(--fs-sm);}
+  .icon-btn{font-size:var(--fs-sm) !important;padding:7px 12px !important;border-radius:8px !important;}
+  .link-btn{font-size:var(--fs-md);padding:10px 17px;border-radius:10px;}
+  .link-bar{gap:9px;margin-bottom:20px;}
+  .month-pill,.round-pill,.ru-btn{font-size:var(--fs-sm);}
+  .month-pill{padding:8px 15px;}
+  .month-pill .mp-sub{font-size:11px;}
+  .del-btn{font-size:17px;padding:3px 7px;}
+
+  /* --- 9. 업로드 존 — 분홍 면적을 줄이고 내용에 시선이 가도록 --- */
+  .up-zone{background:var(--surface-2);border:1.5px dashed var(--line-strong);
+    border-radius:var(--r);padding:22px;text-align:left;margin-bottom:16px;}
+  .up-zone.drag{background:var(--accent-soft);border-color:var(--accent);}
+  .up-zone .uz-title{font-size:var(--fs-lg);color:var(--ink);margin-bottom:7px;}
+  .up-zone .uz-desc{font-size:var(--fs-sm);color:var(--ink-soft);line-height:1.65;margin-bottom:14px;}
+  .up-btns{justify-content:flex-start;gap:9px;}
+  .up-btn{font-size:var(--fs-sm);padding:9px 17px;border-radius:9px;}
+  .up-log{font-size:var(--fs-xs);line-height:1.6;max-height:150px;padding:11px;border:1px solid var(--line);}
+
+  /* --- 10. 알림 --- */
+  .alert-item{padding:13px 16px;border-radius:11px;}
+  .alert-item .ai-t{font-size:var(--fs-md);}
+  .alert-item .ai-s{font-size:var(--fs-sm);color:var(--ink-soft);margin-top:3px;}
+  .new-bar{padding:14px 17px;border-radius:11px;}
+  .new-bar .nb-t{font-size:var(--fs-md);}
+  .new-bar .nb-s{font-size:var(--fs-sm);}
+  .new-badge{font-size:10.5px;padding:2px 7px;}
+
+  /* --- 11. 홈 카드 --- */
+  .home-grid{gap:14px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));}
+  .home-card{padding:18px 19px;border-radius:var(--r);}
+  .home-card:hover{box-shadow:var(--shadow-lift);}
+  .home-card .hc-t{font-size:16px;}
+  .home-card .hc-i{font-size:21px;}
+  .home-card .hc-l{font-size:var(--fs-sm);padding:5px 0;}
+  .home-card .hc-l b{font-size:var(--fs-md);}
+  .home-card .hc-f{font-size:var(--fs-xs);color:var(--ink-mute);margin-top:11px;padding-top:10px;}
+
+  /* --- 12. 폼 · 모달 --- */
+  .form-grid{gap:13px;}
+  .form-grid label{font-size:var(--fs-xs);color:var(--ink-soft);margin-bottom:6px;}
+  .form-grid input,.form-grid textarea{font-size:var(--fs-md);padding:10px 12px;border-radius:9px;}
+  .modal{border-radius:var(--r);padding:26px;}
+  .modal h3{font-size:19px;margin-bottom:8px;}
+  .modal p{font-size:var(--fs-sm);line-height:1.65;margin-bottom:18px;}
+  .modal label.flabel{font-size:var(--fs-xs);}
+  .modal input[type=text],.modal input[type=number],.modal select{font-size:var(--fs-md);padding:10px 13px;}
+  select,input[type=number].qty-input,input[type=text].custom-input{font-size:var(--fs-md);padding:8px 10px;}
+
+  /* --- 13. 파일 카드 --- */
+  .file-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;}
+  .file-thumb{height:118px;}
+  .file-meta{padding:9px 11px;font-size:var(--fs-xs);line-height:1.5;}
+  .file-meta .fm-s{font-size:11px;color:var(--ink-mute);}
+  .file-acts a,.file-acts button{padding:8px;font-size:var(--fs-xs);}
+
+  /* --- 14. 상태 배지 --- */
+  .st-badge{font-size:var(--fs-xs);padding:3px 10px;border-radius:12px;}
+
+  /* --- 15. 브랜드 · 차수 --- */
+  .brand-tab{padding:12px 18px;border-radius:var(--r);min-width:165px;}
+  .brand-tab .bt-name{font-size:16px;}
+  .brand-tab .bt-cnt{font-size:var(--fs-xs);}
+  .brand-tab .bt-lines{font-size:var(--fs-xs);}
+  .brand-label{font-size:var(--fs-xs);}
+  .round-pill{padding:9px 17px;}
+
+  /* --- 16. 기타 --- */
+  .empty-box{font-size:var(--fs-md);line-height:1.7;color:var(--ink-soft);}
+  .toast{font-size:var(--fs-md);padding:12px 22px;}
+  .memo-head #memoTitle{font-size:var(--fs-md);}
+  #memoText{font-size:var(--fs-md);}
+  .agg-total{font-size:var(--fs-md);}
+  .footnote{font-size:var(--fs-sm);}
+
+  /* 포커스 링 — 키보드 이동 시 위치가 보이도록 */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+
+  @media (max-width:900px){
+    .content{padding:24px 18px 60px;}
+    h1{font-size:22px;}
+  }
+
+  /* --- 17. 좁은 화면: 사이드바를 상단 가로 바로 --- */
+  @media (max-width:860px){
+    .app{flex-direction:column;}
+    .sidebar{width:100%;height:auto;position:static;padding:14px 12px;
+      flex-direction:row;align-items:center;gap:14px;overflow-x:auto;}
+    .brand{margin:0;flex-shrink:0;}
+    .brand .b-eyebrow{display:none;}
+    .brand .b-title{font-size:16px;white-space:nowrap;}
+    .nav{flex-direction:row;gap:4px;flex-wrap:nowrap;}
+    .nav-section{display:none;}
+    .nav-item{white-space:nowrap;padding:9px 12px;font-size:13px;}
+    .nav-item.active::before{top:auto;bottom:0;left:10px;right:10px;width:auto;height:3px;border-radius:3px 3px 0 0;}
+    .side-foot{margin:0 0 0 auto;padding:0;flex-shrink:0;display:flex;align-items:center;gap:10px;}
+    .side-note{display:none;}
+    .sync-btn{width:auto;white-space:nowrap;padding:8px 12px;}
+    .sync-state-line{margin:0;white-space:nowrap;}
+    .content{padding:20px 16px 56px;}
+  }
+
+  /* ==========================================================
+     UI 개편 (2026-09-02) — 가독성 우선
+     · 이 블록만 지우면 이전 디자인으로 완전히 되돌아갑니다.
+     ========================================================== */
+
+  /* --- 1. 색 · 타입 스케일 --- */
+  :root{
+    --bg:#F2F0EC;                 /* 페이지 바닥 */
+    --panel:#FFFFFF;              /* 카드 표면 */
+    --surface-2:#F8F6F2;          /* 한 단계 낮은 표면 */
+    --surface-3:#EFEBE4;          /* 표 머리글 등 */
+    --line:#E3DED5;
+    --line-strong:#CFC7B9;
+    --ink:#16233D;
+    --ink-soft:#4A5470;           /* 본문 보조 — 대비 상향 */
+    --ink-mute:#78819B;           /* 메타 정보 */
+    --accent:#B14E6E;
+    --accent-soft:#F6E7EC;
+    --good:#1F6E4A;
+    --warn:#A8480F;
+    --info:#1A56A8;
+
+    --fs-xs:12px;                 /* 메타·라벨 (기존 10~11px 대체) */
+    --fs-sm:13px;
+    --fs-md:14px;                 /* 본문·표 기본 */
+    --fs-lg:16px;                 /* 섹션 제목 */
+    --fs-xl:20px;
+
+    --sp:8px;
+    --r:12px;                     /* 통일 반경 */
+    --shadow:0 1px 2px rgba(22,35,61,.05);
+    --shadow-lift:0 6px 20px rgba(22,35,61,.10);
+    --side:250px;
+  }
+  body{font-size:var(--fs-md);line-height:1.6;}
+
+  /* --- 2. 사이드바 --- */
+  .sidebar{padding:24px 12px;}
+  .brand{margin-bottom:26px;padding:0 8px;}
+  .brand .b-eyebrow{font-size:11px;letter-spacing:.16em;color:#9AA3BE;margin-bottom:5px;}
+  .brand .b-title{font-size:19px;letter-spacing:-.02em;}
+  .nav{gap:2px;}
+  .nav-section{font-size:11px;letter-spacing:.14em;color:#8B94B0;margin:22px 10px 8px;}
+  .nav-item{font-size:14px;font-weight:600;color:#D3D8E6;padding:11px 12px;border-radius:10px;
+    position:relative;transition:background .12s,color .12s;}
+  .nav-item:hover{background:rgba(255,255,255,.09);color:#fff;}
+  .nav-item.active{background:rgba(255,255,255,.13);color:#fff;font-weight:800;}
+  .nav-item.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;
+    border-radius:0 3px 3px 0;background:var(--accent);}
+  .nav-item .ic{font-size:16px;width:22px;}
+  .nav-item .badge{font-size:12px;background:rgba(255,255,255,.14);color:#E4E8F2;padding:1px 8px;}
+  .nav-item.active .badge{background:var(--accent);color:#fff;}
+  .side-foot{font-size:12px;color:#98A1BC;line-height:1.6;padding:18px 8px 0;}
+  .sync-btn{font-size:13px;padding:10px;}
+  .sync-state-line{font-size:12px;color:#BEC5DA;margin-top:9px;}
+
+  /* --- 3. 본문 폭 · 리듬 --- */
+  .content{padding:32px 28px 72px;}
+  .wrap{max-width:1080px;}
+  header.page-head{margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--line);}
+  .eyebrow{font-size:var(--fs-xs);letter-spacing:.16em;color:var(--ink-mute);margin-bottom:8px;}
+  h1{font-size:26px;line-height:1.25;margin-bottom:8px;letter-spacing:-.02em;}
+  .sub{font-size:var(--fs-md);line-height:1.65;color:var(--ink-soft);max-width:74ch;}
+  .hint{font-size:var(--fs-sm);line-height:1.65;color:var(--ink-soft);}
+
+  /* 섹션 제목 — 좌측 강조선으로 구획을 눈에 띄게 */
+  .sec-h{font-size:var(--fs-lg);margin:32px 0 14px;padding-left:11px;position:relative;line-height:1.4;}
+  .sec-h::before{content:"";position:absolute;left:0;top:.28em;bottom:.28em;width:3px;
+    border-radius:2px;background:var(--ink);}
+  .sec-h .sh-tools{gap:7px;}
+
+  /* --- 4. 패널 · 카드 --- */
+  .panel{border-radius:var(--r);padding:22px;margin-bottom:20px;box-shadow:var(--shadow);}
+  .panel-title{font-size:var(--fs-lg);margin-bottom:16px;gap:10px;}
+  .panel-title .num{width:23px;height:23px;font-size:12px;}
+  .ch-panel{background:var(--panel);border-radius:var(--r);margin-bottom:20px;box-shadow:var(--shadow);}
+  .ch-head{padding:15px 18px;font-size:var(--fs-md);gap:12px;}
+  .ch-panel.open .ch-head{border-bottom:1px solid var(--line);background:var(--surface-2);}
+  .ch-body{padding:18px;}
+  .ch-item{font-size:var(--fs-sm);padding:11px 13px;background:var(--surface-2);}
+  .ch-item b{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:3px;}
+
+  /* --- 5. 표 — 가장 큰 가독성 개선 지점 --- */
+  .led-table,.ord-table{font-size:var(--fs-md);border-radius:10px;border-color:var(--line);}
+  .led-table th,.ord-table th{padding:11px 12px;background:var(--surface-3);font-size:var(--fs-xs);
+    font-weight:800;color:var(--ink-soft);letter-spacing:.02em;border-bottom:1px solid var(--line-strong);}
+  .led-table td,.ord-table td{padding:12px;border-top:1px solid var(--line);line-height:1.55;}
+  .led-table tbody tr:hover,.ord-table tbody tr:hover{background:var(--surface-2);}
+  .led-sub{font-size:var(--fs-sm);padding-left:14px;}
+  table{font-size:var(--fs-md);}
+  th{font-size:var(--fs-xs);padding:9px 8px;color:var(--ink-soft);}
+  td{padding:9px 8px;}
+  /* 숫자는 자릿수가 흔들리지 않게 */
+  .num-cell,.num-mono,.rvalue,.sc-v,td[class*="num"]{font-variant-numeric:tabular-nums;}
+  .num-cell{font-size:var(--fs-md);}
+
+  /* --- 6. 지표 카드 --- */
+  .stat-row{gap:12px;margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}
+  .stat-card{background:var(--panel);border-radius:11px;padding:15px 16px;box-shadow:var(--shadow);}
+  .stat-card .sc-l{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:6px;letter-spacing:.01em;}
+  .stat-card .sc-v{font-size:20px;letter-spacing:-.01em;}
+  .stat-card.hero{box-shadow:none;}
+  .stat-card.hero .sc-l{color:#B9C2D8;}
+  .result-card{background:var(--surface-2);border-radius:11px;padding:14px 16px;}
+  .rlabel{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:5px;}
+  .rvalue{font-size:20px;}
+  .result-card.hero .rvalue{font-size:30px;}
+
+  /* --- 7. 정보 그리드 --- */
+  .info-grid{gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));}
+  .info-item{background:var(--surface-2);border-radius:10px;padding:12px 14px;}
+  .info-item .ii-l{font-size:var(--fs-xs);color:var(--ink-mute);margin-bottom:5px;letter-spacing:.01em;}
+  .info-item .ii-v{font-size:var(--fs-md);line-height:1.5;word-break:keep-all;overflow-wrap:anywhere;}
+  .info-item .ii-v.empty{color:#A7A093;}
+
+  /* --- 8. 버튼 --- */
+  .btn{border-radius:9px;padding:10px 18px;font-size:var(--fs-md);}
+  .btn-sm{padding:7px 13px;font-size:var(--fs-sm);}
+  .icon-btn{font-size:var(--fs-sm) !important;padding:7px 12px !important;border-radius:8px !important;}
+  .link-btn{font-size:var(--fs-md);padding:10px 17px;border-radius:10px;}
+  .link-bar{gap:9px;margin-bottom:20px;}
+  .month-pill,.round-pill,.ru-btn{font-size:var(--fs-sm);}
+  .month-pill{padding:8px 15px;}
+  .month-pill .mp-sub{font-size:11px;}
+  .del-btn{font-size:17px;padding:3px 7px;}
+
+  /* --- 9. 업로드 존 — 분홍 면적을 줄이고 내용에 시선이 가도록 --- */
+  .up-zone{background:var(--surface-2);border:1.5px dashed var(--line-strong);
+    border-radius:var(--r);padding:22px;text-align:left;margin-bottom:16px;}
+  .up-zone.drag{background:var(--accent-soft);border-color:var(--accent);}
+  .up-zone .uz-title{font-size:var(--fs-lg);color:var(--ink);margin-bottom:7px;}
+  .up-zone .uz-desc{font-size:var(--fs-sm);color:var(--ink-soft);line-height:1.65;margin-bottom:14px;}
+  .up-btns{justify-content:flex-start;gap:9px;}
+  .up-btn{font-size:var(--fs-sm);padding:9px 17px;border-radius:9px;}
+  .up-log{font-size:var(--fs-xs);line-height:1.6;max-height:150px;padding:11px;border:1px solid var(--line);}
+
+  /* --- 10. 알림 --- */
+  .alert-item{padding:13px 16px;border-radius:11px;}
+  .alert-item .ai-t{font-size:var(--fs-md);}
+  .alert-item .ai-s{font-size:var(--fs-sm);color:var(--ink-soft);margin-top:3px;}
+  .new-bar{padding:14px 17px;border-radius:11px;}
+  .new-bar .nb-t{font-size:var(--fs-md);}
+  .new-bar .nb-s{font-size:var(--fs-sm);}
+  .new-badge{font-size:10.5px;padding:2px 7px;}
+
+  /* --- 11. 홈 카드 --- */
+  .home-grid{gap:14px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));}
+  .home-card{padding:18px 19px;border-radius:var(--r);}
+  .home-card:hover{box-shadow:var(--shadow-lift);}
+  .home-card .hc-t{font-size:16px;}
+  .home-card .hc-i{font-size:21px;}
+  .home-card .hc-l{font-size:var(--fs-sm);padding:5px 0;}
+  .home-card .hc-l b{font-size:var(--fs-md);}
+  .home-card .hc-f{font-size:var(--fs-xs);color:var(--ink-mute);margin-top:11px;padding-top:10px;}
+
+  /* --- 12. 폼 · 모달 --- */
+  .form-grid{gap:13px;}
+  .form-grid label{font-size:var(--fs-xs);color:var(--ink-soft);margin-bottom:6px;}
+  .form-grid input,.form-grid textarea{font-size:var(--fs-md);padding:10px 12px;border-radius:9px;}
+  .modal{border-radius:var(--r);padding:26px;}
+  .modal h3{font-size:19px;margin-bottom:8px;}
+  .modal p{font-size:var(--fs-sm);line-height:1.65;margin-bottom:18px;}
+  .modal label.flabel{font-size:var(--fs-xs);}
+  .modal input[type=text],.modal input[type=number],.modal select{font-size:var(--fs-md);padding:10px 13px;}
+  select,input[type=number].qty-input,input[type=text].custom-input{font-size:var(--fs-md);padding:8px 10px;}
+
+  /* --- 13. 파일 카드 --- */
+  .file-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;}
+  .file-thumb{height:118px;}
+  .file-meta{padding:9px 11px;font-size:var(--fs-xs);line-height:1.5;}
+  .file-meta .fm-s{font-size:11px;color:var(--ink-mute);}
+  .file-acts a,.file-acts button{padding:8px;font-size:var(--fs-xs);}
+
+  /* --- 14. 상태 배지 --- */
+  .st-badge{font-size:var(--fs-xs);padding:3px 10px;border-radius:12px;}
+
+  /* --- 15. 브랜드 · 차수 --- */
+  .brand-tab{padding:12px 18px;border-radius:var(--r);min-width:165px;}
+  .brand-tab .bt-name{font-size:16px;}
+  .brand-tab .bt-cnt{font-size:var(--fs-xs);}
+  .brand-tab .bt-lines{font-size:var(--fs-xs);}
+  .brand-label{font-size:var(--fs-xs);}
+  .round-pill{padding:9px 17px;}
+
+  /* --- 16. 기타 --- */
+  .empty-box{font-size:var(--fs-md);line-height:1.7;color:var(--ink-soft);}
+  .toast{font-size:var(--fs-md);padding:12px 22px;}
+  .memo-head #memoTitle{font-size:var(--fs-md);}
+  #memoText{font-size:var(--fs-md);}
+  .agg-total{font-size:var(--fs-md);}
+  .footnote{font-size:var(--fs-sm);}
+
+  /* 포커스 링 — 키보드 이동 시 위치가 보이도록 */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+
+  @media (max-width:900px){
+    .content{padding:24px 18px 60px;}
+    h1{font-size:22px;}
+  }
+
+  /* --- 17. 좁은 화면: 사이드바를 상단 가로 바로 --- */
+  @media (max-width:860px){
+    .app{flex-direction:column;}
+    .sidebar{width:100%;height:auto;position:static;padding:14px 12px;
+      flex-direction:row;align-items:center;gap:14px;overflow-x:auto;}
+    .brand{margin:0;flex-shrink:0;}
+    .brand .b-eyebrow{display:none;}
+    .brand .b-title{font-size:16px;white-space:nowrap;}
+    .nav{flex-direction:row;gap:4px;flex-wrap:nowrap;}
+    .nav-section{display:none;}
+    .nav-item{white-space:nowrap;padding:9px 12px;font-size:13px;}
+    .nav-item.active::before{top:auto;bottom:0;left:10px;right:10px;width:auto;height:3px;border-radius:3px 3px 0 0;}
+    .side-foot{margin:0 0 0 auto;padding:0;flex-shrink:0;display:flex;align-items:center;gap:10px;}
+    .side-note{display:none;}
+    .sync-btn{width:auto;white-space:nowrap;padding:8px 12px;}
+    .sync-state-line{margin:0;white-space:nowrap;}
+    .content{padding:20px 16px 56px;}
+  }
+
+  /* --- 18. 한글 줄바꿈 — 단어 중간에서 끊기지 않게 --- */
+  .led-table td,.ord-table td,.info-item .ii-v,.home-card,.alert-item,
+  .sub,.hint,.empty-box,.ch-item{word-break:keep-all;}
 </style>
 </head>
 <body>
@@ -1371,7 +2013,7 @@ function buildLedger(id,opts){
     const tr=document.createElement('tr');
     const names=(d.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
     if(d.isNew)tr.className='is-new';
-    tr.innerHTML='<td>'+(d.date||d.file)+(d.isNew?'<span class="new-badge">NEW</span>':'')+'</td><td><b>'+d.branch+'</b></td><td style="font-size:11.5px;">'+(names||'-')+(d.warn?'<div style="color:var(--warn);font-size:10.5px;">⚠ '+d.warn+'</div>':'')+'</td><td class="num-cell">'+fmt(d.qty)+'</td><td class="num-cell">'+fmt(d.total)+'</td>';
+    tr.innerHTML='<td>'+(d.date||d.file)+(d.isNew?'<span class="new-badge">NEW</span>':'')+'</td><td><b>'+d.branch+'</b></td><td style="font-size:12.5px;">'+(names||'-')+(d.warn?'<div style="color:var(--warn);font-size:12px;">⚠ '+d.warn+'</div>':'')+'</td><td class="num-cell">'+fmt(d.qty)+'</td><td class="num-cell">'+fmt(d.total)+'</td>';
     const td=document.createElement('td');const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
     x.addEventListener('click',()=>{
       if(!confirm('이 명세서를 삭제할까요? (휴지통에서 되돌릴 수 있습니다)'+String.fromCharCode(10)+d.file))return;
@@ -1445,7 +2087,7 @@ function buildChannelPanel(){
   const open=localStorage.getItem('setPriceCalc:chOpen')==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
-  h.innerHTML='<span><span class="chev">▶</span> 📋 약국 채널 공통 정보 · 거래 조건</span><span style="font-size:10.5px;color:var(--ink-soft);font-weight:600;">'+CHANNEL_INFO.updated+'</span>';
+  h.innerHTML='<span><span class="chev">▶</span> 📋 약국 채널 공통 정보 · 거래 조건</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">'+CHANNEL_INFO.updated+'</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem('setPriceCalc:chOpen',p.classList.contains('open')?'1':'0');});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
@@ -1526,7 +2168,7 @@ function buildOrders(pid,view){
     const tq=(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
     const names=(o.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
     tr.innerHTML='<td>'+(o.date||'-')+'</td><td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
-      '<td style="font-size:11.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:10.5px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
+      '<td style="font-size:12.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
       '<td class="num-cell">'+fmt(tq)+'</td>';
     const td=document.createElement('td');
     const ed=document.createElement('button');ed.className='del-btn';ed.textContent='✎';ed.title='수정';
@@ -1594,7 +2236,7 @@ function buildPriceTable(channelKey,openDefault){
   const open=localStorage.getItem(lsKey)===null?!!openDefault:localStorage.getItem(lsKey)==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
-  h.innerHTML='<span><span class="chev">▶</span> 💰 '+col.label+' 표 ('+PRICE_LIST.length+'개 품목)</span><span style="font-size:10.5px;color:var(--ink-soft);font-weight:600;">갱신 '+PRICE_UPDATED+'</span>';
+  h.innerHTML='<span><span class="chev">▶</span> 💰 '+col.label+' 표 ('+PRICE_LIST.length+'개 품목)</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+PRICE_UPDATED+'</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
@@ -1605,11 +2247,11 @@ function buildPriceTable(channelKey,openDefault){
   PRICE_LIST.forEach(r=>{
     const v=r[col.idx];const dc=r[2]?((1-v/r[2])*100).toFixed(2)+'%':'-';
     const tr=document.createElement('tr');
-    tr.innerHTML='<td style="color:var(--ink-soft);font-size:11.5px;">'+r[0]+'</td><td>'+r[1]+'</td>'+
+    tr.innerHTML='<td style="color:var(--ink-soft);font-size:12.5px;">'+r[0]+'</td><td>'+r[1]+'</td>'+
       '<td class="num-cell" style="color:var(--ink-soft);">'+fmt(r[2])+'</td>'+
       '<td class="num-cell" style="color:var(--ink-soft);">'+fmt(r[3])+'</td>'+
       '<td class="num-cell" style="font-weight:800;background:#F2F7FC;">'+fmt(v)+'</td>'+
-      '<td class="num-cell" style="font-size:11.5px;color:var(--good);">'+dc+'</td>';
+      '<td class="num-cell" style="font-size:12.5px;color:var(--good);">'+dc+'</td>';
     tb.appendChild(tr);
   });
   t.appendChild(tb);box.appendChild(t);b.appendChild(box);
@@ -1624,7 +2266,7 @@ function buildBranchStock(){
   const open=localStorage.getItem(lsKey)!=='0';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
-  h.innerHTML='<span><span class="chev">▶</span> 🏪 지점별 취급 품목</span><span style="font-size:10.5px;color:var(--ink-soft);font-weight:600;">갱신 '+BRANCH_UPDATED+'</span>';
+  h.innerHTML='<span><span class="chev">▶</span> 🏪 지점별 취급 품목</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+BRANCH_UPDATED+'</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
@@ -1634,14 +2276,14 @@ function buildBranchStock(){
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='760px';
   let th='<thead><tr><th style="width:70px;">브랜드</th><th style="min-width:170px;">품목</th>';
-  BRANCH_LIST.forEach(bn=>{th+='<th style="text-align:center;width:52px;font-size:10.5px;">'+bn+'</th>';});
+  BRANCH_LIST.forEach(bn=>{th+='<th style="text-align:center;width:52px;font-size:12px;">'+bn+'</th>';});
   th+='<th style="text-align:center;width:52px;">취급</th></tr></thead>';
   t.innerHTML=th;
   const tb=document.createElement('tbody');
   const colCnt=BRANCH_LIST.map(()=>0);
   BRANCH_STOCK.forEach(r=>{
     const tr=document.createElement('tr');
-    let html='<td style="color:var(--ink-soft);font-size:11.5px;">'+r[0]+'</td><td style="font-size:12px;">'+r[1]+'</td>';
+    let html='<td style="color:var(--ink-soft);font-size:12.5px;">'+r[0]+'</td><td style="font-size:12px;">'+r[1]+'</td>';
     let cnt=0;
     r[2].forEach((v,i)=>{
       if(v){cnt++;colCnt[i]++;}
@@ -1651,7 +2293,7 @@ function buildBranchStock(){
     tr.innerHTML=html;tb.appendChild(tr);
   });
   const tot=document.createElement('tr');
-  let th2='<td colspan="2" style="text-align:right;font-weight:800;font-size:11.5px;">지점별 취급 품목 수</td>';
+  let th2='<td colspan="2" style="text-align:right;font-weight:800;font-size:12.5px;">지점별 취급 품목 수</td>';
   colCnt.forEach(c=>{th2+='<td style="text-align:center;font-weight:800;'+(c?'':'color:var(--warn);')+'">'+c+'</td>';});
   th2+='<td></td>';tot.innerHTML=th2;tot.style.background='#F3F0EA';tb.appendChild(tot);
   t.appendChild(tb);box.appendChild(t);b.appendChild(box);p.appendChild(b);
@@ -1736,7 +2378,7 @@ function buildAquamediPharms(){
     b.addEventListener('mouseenter',()=>{b.style.borderColor='var(--accent)';b.style.boxShadow='0 4px 14px rgba(27,42,74,.09)';});
     b.addEventListener('mouseleave',()=>{b.style.borderColor='var(--line)';b.style.boxShadow='none';});
     b.innerHTML='<div style="font-size:14px;font-weight:800;margin-bottom:5px;">💊 '+(inf.name||ph.name)+'</div>'+
-      '<div style="font-size:11.5px;color:var(--ink-soft);line-height:1.6;">'+
+      '<div style="font-size:12.5px;color:var(--ink-soft);line-height:1.6;">'+
       (inf.ship||inf.addr||'배송지 미입력')+'<br>'+
       '발주 <b>'+nOrd+'</b>건 · 서류 <b>'+nFile+'</b>건</div>';
     b.addEventListener('click',()=>switchView(ph.view));
@@ -1860,7 +2502,7 @@ function buildBarofarmItems(){
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const soldout=BAROFARM_ITEMS.filter(r=>!r[4]).length;
   const h=document.createElement('div');h.className='ch-head';
-  h.innerHTML='<span><span class="chev">▶</span> 📦 바로팜 등록 상품 ('+BAROFARM_ITEMS.length+'개'+(soldout?' · <span style="color:var(--warn)">품절 '+soldout+'</span>':'')+')</span><span style="font-size:10.5px;color:var(--ink-soft);font-weight:600;">갱신 '+BAROFARM_UPDATED+'</span>';
+  h.innerHTML='<span><span class="chev">▶</span> 📦 바로팜 등록 상품 ('+BAROFARM_ITEMS.length+'개'+(soldout?' · <span style="color:var(--warn)">품절 '+soldout+'</span>':'')+')</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+BAROFARM_UPDATED+'</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
@@ -1870,11 +2512,11 @@ function buildBarofarmItems(){
   const tb=document.createElement('tbody');
   BAROFARM_ITEMS.forEach(r=>{
     const tr=document.createElement('tr');
-    tr.innerHTML='<td>'+r[0]+'</td><td style="color:var(--ink-soft);font-size:11.5px;">'+r[1]+'</td>'+
+    tr.innerHTML='<td>'+r[0]+'</td><td style="color:var(--ink-soft);font-size:12.5px;">'+r[1]+'</td>'+
       '<td class="num-cell" style="color:var(--ink-soft);">'+fmt(r[2])+'</td>'+
       '<td class="num-cell" style="font-weight:800;background:#F2F7FC;">'+fmt(r[3])+'</td>'+
       '<td class="num-cell"'+(r[4]?'':' style="color:var(--warn);font-weight:800;"')+'>'+(r[4]?fmt(r[4]):'품절')+'</td>'+
-      '<td class="num-cell" style="font-size:11.5px;">'+r[5]+'개</td>';
+      '<td class="num-cell" style="font-size:12.5px;">'+r[5]+'개</td>';
     tb.appendChild(tr);
   });
   t.appendChild(tb);box.appendChild(t);b.appendChild(box);
@@ -2036,7 +2678,7 @@ function buildTaxDocs(id){
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const sum=list.reduce((a,b)=>a+(b.total||0),0);
   const h=document.createElement('div');h.className='ch-head';
-  h.innerHTML='<span><span class="chev">▶</span> 🧾 세금계산서 ('+list.length+'건)</span><span style="font-size:11px;color:var(--ink-soft);font-weight:700;font-family:var(--mono);">합계 '+fmt(sum)+'원</span>';
+  h.innerHTML='<span><span class="chev">▶</span> 🧾 세금계산서 ('+list.length+'건)</span><span style="font-size:12px;color:var(--ink-soft);font-weight:700;font-family:var(--mono);">합계 '+fmt(sum)+'원</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
@@ -2060,7 +2702,7 @@ function buildTaxDocs(id){
       if(r.file){const a=document.createElement('a');a.href='#';a.style.cssText='color:var(--input-blue);font-weight:700;text-decoration:none;';a.textContent='📎 '+r.file.name;
         a.addEventListener('click',ev=>{ev.preventDefault();openLightbox(r.file);});tdF.appendChild(a);}
       else{const sp=document.createElement('span');sp.style.color='var(--ink-soft)';sp.textContent='첨부 없음';tdF.appendChild(sp);}
-      if(r.note){const d=document.createElement('div');d.style.cssText='color:var(--ink-soft);font-size:10.5px;margin-top:2px;';d.textContent=r.note;tdF.appendChild(d);}
+      if(r.note){const d=document.createElement('div');d.style.cssText='color:var(--ink-soft);font-size:12px;margin-top:2px;';d.textContent=r.note;tdF.appendChild(d);}
       tr.appendChild(tdF);
       const tdA=document.createElement('td');
       const ed=document.createElement('button');ed.className='del-btn';ed.textContent='✎';ed.title='수정';
@@ -2338,7 +2980,7 @@ function buildReconcile(id,mk){
     r.rows.sort((a,b2)=>Math.abs(b2.diff)-Math.abs(a.diff)).forEach(row=>{
       const tr=document.createElement('tr');
       if(row.diff)tr.style.background='#FFFBF0';
-      tr.innerHTML='<td>'+row.branch+(row.group&&row.group.length?'<div style="color:var(--ink-soft);font-size:10.5px;">'+row.group.join(', ')+'</div>':'')+'</td>'+
+      tr.innerHTML='<td>'+row.branch+(row.group&&row.group.length?'<div style="color:var(--ink-soft);font-size:12px;">'+row.group.join(', ')+'</div>':'')+'</td>'+
         '<td class="num-cell">'+fmt(row.tax)+'</td><td class="num-cell">'+fmt(row.led)+'</td>'+
         '<td class="num-cell" style="font-weight:800;color:'+(row.diff?'#8A5B14':'var(--good)')+';">'+(row.diff>0?'+':'')+fmt(row.diff)+'</td>';
       tb.appendChild(tr);
@@ -2610,10 +3252,10 @@ function renderTrash(){
   list.forEach(e=>{
     const tr=document.createElement('tr');
     const at=String(e.at||'').replace('T',' ').slice(0,16);
-    tr.innerHTML='<td style="font-size:11px;color:var(--ink-soft);">'+at+'</td>'+
-      '<td style="font-size:11.5px;font-weight:700;">'+(TRASH_KINDS[e.kind]||e.kind)+'</td>'+
+    tr.innerHTML='<td style="font-size:12px;color:var(--ink-soft);">'+at+'</td>'+
+      '<td style="font-size:12.5px;font-weight:700;">'+(TRASH_KINDS[e.kind]||e.kind)+'</td>'+
       '<td><b style="font-size:12.5px;">'+(e.label||'-')+'</b>'+
-      (e.sub?'<div style="color:var(--ink-soft);font-size:10.5px;margin-top:2px;">'+e.sub+'</div>':'')+'</td>';
+      (e.sub?'<div style="color:var(--ink-soft);font-size:12px;margin-top:2px;">'+e.sub+'</div>':'')+'</td>';
     const td=document.createElement('td');td.style.whiteSpace='nowrap';
     const rb=document.createElement('button');rb.className='icon-btn';rb.style.marginRight='5px';rb.textContent='↩ 되돌리기';
     rb.addEventListener('click',()=>{
@@ -2648,7 +3290,7 @@ function renderGeo(){
   const bp=document.createElement('div');bp.className='ch-panel';
   const bh2=document.createElement('div');bh2.className='ch-head';
   bh2.innerHTML='<span><span class="chev">▶</span> 📄 판정 기준 — 계약 근거</span>'+
-    '<span style="font-size:11px;font-weight:700;color:var(--ink-soft);">직선거리 2,000m</span>';
+    '<span style="font-size:12px;font-weight:700;color:var(--ink-soft);">직선거리 2,000m</span>';
   bh2.addEventListener('click',()=>bp.classList.toggle('open'));
   bp.appendChild(bh2);
   const bb2=document.createElement('div');bb2.className='ch-body';
@@ -2669,7 +3311,7 @@ function renderGeo(){
   // API 키 설정
   const kp=document.createElement('div');kp.className='ch-panel'+(mapsKey()?'':' open');
   const kh=document.createElement('div');kh.className='ch-head';
-  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ VWorld 인증키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
+  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ VWorld 인증키</span><span style="font-size:12px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
   kh.addEventListener('click',()=>kp.classList.toggle('open'));
   kp.appendChild(kh);
   const kb=document.createElement('div');kb.className='ch-body';
@@ -2843,10 +3485,10 @@ function renderPharmJudge(box,list){
     const tr=document.createElement('tr');
     let verdict='<span style="color:var(--ink-soft);">미검사</span>';
     if(!p.addr)verdict='<span style="color:var(--warn);">주소 없음</span>';
-    else if(j&&j.ok===true)verdict='<span style="color:var(--good);font-weight:800;">✅ 가능</span> <span style="color:var(--ink-soft);font-size:11px;">'+j.nearest+' '+distLabel(j.dist)+'</span>';
-    else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 불가</span> <span style="color:var(--ink-soft);font-size:11px;">'+j.nearest+' '+distLabel(j.dist)+'</span>';
+    else if(j&&j.ok===true)verdict='<span style="color:var(--good);font-weight:800;">✅ 가능</span> <span style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</span>';
+    else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 불가</span> <span style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</span>';
     else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
-    tr.innerHTML='<td><b>'+p.name+'</b></td><td style="font-size:11.5px;color:var(--ink-soft);">'+(p.addr||'-')+'</td>'+
+    tr.innerHTML='<td><b>'+p.name+'</b></td><td style="font-size:12.5px;color:var(--ink-soft);">'+(p.addr||'-')+'</td>'+
       '<td class="num-cell">'+p.orders+'건</td><td style="font-size:12px;">'+verdict+'</td>';
     tb.appendChild(tr);
   });
@@ -2898,15 +3540,15 @@ function fileCards(files){
       c.appendChild(ic);
     }
     const nm=document.createElement('div');
-    nm.style.cssText='font-size:11px;font-weight:700;margin:7px 0 5px;line-height:1.4;word-break:break-all;';
+    nm.style.cssText='font-size:12px;font-weight:700;margin:7px 0 5px;line-height:1.4;word-break:break-all;';
     nm.textContent=f.name;c.appendChild(nm);
-    if(f.tag){const tg=document.createElement('div');tg.style.cssText='font-size:10px;color:var(--ink-soft);margin-bottom:5px;';tg.textContent=f.tag;c.appendChild(tg);}
+    if(f.tag){const tg=document.createElement('div');tg.style.cssText='font-size:11px;color:var(--ink-soft);margin-bottom:5px;';tg.textContent=f.tag;c.appendChild(tg);}
     const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;';
     if(isImgRec(f)||isPdfRec(f)){
       const v=document.createElement('button');v.className='icon-btn';v.style.fontSize='11px';v.textContent='🔍 크게';
       v.addEventListener('click',()=>openLightbox(f));row.appendChild(v);
     }
-    const dl=document.createElement('a');dl.className='icon-btn';dl.style.cssText='font-size:11px;text-decoration:none;';
+    const dl=document.createElement('a');dl.className='icon-btn';dl.style.cssText='font-size:12px;text-decoration:none;';
     dl.href=f.url;dl.target='_blank';dl.rel='noopener';dl.textContent='⬇ 원본';row.appendChild(dl);
     c.appendChild(row);w.appendChild(c);
   });
@@ -2932,10 +3574,10 @@ function openReadyContract(){
     q.style.cssText='border-left:3px solid var(--accent);padding:8px 0 8px 12px;margin:16px 0 6px;font-size:12.5px;line-height:1.75;background:#FAF8F4;border-radius:0 8px 8px 0;';
     q.innerHTML='<b>제4조(판매매권) 4항 — 2km 규약</b><br>'+
       '<i>“을”은 “갑”이 판매하고 있는 동일 상권의 다른 동일 상권에서 <b>반경 2km 이내</b> ‘레디영 약국이 아닌 다른 약국’에는 유통하지 않는다</i><br>'+
-      '<span style="color:var(--ink-soft);font-size:11.5px;">→ “반경”이므로 <b>직선거리</b> 기준으로 판정합니다.</span>';
+      '<span style="color:var(--ink-soft);font-size:12.5px;">→ “반경”이므로 <b>직선거리</b> 기준으로 판정합니다.</span>';
     b.appendChild(q);
     const q2=document.createElement('div');
-    q2.style.cssText='font-size:11.5px;color:var(--ink-soft);line-height:1.7;margin-bottom:16px;';
+    q2.style.cssText='font-size:12.5px;color:var(--ink-soft);line-height:1.7;margin-bottom:16px;';
     q2.innerHTML='<b>제14조 특약</b> — 납품율·마케팅·판매 내역 등 모든 관련 정보는 <b>대외비</b>이며 계약 종료 후에도 유효합니다. 외부 공유에 주의하세요.';
     b.appendChild(q2);
     const fh=document.createElement('div');fh.style.cssText='font-size:12px;font-weight:800;color:var(--ink-soft);margin-bottom:6px;';
@@ -2952,7 +3594,7 @@ function openApplicantDetail(a){
     const st=a.status||'대기';
     const bar=document.createElement('div');bar.style.cssText='display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px;';
     const chip=(t,col,bg)=>{const e=document.createElement('span');
-      e.style.cssText='font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:999px;color:'+col+';background:'+bg+';';
+      e.style.cssText='font-size:12.5px;font-weight:800;padding:4px 10px;border-radius:999px;color:'+col+';background:'+bg+';';
       e.textContent=t;bar.appendChild(e);};
     chip(st,st==='승인'?'var(--good)':(st==='거절'?'var(--warn)':'var(--ink-soft)'),st==='승인'?'#F4FAF6':(st==='거절'?'#FBEDE6':'#F3F0EA'));
     if(j&&j.ok===true)chip('✅ 2km 규약 가능 · '+j.nearest+' '+distLabel(j.dist),'var(--good)','#F4FAF6');
@@ -3070,12 +3712,12 @@ function buildApplicants(){
     else if(j&&j.ok===true)tr.style.background='#F4FAF6';
     let verdict='<span style="color:var(--ink-soft);">미판정</span>';
     if(!a.addr)verdict='<span style="color:var(--warn);">주소 없음</span>';
-    else if(j&&j.ok===true)verdict='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
-    else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 2km 이내</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+    else if(j&&j.ok===true)verdict='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+    else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 2km 이내</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
     else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
-    tr.innerHTML='<td style="font-size:11.5px;">'+(a.date||'-')+'</td>'+
+    tr.innerHTML='<td style="font-size:12.5px;">'+(a.date||'-')+'</td>'+
       '<td class="ap-name"></td>'+
-      '<td style="font-size:11.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.note?'<div style="font-size:10.5px;">'+a.note+'</div>':'')+'</td>'+
+      '<td style="font-size:12.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.note?'<div style="font-size:12px;">'+a.note+'</div>':'')+'</td>'+
       '<td style="font-size:12px;">'+verdict+'</td>';
     // 약국명 = 상세 보기 버튼
     const tdN=tr.querySelector('.ap-name');
@@ -3084,7 +3726,7 @@ function buildApplicants(){
     nb.textContent=a.name;nb.title=a.name+' 상세 · 서류 보기';
     nb.addEventListener('click',()=>openApplicantDetail(a));
     tdN.appendChild(nb);
-    if(a.biz){const sb2=document.createElement('div');sb2.style.cssText='color:var(--ink-soft);font-size:10.5px;margin-top:3px;';sb2.textContent=a.biz;tdN.appendChild(sb2);}
+    if(a.biz){const sb2=document.createElement('div');sb2.style.cssText='color:var(--ink-soft);font-size:12px;margin-top:3px;';sb2.textContent=a.biz;tdN.appendChild(sb2);}
     // 서류
     const tdF=document.createElement('td');tdF.style.fontSize='11px';
     if((a.files||[]).length){
@@ -3099,7 +3741,7 @@ function buildApplicants(){
     const sel=document.createElement('select');sel.style.cssText='width:100%;padding:5px 6px;border:1px solid #D6D2C8;border-radius:6px;font-size:12px;';
     ['대기','승인','거절','보류'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;if((a.status||'대기')===v)o.selected=true;sel.appendChild(o);});
     sel.addEventListener('change',e=>{a.status=e.target.value;a.decidedAt=new Date().toISOString().slice(0,10);persistLib();refreshCurrentView();});
-    const badge=document.createElement('div');badge.style.cssText='font-size:10.5px;margin-top:3px;';
+    const badge=document.createElement('div');badge.style.cssText='font-size:12px;margin-top:3px;';
     if(a.status==='승인')badge.innerHTML='<span style="color:var(--good);font-weight:800;">승인됨</span> '+(a.decidedAt||'');
     else if(a.status==='거절')badge.innerHTML='<span style="color:var(--warn);font-weight:800;">거절됨</span> '+(a.decidedAt||'');
     tdS.append(sel,badge);tr.appendChild(tdS);
@@ -3273,16 +3915,16 @@ function buildMallOrders(){
     const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
     let v='<span style="color:var(--ink-soft);">미판정</span>';
     if(!ad)v='<span style="color:var(--warn);">주소 없음</span>';
-    else if(j&&j.ok===true){v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';okC++;}
-    else if(j&&j.ok===false){v='<span style="color:var(--warn);font-weight:800;">⛔ 불가 (2km 이내)</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';ngC++;}
+    else if(j&&j.ok===true){v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';okC++;}
+    else if(j&&j.ok===false){v='<span style="color:var(--warn);font-weight:800;">⛔ 불가 (2km 이내)</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';ngC++;}
     else if(j&&j.ok===null){v='<span style="color:var(--warn);">지점 좌표 필요</span>';unC++;}
     else unC++;
     const tr=document.createElement('tr');
     if(j&&j.ok===false)tr.style.background='#FBEDE6';
     else if(j&&j.ok===true)tr.style.background='#F4FAF6';
-    tr.innerHTML='<td style="font-size:11.5px;">'+(d.date||'-')+(d.isNew?'<span class="new-badge">NEW</span>':'')+'</td>'+
-      '<td><b>'+d.branch+'</b></td><td style="font-size:11px;color:var(--ink-soft);">'+(ad||'-')+
-      '<div style="font-size:10.5px;">'+(d.items||[]).map(i=>i.name+'×'+i.qty).join(', ')+'</div></td>'+
+    tr.innerHTML='<td style="font-size:12.5px;">'+(d.date||'-')+(d.isNew?'<span class="new-badge">NEW</span>':'')+'</td>'+
+      '<td><b>'+d.branch+'</b></td><td style="font-size:12px;color:var(--ink-soft);">'+(ad||'-')+
+      '<div style="font-size:12px;">'+(d.items||[]).map(i=>i.name+'×'+i.qty).join(', ')+'</div></td>'+
       '<td class="num-cell">'+fmt(d.qty)+'</td><td class="num-cell">'+fmt(d.total)+'</td>'+
       '<td style="font-size:12px;">'+v+'</td>';
     tb.appendChild(tr);
@@ -3356,7 +3998,7 @@ function renderHome(){
   const mk=thisMonthKey();
   const head=document.createElement('header');head.className='page-head';
   head.innerHTML='<div class="eyebrow">B2B CHANNEL BOARD</div><h1>채널 통합 대시보드</h1>'+
-    '<p class="sub">레디영 · 홍콩 · 일본라방 · 바로팜 · 자사몰 · 개인약국의 현황을 한 화면에서 확인합니다. 카드를 클릭하면 해당 채널로 이동합니다.</p>';
+    '<p class="sub">레디영 · 바로팜 · 자사몰 · 아쿠아메디 · 일본라방 · 홍콩의 현황을 한 화면에서 확인합니다. 카드를 클릭하면 해당 채널로 이동합니다.</p>';
   box.appendChild(head);
 
   /* ---- 알림 ---- */
@@ -3485,7 +4127,7 @@ function buildChannelGeo(id,label){
   });
   const h=document.createElement('div');h.className='ch-head';
   h.innerHTML='<span><span class="chev">▶</span> 📍 '+label+' 약국 좌표 · 2km 판정 ('+list.length+'곳)</span>'+
-    '<span style="font-size:11px;font-weight:700;">'+
+    '<span style="font-size:12px;font-weight:700;">'+
     (okC?'<span style="color:var(--good);">가능 '+okC+'</span> ':'')+
     (ngC?'<span style="color:var(--warn);">불가 '+ngC+'</span> ':'')+
     (unC?'<span style="color:var(--ink-soft);">미판정 '+unC+'</span>':'')+'</span>';
@@ -3530,14 +4172,14 @@ function buildChannelGeo(id,label){
       const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
       let v='<span style="color:var(--ink-soft);">미판정</span>';
       if(!x.addr)v='<span style="color:var(--warn);">주소 없음</span>';
-      else if(j&&j.ok===true)v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
-      else if(j&&j.ok===false)v='<span style="color:var(--warn);font-weight:800;">⛔ 불가</span><div style="color:var(--ink-soft);font-size:10.5px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+      else if(j&&j.ok===true)v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+      else if(j&&j.ok===false)v='<span style="color:var(--warn);font-weight:800;">⛔ 불가</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
       else if(j&&j.ok===null)v='<span style="color:var(--warn);">지점 좌표 필요</span>';
       const tr=document.createElement('tr');
       if(j&&j.ok===false)tr.style.background='#FBEDE6';else if(j&&j.ok===true)tr.style.background='#F4FAF6';
       tr.innerHTML='<td><b>'+x.name+'</b></td>'+
-        '<td style="font-size:11px;color:var(--ink-soft);">'+(x.addr||'-')+'</td>'+
-        '<td class="num-cell" style="font-size:10.5px;">'+((c&&typeof c.lat==='number')?(c.lat.toFixed(5)+', '+c.lng.toFixed(5)):'<span style="color:var(--warn);">미변환</span>')+'</td>'+
+        '<td style="font-size:12px;color:var(--ink-soft);">'+(x.addr||'-')+'</td>'+
+        '<td class="num-cell" style="font-size:12px;">'+((c&&typeof c.lat==='number')?(c.lat.toFixed(5)+', '+c.lng.toFixed(5)):'<span style="color:var(--warn);">미변환</span>')+'</td>'+
         '<td class="num-cell">'+x.orders+'건</td><td style="font-size:12px;">'+v+'</td>';
       tb.appendChild(tr);
     });
