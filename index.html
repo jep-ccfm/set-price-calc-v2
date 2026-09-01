@@ -344,6 +344,7 @@
       <div class="nav-section">약국 채널</div>
       <button class="nav-item" data-view="ch_barofarm"><span class="ic">🛒</span>바로팜</button>
       <button class="nav-item" data-view="ch_pharmmall"><span class="ic">🏬</span>자사몰 약사 전용관</button>
+      <button class="nav-item" data-view="geo"><span class="ic">📍</span>2km 규약 검사</button>
     </nav>
     <div class="side-foot">
       <button id="syncBtn" class="sync-btn" type="button">↻ 최신 불러오기</button>
@@ -487,6 +488,9 @@
 
       <!-- ========== 약국 채널 뷰 ========== -->
       <div id="view-channel" hidden></div>
+
+      <!-- ========== 2km 규약 검사 뷰 ========== -->
+      <div id="view-geo" hidden></div>
 
     </div>
   </main>
@@ -691,7 +695,7 @@ function pushLibSoon(){clearTimeout(libPushT);setSync('saving');pendingPush++;li
 function pushCostDBSoon(){clearTimeout(dbPushT);setSync('saving');pendingPush++;dbPushT=setTimeout(async()=>{const ok=await sbUpsert('costDB',costDB);pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');},600);}
 function hasLibData(l){return Object.values((l&&l.companies)||{}).some(c=>c.brands?Object.values(c.brands).some(b=>(b.rounds||[]).length):(c.rounds||[]).length);}
 function ensureCompanies(){COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]=(c.key==='jp'?{brands:{merable:{rounds:[],activeId:null},lusolve:{rounds:[],activeId:null}},activeBrand:'merable'}:{rounds:[],activeId:null});});}
-function rerenderAll(){refreshDatalist();render();updateBadges();const v=currentView;if(v&&v.indexOf('ph_')===0){if(typeof renderPharm==='function')renderPharm(v);}else if(v&&v.indexOf('ch_')===0){if(typeof renderChannel==='function')renderChannel(v);}else if(v!=='calc')renderCompany(v);}
+function rerenderAll(){refreshDatalist();render();updateBadges();const v=currentView;if(v==='geo'){if(typeof renderGeo==='function')renderGeo();}else if(v&&v.indexOf('ph_')===0){if(typeof renderPharm==='function')renderPharm(v);}else if(v&&v.indexOf('ch_')===0){if(typeof renderChannel==='function')renderChannel(v);}else if(v!=='calc')renderCompany(v);}
 async function syncPull(){
   if(ioBusy>0){setSync('synced');return;}
   setSync('pull');
@@ -1824,6 +1828,7 @@ document.getElementById('txSave').addEventListener('click',()=>{
 function refreshCurrentView(){
   const v=currentView;
   if(v==='calc')return;
+  if(v==='geo'){renderGeo();return;}
   if(v.indexOf('ph_')===0)renderPharm(v);
   else if(v.indexOf('ch_')===0)renderChannel(v);
   else renderCompany(v);
@@ -2154,6 +2159,229 @@ function buildReconcile(id,mk){
   p.appendChild(b);return p;
 }
 
+/* ============================================================
+   레디영 2km 규약 검사 (거리 판정 엔진)
+   - 레디영 지점 좌표 등록 → 약국 주소와의 최단거리 계산
+   - 2km 이내면 '거래 불가', 밖이면 '거래 가능'
+   ============================================================ */
+const GEO_RADIUS_M=2000;
+function geoStore(){lib.geo=lib.geo||{};lib.geo.sites=lib.geo.sites||[];lib.geo.checks=lib.geo.checks||{};return lib.geo;}
+function mapsKey(){return localStorage.getItem('setPriceCalc:mapsKey')||'';}
+function setMapsKey(v){if(v)localStorage.setItem('setPriceCalc:mapsKey',v);else localStorage.removeItem('setPriceCalc:mapsKey');}
+
+function haversineM(a,b){
+  const R=6371000,toR=d=>d*Math.PI/180;
+  const dLat=toR(b.lat-a.lat),dLng=toR(b.lng-a.lng);
+  const s=Math.sin(dLat/2)**2+Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLng/2)**2;
+  return Math.round(2*R*Math.asin(Math.sqrt(s)));
+}
+/* Google Maps JS API 동적 로드 (키는 각자 브라우저에만 저장) */
+let _gmapsP=null;
+function loadMaps(){
+  if(typeof google!=='undefined'&&google.maps&&google.maps.Geocoder)return Promise.resolve();
+  if(_gmapsP)return _gmapsP;
+  const k=mapsKey();
+  if(!k)return Promise.reject(new Error('구글 지도 API 키가 없습니다 (아래 설정에서 입력)'));
+  _gmapsP=new Promise((ok,no)=>{
+    const s=document.createElement('script');
+    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR';
+    s.onload=()=>ok();s.onerror=()=>{_gmapsP=null;no(new Error('지도 API 로드 실패 (키·도메인 제한 확인)'));};
+    document.head.appendChild(s);
+  });
+  return _gmapsP;
+}
+async function geocodeAddr(addr){
+  await loadMaps();
+  return new Promise((ok,no)=>{
+    new google.maps.Geocoder().geocode({address:addr,region:'KR'},(res,st)=>{
+      if(st==='OK'&&res&&res[0]){
+        const l=res[0].geometry.location;
+        ok({lat:l.lat(),lng:l.lng(),formatted:res[0].formatted_address});
+      }else no(new Error('주소를 찾지 못했습니다 ('+st+')'));
+    });
+  });
+}
+/* 좌표가 등록된 레디영 지점과의 최단거리 판정 */
+function judgePoint(pt){
+  const sites=geoStore().sites.filter(s=>typeof s.lat==='number'&&typeof s.lng==='number');
+  if(!sites.length)return{ok:null,reason:'레디영 지점 좌표가 등록되지 않았습니다'};
+  let best=null;
+  sites.forEach(s=>{const d=haversineM(pt,s);if(!best||d<best.dist)best={site:s.name,dist:d};});
+  return{ok:best.dist>GEO_RADIUS_M,nearest:best.site,dist:best.dist};
+}
+async function judgeAddress(addr){
+  const key=String(addr||'').trim();
+  if(!key)throw new Error('주소가 비어 있습니다');
+  const g=geoStore();
+  if(g.checks[key]&&typeof g.checks[key].lat==='number'){
+    const c=g.checks[key];const j=judgePoint(c);
+    return{...c,...j,cached:true};
+  }
+  const pt=await geocodeAddr(key);
+  const j=judgePoint(pt);
+  g.checks[key]={lat:pt.lat,lng:pt.lng,formatted:pt.formatted,at:new Date().toISOString()};
+  persistLib();
+  return{...g.checks[key],...j,cached:false};
+}
+const distLabel=m=>m>=1000?(m/1000).toFixed(2)+'km':m+'m';
+
+/* ---------- 화면 ---------- */
+function renderGeo(){
+  const box=document.getElementById('view-geo');box.innerHTML='';
+  const g=geoStore();
+  const head=document.createElement('header');head.className='page-head';
+  head.innerHTML='<div class="eyebrow">약국 채널 · 영업 규약</div><h1><span class="flag">📍</span>레디영 2km 규약 검사</h1>'+
+    '<p class="sub">레디영 계약상 <b>레디영 지점 반경 2km 이내</b> 약국은 거래할 수 없습니다. 지점 좌표를 등록해두면 약국 주소만 넣어도 가능/불가를 자동 판정합니다.</p>';
+  box.appendChild(head);
+
+  // API 키 설정
+  const kp=document.createElement('div');kp.className='ch-panel'+(mapsKey()?'':' open');
+  const kh=document.createElement('div');kh.className='ch-head';
+  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ 구글 지도 API 키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
+  kh.addEventListener('click',()=>kp.classList.toggle('open'));
+  kp.appendChild(kh);
+  const kb=document.createElement('div');kb.className='ch-body';
+  const kn=document.createElement('div');kn.className='hint';kn.style.marginBottom='9px';
+  kn.innerHTML='주소를 좌표로 바꾸려면 키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br>Google Cloud → Maps JavaScript API + Geocoding API 사용 설정 후, <b>HTTP 리퍼러 제한</b>을 <code>jep-ccfm.github.io/*</code> 로 걸어주세요.';
+  kb.appendChild(kn);
+  const kr=document.createElement('div');kr.style.cssText='display:flex;gap:8px;flex-wrap:wrap;';
+  const ki=document.createElement('input');ki.type='password';ki.placeholder='AIza...';ki.value=mapsKey();
+  ki.style.cssText='flex:1;min-width:220px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:var(--mono);';
+  const kbtn=document.createElement('button');kbtn.className='btn btn-primary btn-sm';kbtn.textContent='저장';
+  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_gmapsP=null;showToast('키가 저장되었습니다');renderGeo();});
+  kr.append(ki,kbtn);kb.appendChild(kr);kp.appendChild(kb);box.appendChild(kp);
+
+  // 레디영 지점 좌표
+  const sh=document.createElement('div');sh.className='sec-h';
+  const shs=document.createElement('span');shs.textContent='레디영 지점 좌표 ('+g.sites.length+')';sh.appendChild(shs);
+  const tools=document.createElement('div');tools.className='sh-tools';
+  const addBtn=document.createElement('button');addBtn.className='icon-btn';addBtn.textContent='＋ 지점 추가';
+  addBtn.addEventListener('click',()=>{g.sites.push({id:uid('site'),name:'',addr:'',lat:null,lng:null});persistLib();renderGeo();});
+  const geoAll=document.createElement('button');geoAll.className='icon-btn';geoAll.textContent='📍 주소 일괄 변환';
+  geoAll.addEventListener('click',async()=>{
+    geoAll.textContent='변환 중…';geoAll.disabled=true;let ok=0,fail=0;
+    for(const s of g.sites){
+      if(!s.addr||typeof s.lat==='number')continue;
+      try{const p=await geocodeAddr(s.addr);s.lat=p.lat;s.lng=p.lng;ok++;}catch(e){fail++;}
+    }
+    persistLib();showToast('좌표 '+ok+'건 변환'+(fail?' · '+fail+'건 실패':''));renderGeo();
+  });
+  tools.append(geoAll,addBtn);sh.appendChild(tools);box.appendChild(sh);
+
+  if(!g.sites.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.innerHTML='등록된 레디영 지점이 없습니다.<br><b>「＋ 지점 추가」</b>로 지점명과 주소를 넣고 <b>「📍 주소 일괄 변환」</b>을 누르면 좌표가 채워집니다.';
+    box.appendChild(e);
+  }else{
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th style="width:130px;">지점명</th><th>주소</th><th style="width:150px;">좌표</th><th style="width:30px;"></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    g.sites.forEach((s,i)=>{
+      const tr=document.createElement('tr');
+      const mk=(val,ph,onIn)=>{const td=document.createElement('td');const inp=document.createElement('input');
+        inp.type='text';inp.value=val||'';inp.placeholder=ph;
+        inp.style.cssText='width:100%;padding:5px 7px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;';
+        inp.addEventListener('change',e=>{onIn(e.target.value);persistLib();});td.appendChild(inp);return td;};
+      tr.appendChild(mk(s.name,'예: 명동점',v=>s.name=v.trim()));
+      tr.appendChild(mk(s.addr,'도로명 주소',v=>{if(v.trim()!==s.addr){s.addr=v.trim();s.lat=null;s.lng=null;}}));
+      const tdC=document.createElement('td');tdC.className='num-cell';tdC.style.fontSize='11px';
+      tdC.textContent=(typeof s.lat==='number')?(s.lat.toFixed(5)+', '+s.lng.toFixed(5)):'미변환';
+      if(typeof s.lat!=='number')tdC.style.color='var(--warn)';
+      tr.appendChild(tdC);
+      const tdD=document.createElement('td');const del=document.createElement('button');del.className='del-btn';del.textContent='✕';
+      del.addEventListener('click',()=>{g.sites.splice(i,1);persistLib();renderGeo();});
+      tdD.appendChild(del);tr.appendChild(tdD);tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.appendChild(t);
+  }
+
+  // 단건 검사
+  const ch=document.createElement('div');ch.className='sec-h';ch.textContent='약국 주소 검사';box.appendChild(ch);
+  const cw=document.createElement('div');cw.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;';
+  const ci=document.createElement('input');ci.type='text';ci.placeholder='약국 주소를 입력하세요 (예: 서울 강남구 도산대로 107)';
+  ci.style.cssText='flex:1;min-width:260px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;';
+  const cb=document.createElement('button');cb.className='btn btn-primary';cb.textContent='검사';
+  const cr=document.createElement('div');cr.style.marginBottom='16px';
+  const run=async()=>{
+    const v=ci.value.trim();if(!v){showToast('주소를 입력해주세요');return;}
+    cb.textContent='검사 중…';cb.disabled=true;cr.innerHTML='';
+    try{
+      const r=await judgeAddress(v);
+      cr.appendChild(judgeCard(v,r));
+    }catch(e){cr.innerHTML='<div class="cc-warn">'+e.message+'</div>';}
+    cb.textContent='검사';cb.disabled=false;
+  };
+  cb.addEventListener('click',run);
+  ci.addEventListener('keydown',e=>{if(e.key==='Enter')run();});
+  cw.append(ci,cb);box.append(cw,cr);
+
+  // 바로팜 주문 약국 일괄 검사
+  const bh=document.createElement('div');bh.className='sec-h';
+  const bhs=document.createElement('span');bhs.textContent='바로팜 주문 약국 일괄 검사';bh.appendChild(bhs);
+  const bbtn=document.createElement('button');bbtn.className='icon-btn';bbtn.textContent='📍 전체 검사';
+  bh.appendChild(bbtn);box.appendChild(bh);
+  const blist=document.createElement('div');box.appendChild(blist);
+  const pharmacies=collectOrderPharmacies();
+  if(!pharmacies.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.innerHTML='바로팜 주문 내역이 없습니다. <b>바로팜</b> 탭에서 주문내역 엑셀을 올리면 약국 주소가 여기로 모입니다.';
+    blist.appendChild(e);
+  }else{
+    renderPharmJudge(blist,pharmacies);
+    bbtn.addEventListener('click',async()=>{
+      bbtn.textContent='검사 중…';bbtn.disabled=true;
+      for(const p of pharmacies){
+        if(!p.addr)continue;
+        try{await judgeAddress(p.addr);}catch(e){}
+      }
+      showToast('검사 완료');renderGeo();
+    });
+  }
+}
+function judgeCard(addr,r){
+  const d=document.createElement('div');
+  const okv=r.ok;
+  d.style.cssText='border-radius:10px;padding:14px 16px;border:1.5px solid '+(okv===null?'var(--line)':(okv?'#2E7D57':'#B8541D'))+
+    ';background:'+(okv===null?'#FBFAF8':(okv?'#EDF6F0':'#FBEDE6'))+';';
+  d.innerHTML='<div style="font-size:15px;font-weight:800;color:'+(okv===null?'var(--ink-soft)':(okv?'var(--good)':'var(--warn)'))+';">'+
+    (okv===null?'⚠ 판정 불가':(okv?'✅ 거래 가능':'⛔ 거래 불가 (2km 이내)'))+'</div>'+
+    '<div style="font-size:12.5px;color:var(--ink-soft);margin-top:5px;">'+addr+'</div>'+
+    (okv===null?'<div class="cc-warn" style="margin-top:6px;">'+(r.reason||'')+'</div>'
+      :'<div style="font-size:13px;margin-top:6px;">최근접 <b>'+r.nearest+'</b> — <b>'+distLabel(r.dist)+'</b> (기준 2km)</div>');
+  return d;
+}
+function collectOrderPharmacies(){
+  const out={},led=ledgerOf('barofarm');
+  Object.keys(led.months||{}).forEach(m=>(led.months[m].docs||[]).forEach(d=>{
+    const nm=d.branch||'';if(!nm)return;
+    const addr=(d.meta&&d.meta.배송지)||'';
+    if(!out[nm])out[nm]={name:nm,addr,orders:0,total:0};
+    if(addr&&!out[nm].addr)out[nm].addr=addr;
+    out[nm].orders++;out[nm].total+=d.total||0;
+  }));
+  return Object.values(out).sort((a,b)=>b.total-a.total);
+}
+function renderPharmJudge(box,list){
+  const g=geoStore();
+  const t=document.createElement('table');t.className='led-table';
+  t.innerHTML='<thead><tr><th style="width:120px;">약국</th><th>주소</th><th style="width:74px;text-align:right;">주문</th><th style="width:150px;">판정</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  list.forEach(p=>{
+    const c=p.addr?g.checks[p.addr]:null;
+    const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+    const tr=document.createElement('tr');
+    let verdict='<span style="color:var(--ink-soft);">미검사</span>';
+    if(!p.addr)verdict='<span style="color:var(--warn);">주소 없음</span>';
+    else if(j&&j.ok===true)verdict='<span style="color:var(--good);font-weight:800;">✅ 가능</span> <span style="color:var(--ink-soft);font-size:11px;">'+j.nearest+' '+distLabel(j.dist)+'</span>';
+    else if(j&&j.ok===false)verdict='<span style="color:var(--warn);font-weight:800;">⛔ 불가</span> <span style="color:var(--ink-soft);font-size:11px;">'+j.nearest+' '+distLabel(j.dist)+'</span>';
+    else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
+    tr.innerHTML='<td><b>'+p.name+'</b></td><td style="font-size:11.5px;color:var(--ink-soft);">'+(p.addr||'-')+'</td>'+
+      '<td class="num-cell">'+p.orders+'건</td><td style="font-size:12px;">'+verdict+'</td>';
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);box.appendChild(t);
+}
+
 /* ---------- 개인약국 뷰 ---------- */
 function renderPharm(view){
   const meta=pharmMeta(view);if(!meta)return;
@@ -2415,12 +2643,16 @@ function switchView(view){
   const pv=document.getElementById('view-pharm');
   const isPharm=view.indexOf('ph_')===0;
   const isCh=view.indexOf('ch_')===0;
+  const isGeo=view==='geo';
   const chv=document.getElementById('view-channel');
-  cv.hidden=(view==='calc'||isPharm||isCh);
+  const gv=document.getElementById('view-geo');
+  cv.hidden=(view==='calc'||isPharm||isCh||isGeo);
   pv.hidden=!isPharm;
   chv.hidden=!isCh;
+  gv.hidden=!isGeo;
   if(isPharm)renderPharm(view);
   else if(isCh)renderChannel(view);
+  else if(isGeo)renderGeo();
   else if(view!=='calc')renderCompany(view);
   updateMemoDock();
   window.scrollTo(0,0);
@@ -2429,7 +2661,7 @@ document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=
 
 /* ===== 차수 플로팅 메모 ===== */
 let memoOpen=(localStorage.getItem('setPriceCalc:memoOpen')==='1');
-function memoCtx(){const cv=String(currentView);if(currentView==='calc'||cv.indexOf('ph_')===0||cv.indexOf('ch_')===0)return null;const round=getActiveRound(currentView);return round?{k:currentView,round}:null;}
+function memoCtx(){const cv=String(currentView);if(currentView==='calc'||cv==='geo'||cv.indexOf('ph_')===0||cv.indexOf('ch_')===0)return null;const round=getActiveRound(currentView);return round?{k:currentView,round}:null;}
 function updateMemoDock(){
   const dock=document.getElementById('memoDock');const ctx=memoCtx();
   if(!ctx){dock.hidden=true;return;}
