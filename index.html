@@ -2396,7 +2396,7 @@ function renderGeo(){
     const lg2=document.getElementById('geoLog');if(lg2){lg2.classList.add('show');lg2.textContent=txt;}
   });
   const preset=document.createElement('button');preset.className='icon-btn';preset.textContent='레디영 지점 불러오기';
-  preset.addEventListener('click',()=>{const n=loadRedyoungPreset();showToast(n?n+'개 지점을 추가했습니다':'이미 모두 등록되어 있습니다');renderGeo();});
+  preset.addEventListener('click',()=>{const r=loadRedyoungPreset();const msg=[];if(r.added)msg.push('지점 '+r.added+'곳 추가');if(r.fixed)msg.push('주소 '+r.fixed+'곳 갱신');showToast(msg.length?msg.join(' · '):'이미 최신 상태입니다');renderGeo();});
   const diag=document.createElement('button');diag.className='icon-btn';diag.textContent='🔧 진단';
   diag.addEventListener('click',async()=>{
     const NL=String.fromCharCode(10);
@@ -2844,7 +2844,7 @@ const REDYOUNG_PRESET=[
   ['명동타운점','서울시 중구 명동8가길 31, 1층'],
   ['두타몰점','서울 중구 장충단로 275 두타몰 B2층'],
   ['성수점','서울시 성동구 성수일로6길 47, 1층'],
-  ['성수2호점','서울시 강남구 강남대로98길 25, 3층'],
+  ['성수2호점','서울특별시 성동구 성수동1가 16-48, 1층'],
   ['홍대점','서울특별시 마포구 홍익로6길 8, 지1층(동교동)'],
   ['홍대2호점(홍대스트리트)','서울특별시 마포구 와우산로21길 36-3, 1층(서교동, 태윤빌딩)'],
   ['부산점','부산광역시 중구 비프광장로 40 피프존쇼핑몰 B동'],
@@ -2852,13 +2852,17 @@ const REDYOUNG_PRESET=[
 ];
 function loadRedyoungPreset(){
   const g=geoStore();
-  let added=0;
+  let added=0,fixed=0;
   REDYOUNG_PRESET.forEach(([nm,kw])=>{
-    if(g.sites.some(s=>s.name===nm))return;
+    const ex=g.sites.find(s=>s.name===nm);
+    if(ex){                                   // 주소가 바뀐 지점은 갱신하고 좌표를 다시 받도록 초기화
+      if((ex.addr||'').trim()!==kw){ex.addr=kw;ex.lat=null;ex.lng=null;fixed++;}
+      return;
+    }
     g.sites.push({id:uid('site'),name:nm,addr:kw,lat:null,lng:null});added++;
   });
   persistLib();
-  return added;
+  return{added,fixed};
 }
 
 /* ============================================================
