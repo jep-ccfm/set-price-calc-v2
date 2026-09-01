@@ -2237,8 +2237,9 @@ function haversineM(a,b){
   const s=Math.sin(dLat/2)**2+Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLng/2)**2;
   return Math.round(2*R*Math.asin(Math.sqrt(s)));
 }
-/* 구글 지도 JS API 동적 로드 (키는 각자 브라우저에만 저장) */
-let _gmapsP=null,_gmAuthFail=false;
+/* ── VWorld(국토교통부 공간정보) 지오코딩 — 무료·카드 불필요 ──
+   브라우저에서 CORS 없이 쓰기 위해 JSONP 방식 사용 */
+let _gmAuthFail=false;
 function withTimeout(p,ms,msg){
   return new Promise((ok,no)=>{
     let done=false;
@@ -2247,32 +2248,25 @@ function withTimeout(p,ms,msg){
            e=>{if(done)return;done=true;clearTimeout(tid);no(e);});
   });
 }
-function loadMaps(){
-  if(_gmAuthFail)return Promise.reject(new Error('구글 지도 인증 실패 — 키·리퍼러 제한·API 사용설정·결제계정을 확인하세요'));
-  if(window.google&&google.maps&&google.maps.Geocoder)return Promise.resolve();
-  if(_gmapsP)return _gmapsP;
-  const k=mapsKey();
-  if(!k)return Promise.reject(new Error('구글 지도 API 키가 없습니다 (아래 설정에서 입력)'));
-  _gmapsP=withTimeout(new Promise((ok,no)=>{
-    window.gm_authFailure=function(){_gmAuthFail=true;_gmapsP=null;
-      no(new Error('구글 지도 인증 실패(gm_authFailure) — 키가 잘못됐거나 리퍼러 제한/결제계정 문제입니다'));};
+function jsonp(url,ms){
+  return new Promise((ok,no)=>{
+    const cb='__vw'+Date.now()+Math.floor(Math.random()*10000);
+    let done=false;
     const s=document.createElement('script');
-    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR';
-    s.async=true;s.defer=true;
-    s.onload=()=>{
-      let tries=0;
-      const chk=()=>{
-        if(_gmAuthFail)return;
-        if(window.google&&google.maps&&google.maps.Geocoder)return ok();
-        if(++tries>40)return no(new Error('지도 API 초기화 실패 (google.maps 로드 안 됨)'));
-        setTimeout(chk,150);
-      };
-      chk();
-    };
-    s.onerror=()=>{_gmapsP=null;no(new Error('지도 API 로드 실패 — 키가 유효한지, 네트워크가 되는지 확인하세요'));};
+    const tid=setTimeout(()=>{if(done)return;done=true;clean();no(new Error('응답 시간 초과'));},ms||9000);
+    function clean(){clearTimeout(tid);try{delete window[cb];}catch(e){window[cb]=undefined;}
+      if(s.parentNode)s.parentNode.removeChild(s);}
+    window[cb]=d=>{if(done)return;done=true;clean();ok(d);};
+    s.onerror=()=>{if(done)return;done=true;clean();no(new Error('요청 실패 — 인증키·활용 도메인 등록을 확인하세요'));};
+    s.src=url+'&callback='+cb;
     document.head.appendChild(s);
-  }),15000,'지도 API 로드 시간 초과(15초) — 키·리퍼러 제한·결제계정을 확인하세요');
-  return _gmapsP;
+  });
+}
+/* VWorld는 SDK가 없으므로 키 존재만 확인 */
+function loadMaps(){
+  const k=mapsKey();
+  if(!k)return Promise.reject(new Error('VWorld 인증키가 없습니다 (아래 설정에서 입력)'));
+  return Promise.resolve();
 }
 /* 상세주소가 붙으면 검색이 실패하므로 단계적으로 줄여가며 재시도 */
 function addrVariants(addr){
@@ -2287,31 +2281,38 @@ function addrVariants(addr){
   while(toks.length>3){toks=toks.slice(0,-1);push(toks.join(' '));}
   return out;
 }
-function gGeocode(gc,q){
-  return withTimeout(new Promise(ok=>{
-    gc.geocode({address:q,region:'KR'},(res,st)=>{
-      if(st==='OK'&&res&&res[0]){
-        const l=res[0].geometry.location;
-        ok({hit:{lat:l.lat(),lng:l.lng(),formatted:res[0].formatted_address||q},status:st});
-      }else ok({hit:null,status:String(st)});
-    });
-  }),8000,'응답 없음(8초 초과)');
+async function vworldGeocode(q,type){
+  const k=mapsKey();
+  const url='https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0'+
+    '&crs=epsg:4326&format=json&refine=true&simple=false&type='+type+
+    '&key='+encodeURIComponent(k)+'&address='+encodeURIComponent(q);
+  const d=await jsonp(url,9000);
+  const r=d&&d.response;
+  if(!r)return{hit:null,status:'NO_RESPONSE'};
+  if(r.status==='OK'&&r.result&&r.result.point){
+    return{hit:{lat:parseFloat(r.result.point.y),lng:parseFloat(r.result.point.x),
+      formatted:(r.refined&&r.refined.text)||q},status:'OK'};
+  }
+  if(r.status==='ERROR'){
+    const t=(r.error&&(r.error.text||r.error.code))||'ERROR';
+    return{hit:null,status:'ERROR:'+t};
+  }
+  return{hit:null,status:r.status||'NOT_FOUND'};
 }
 async function geocodeAddr(addr){
   await loadMaps();
-  const gc=new google.maps.Geocoder();
   const tried=[];let last='';
   for(const v of addrVariants(addr)){
-    let r;
-    try{ r=await gGeocode(gc,v); }
-    catch(e){ // 응답 자체가 오지 않음 = 인증 실패로 간주하고 이후 호출을 즉시 중단
-      _gmAuthFail=true;_gmapsP=null;
-      throw new Error('구글 지도가 응답하지 않습니다 — 인증 실패로 보입니다. 키·리퍼러 제한·Geocoding API 사용설정·결제계정을 확인하세요');
+    for(const type of ['ROAD','PARCEL']){            // 도로명 → 지번 순으로 시도
+      let r;
+      try{ r=await vworldGeocode(v,type); }
+      catch(e){ throw new Error('VWorld 응답 없음 — 인증키·활용 도메인(https://jep-ccfm.github.io) 등록을 확인하세요'); }
+      if(r.hit)return r.hit;
+      last=r.status;
+      if(/ERROR:/.test(r.status)&&/KEY|AUTH|권한|인증/i.test(r.status))
+        throw new Error('인증키 오류 — '+r.status.replace('ERROR:',''));
     }
-    if(r.hit)return r.hit;
-    tried.push(v);last=r.status;
-    if(r.status==='REQUEST_DENIED')throw new Error('요청 거부(REQUEST_DENIED) — Geocoding API 사용설정·리퍼러 제한 확인');
-    if(r.status==='OVER_QUERY_LIMIT')throw new Error('호출 한도 초과(OVER_QUERY_LIMIT) — 결제 계정 확인');
+    tried.push(v);
   }
   throw new Error('주소 인식 실패 ('+last+') · 시도: '+tried.slice(0,3).join(' / '));
 }
@@ -2351,18 +2352,18 @@ function renderGeo(){
   // API 키 설정
   const kp=document.createElement('div');kp.className='ch-panel'+(mapsKey()?'':' open');
   const kh=document.createElement('div');kh.className='ch-head';
-  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ 구글 지도 API 키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
+  kh.innerHTML='<span><span class="chev">▶</span> ⚙️ VWorld 인증키</span><span style="font-size:11px;font-weight:700;color:'+(mapsKey()?'var(--good)':'var(--warn)')+';">'+(mapsKey()?'설정됨':'미설정 — 주소 자동 변환 불가')+'</span>';
   kh.addEventListener('click',()=>kp.classList.toggle('open'));
   kp.appendChild(kh);
   const kb=document.createElement('div');kb.className='ch-body';
   const kn=document.createElement('div');kn.className='hint';kn.style.marginBottom='9px';
-  kn.innerHTML='주소를 좌표로 바꾸려면 키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br>1) <b>Google Cloud Console</b> → 프로젝트 생성 → <b>Maps JavaScript API</b> + <b>Geocoding API</b> 사용 설정<br>2) <b>사용자 인증 정보 → API 키</b> 생성 후 아래에 붙여넣기<br>3) 키 <b>애플리케이션 제한 → HTTP 리퍼러</b>에 <code>jep-ccfm.github.io/*</code> 등록<br>4) 결제 계정 연결 필요(월 $200 무료 크레딧 — 지오코딩 약 4만 건까지 무료)';
+  kn.innerHTML='주소를 좌표로 바꾸려면 인증키가 필요합니다. <b>키는 이 브라우저에만 저장</b>되며 팀에 공유되지 않습니다.<br><b>완전 무료 · 카드 등록 불필요</b> (국토교통부 공간정보 오픈플랫폼)<br>1) <b>vworld.kr</b> 가입 → 상단 <b>오픈API → 인증키 발급</b><br>2) 활용 API <b>[지오코더 2.0]</b> 선택, <b>서비스 URL</b>에 <code>https://jep-ccfm.github.io</code> 입력<br>3) 발급된 인증키를 아래에 붙여넣기 (승인은 보통 즉시)';
   kb.appendChild(kn);
   const kr=document.createElement('div');kr.style.cssText='display:flex;gap:8px;flex-wrap:wrap;';
-  const ki=document.createElement('input');ki.type='password';ki.placeholder='AIza…';ki.value=mapsKey();
+  const ki=document.createElement('input');ki.type='password';ki.placeholder='VWorld 인증키';ki.value=mapsKey();
   ki.style.cssText='flex:1;min-width:220px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:var(--mono);';
   const kbtn=document.createElement('button');kbtn.className='btn btn-primary btn-sm';kbtn.textContent='저장';
-  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_gmapsP=null;showToast('키가 저장되었습니다');renderGeo();});
+  kbtn.addEventListener('click',()=>{setMapsKey(ki.value.trim());_gmAuthFail=false;showToast('키가 저장되었습니다');renderGeo();});
   kr.append(ki,kbtn);kb.appendChild(kr);kp.appendChild(kb);box.appendChild(kp);
 
   // 레디영 지점 좌표
@@ -2403,35 +2404,15 @@ function renderGeo(){
     const out=[];
     const k=mapsKey();
     out.push('① 현재 도메인: '+location.origin);
-    out.push('   → Google Cloud [API 키 → 애플리케이션 제한 → HTTP 리퍼러]에');
-    out.push('      jep-ccfm.github.io/* 형태로 등록돼 있어야 합니다');
-    out.push('② 키: '+(k?('입력됨 · 앞 6자리 '+k.slice(0,6)+'… · 길이 '+k.length+(/^AIza/.test(k)?' (구글 키 형식 정상)':' (⚠ 구글 키는 보통 AIza로 시작합니다)')):'없음'));
+    out.push('   → VWorld 인증키 발급 시 [서비스 URL]에 이 값이 등록돼 있어야 합니다');
+    out.push('② 키: '+(k?('입력됨 · 앞 6자리 '+k.slice(0,6)+'… · 길이 '+k.length):'없음'));
     if(!k){lg.textContent=out.join(NL);return;}
     // SDK 응답 직접 확인
-    out.push('③ SDK 응답 확인…');
+    out.push('③ VWorld 지오코딩 시도…');
     lg.textContent=out.join(NL);
-    const url='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR';
-    try{
-      const r=await fetch(url,{method:'GET'});
-      const body=(await r.text()).slice(0,300);
-      out.push('   HTTP '+r.status+' '+(r.statusText||''));
-      if(r.status===403)out.push('   ⛔ 403 = 리퍼러 제한에 이 도메인이 없거나 API 미사용 설정');
-      else if(r.status===401)out.push('   ⛔ 401 = 키가 유효하지 않습니다');
-      else if(r.status===200)out.push('   ✅ 응답 정상');
-      if(body&&r.status!==200)out.push('   응답: '+body.replace(/\s+/g,' ').slice(0,200));
-    }catch(e){
-      out.push('   요청 실패(CORS 또는 네트워크): '+e.message);
-      out.push('   → 브라우저가 차단한 경우로, 도메인 미등록일 가능성이 큽니다');
-    }
-    lg.textContent=out.join(NL);
-    // 실제 SDK 로드 시도
-    out.push('④ SDK 로드 시도…');lg.textContent=out.join(NL);
-    try{await loadMaps();out.push('   ✅ 로드 성공');}
-    catch(e){out.push('   ⛔ 실패 — '+e.message);lg.textContent=out.join(NL);return;}
-    out.push('⑤ Geocoder: '+(!!(window.google&&google.maps&&google.maps.Geocoder)?'사용 가능':'사용 불가'));
     try{const p=await geocodeAddr('서울특별시 강남구 테헤란로5길 51-16');
-      out.push('⑥ 샘플 주소 변환: ✅ 성공 → '+p.formatted+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
-    catch(e){out.push('⑥ 샘플 주소 변환: ⛔ 실패 — '+e.message);}
+      out.push('④ 샘플 주소 변환: ✅ 성공 → '+p.formatted+' ('+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+')');}
+    catch(e){out.push('④ 샘플 주소 변환: ⛔ 실패 — '+e.message);}
     lg.textContent=out.join(NL);
   });
   tools.append(diag,preset,geoAll,addBtn);sh.appendChild(tools);box.appendChild(sh);
