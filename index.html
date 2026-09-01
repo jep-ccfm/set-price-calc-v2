@@ -2238,23 +2238,40 @@ function haversineM(a,b){
   return Math.round(2*R*Math.asin(Math.sqrt(s)));
 }
 /* 구글 지도 JS API 동적 로드 (키는 각자 브라우저에만 저장) */
-let _gmapsP=null;
+let _gmapsP=null,_gmAuthFail=false;
+function withTimeout(p,ms,msg){
+  return new Promise((ok,no)=>{
+    let done=false;
+    const tid=setTimeout(()=>{if(done)return;done=true;no(new Error(msg));},ms);
+    p.then(v=>{if(done)return;done=true;clearTimeout(tid);ok(v);},
+           e=>{if(done)return;done=true;clearTimeout(tid);no(e);});
+  });
+}
 function loadMaps(){
+  if(_gmAuthFail)return Promise.reject(new Error('구글 지도 인증 실패 — 키·리퍼러 제한·API 사용설정·결제계정을 확인하세요'));
   if(window.google&&google.maps&&google.maps.Geocoder)return Promise.resolve();
   if(_gmapsP)return _gmapsP;
   const k=mapsKey();
   if(!k)return Promise.reject(new Error('구글 지도 API 키가 없습니다 (아래 설정에서 입력)'));
-  _gmapsP=new Promise((ok,no)=>{
-    window.gm_authFailure=function(){_gmapsP=null;no(new Error('인증 실패 — 키가 잘못됐거나 리퍼러 제한/결제계정 설정을 확인하세요'));};
+  _gmapsP=withTimeout(new Promise((ok,no)=>{
+    window.gm_authFailure=function(){_gmAuthFail=true;_gmapsP=null;
+      no(new Error('구글 지도 인증 실패(gm_authFailure) — 키가 잘못됐거나 리퍼러 제한/결제계정 문제입니다'));};
     const s=document.createElement('script');
-    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR&loading=async';
-    s.async=true;
-    s.onload=()=>{ if(window.google&&google.maps&&google.maps.Geocoder)ok();
-      else setTimeout(()=>{ if(window.google&&google.maps&&google.maps.Geocoder)ok();
-        else{_gmapsP=null;no(new Error('지도 API 초기화 실패'));} },800); };
-    s.onerror=()=>{_gmapsP=null;no(new Error('지도 API 로드 실패 (네트워크·키 확인)'));};
+    s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(k)+'&language=ko&region=KR';
+    s.async=true;s.defer=true;
+    s.onload=()=>{
+      let tries=0;
+      const chk=()=>{
+        if(_gmAuthFail)return;
+        if(window.google&&google.maps&&google.maps.Geocoder)return ok();
+        if(++tries>40)return no(new Error('지도 API 초기화 실패 (google.maps 로드 안 됨)'));
+        setTimeout(chk,150);
+      };
+      chk();
+    };
+    s.onerror=()=>{_gmapsP=null;no(new Error('지도 API 로드 실패 — 키가 유효한지, 네트워크가 되는지 확인하세요'));};
     document.head.appendChild(s);
-  });
+  }),15000,'지도 API 로드 시간 초과(15초) — 키·리퍼러 제한·결제계정을 확인하세요');
   return _gmapsP;
 }
 /* 상세주소가 붙으면 검색이 실패하므로 단계적으로 줄여가며 재시도 */
@@ -2271,21 +2288,26 @@ function addrVariants(addr){
   return out;
 }
 function gGeocode(gc,q){
-  return new Promise(ok=>{
+  return withTimeout(new Promise(ok=>{
     gc.geocode({address:q,region:'KR'},(res,st)=>{
       if(st==='OK'&&res&&res[0]){
         const l=res[0].geometry.location;
         ok({hit:{lat:l.lat(),lng:l.lng(),formatted:res[0].formatted_address||q},status:st});
       }else ok({hit:null,status:String(st)});
     });
-  });
+  }),8000,'응답 없음(8초 초과)');
 }
 async function geocodeAddr(addr){
   await loadMaps();
   const gc=new google.maps.Geocoder();
   const tried=[];let last='';
   for(const v of addrVariants(addr)){
-    const r=await gGeocode(gc,v);
+    let r;
+    try{ r=await gGeocode(gc,v); }
+    catch(e){ // 응답 자체가 오지 않음 = 인증 실패로 간주하고 이후 호출을 즉시 중단
+      _gmAuthFail=true;_gmapsP=null;
+      throw new Error('구글 지도가 응답하지 않습니다 — 인증 실패로 보입니다. 키·리퍼러 제한·Geocoding API 사용설정·결제계정을 확인하세요');
+    }
     if(r.hit)return r.hit;
     tried.push(v);last=r.status;
     if(r.status==='REQUEST_DENIED')throw new Error('요청 거부(REQUEST_DENIED) — Geocoding API 사용설정·리퍼러 제한 확인');
