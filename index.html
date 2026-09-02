@@ -3390,7 +3390,15 @@ function trashRestore(entry){
       const led=ledgerOf(c.id);
       led.months[c.mk]=led.months[c.mk]||{docs:[]};
       led.months[c.mk].docs=led.months[c.mk].docs||[];
-      if(led.months[c.mk].docs.some(x=>x.file===d.file&&x.total===d.total))throw new Error('이미 복구되어 있습니다');
+      /* 중복 판정은 업로드 때와 같은 기준(주문번호/일련번호)으로 합니다.
+         예전엔 파일명+금액으로 봐서, 엑셀 한 장에서 온 '금액이 같은 다른 주문'을
+         "이미 복구되어 있습니다"로 잘못 막았습니다. (예: 118,800원 주문 3건) */
+      const sn=String(d.serial||'');
+      const dup=sn
+        ? led.months[c.mk].docs.some(x=>String(x.serial||'')===sn)
+        : led.months[c.mk].docs.some(x=>x.file===d.file&&x.total===d.total&&
+                                        (x.date||'')===(d.date||'')&&(x.branch||'')===(d.branch||''));
+      if(dup)throw new Error('이미 복구되어 있습니다');
       led.months[c.mk].docs.push(d);led.activeMonth=c.mk;break;
     }
     case 'order':{
