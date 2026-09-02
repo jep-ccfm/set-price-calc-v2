@@ -2338,10 +2338,16 @@ function renderChannel(view){
   }
   if(meta.id==='aquamedi'){
     box.appendChild(buildAquamediPharms());
+    box.appendChild(buildAquamediRollup());
     box.appendChild(buildChannelGeo('aquamedi','아쿠아메디'));
-    box.appendChild(buildOrders(meta.id,view));
     box.appendChild(buildTaxDocs(meta.id));
-    const lh3=document.createElement('div');lh3.className='sec-h';lh3.textContent='거래명세서 (월별 집계)';box.appendChild(lh3);
+    const dv3=document.createElement('div');dv3.style.cssText='border-top:1px solid var(--line);margin:30px 0 4px;';
+    box.appendChild(dv3);
+    const nt3=document.createElement('div');nt3.className='hint';nt3.style.margin='14px 0 0';
+    nt3.innerHTML='아래는 <b>아쿠아메디 본사 명의</b>로 직접 접수·발행된 건입니다. 약국별 건은 위 합산에서 확인하세요.';
+    box.appendChild(nt3);
+    box.appendChild(buildOrders(meta.id,view));
+    const lh3=document.createElement('div');lh3.className='sec-h';lh3.textContent='거래명세서 (본사 직접 등록)';box.appendChild(lh3);
     box.appendChild(buildLedger(meta.id,{}));
     return;
   }
@@ -2385,6 +2391,186 @@ function buildAquamediPharms(){
     g.appendChild(b);
   });
   wrap.appendChild(g);
+  return wrap;
+}
+
+/* ---------- 아쿠아메디 소속 약국 거래·발주 합산 ---------- */
+function aquamediSources(){
+  /* 소속 약국 + 아쿠아메디 본사 자체 건 */
+  return AQUAMEDI_PHARMS.map(x=>({pid:x.pid,view:x.view,name:(pharmInfoOf(x.pid).name||x.name)}))
+    .concat([{pid:'aquamedi',view:'ch_aquamedi',name:'아쿠아메디 (본사 직접)'}]);
+}
+/* 발주를 약국 구분과 함께 한 줄로 펼친다 */
+function aquamediOrders(){
+  const out=[];
+  aquamediSources().forEach(src=>((lib.orders&&lib.orders[src.pid])||[]).forEach(o=>{
+    const qty=(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
+    out.push({src,o,qty});
+  }));
+  return out.sort((a,b)=>String(b.o.date||'').localeCompare(String(a.o.date||'')));
+}
+/* 거래명세서를 월별 → 약국별로 접는다 */
+function aquamediLedger(){
+  const months={};
+  aquamediSources().forEach(src=>{
+    const led=(lib.ledger&&lib.ledger[src.pid])||{months:{}};
+    Object.keys(led.months||{}).forEach(mk=>{
+      const docs=led.months[mk].docs||[];if(!docs.length)return;
+      months[mk]=months[mk]||{mk,docs:0,qty:0,total:0,byPharm:{}};
+      const M=months[mk];
+      M.byPharm[src.name]=M.byPharm[src.name]||{src,docs:0,qty:0,total:0,rows:[]};
+      const B=M.byPharm[src.name];
+      docs.forEach(d=>{
+        M.docs++;M.qty+=d.qty||0;M.total+=d.total||0;
+        B.docs++;B.qty+=d.qty||0;B.total+=d.total||0;B.rows.push(d);
+      });
+    });
+  });
+  return Object.values(months).sort((a,b)=>String(b.mk).localeCompare(String(a.mk)));
+}
+function buildAquamediRollup(){
+  const wrap=document.createElement('div');
+  const orders=aquamediOrders();
+  const months=aquamediLedger();
+  const ordQty=orders.reduce((a,x)=>a+x.qty,0);
+  const ledDocs=months.reduce((a,m)=>a+m.docs,0);
+  const ledTotal=months.reduce((a,m)=>a+m.total,0);
+  const ledQty=months.reduce((a,m)=>a+m.qty,0);
+
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');hs.textContent='소속 약국 합산';h.appendChild(hs);
+  wrap.appendChild(h);
+  const note=document.createElement('div');note.className='hint';note.style.marginBottom='12px';
+  note.innerHTML='신사 타워약국 · 압구정 생생 온누리약국의 <b>발주와 거래명세서를 한 곳에 모아</b> 보여줍니다. 등록·수정은 각 약국 화면에서 하세요.';
+  wrap.appendChild(note);
+
+  /* 요약 카드 */
+  const sr=document.createElement('div');sr.className='stat-row';
+  const card=(l,v,hero)=>{const d=document.createElement('div');d.className='stat-card'+(hero?' hero':'');
+    d.innerHTML='<div class="sc-l">'+l+'</div><div class="sc-v">'+v+'</div>';sr.appendChild(d);};
+  card('거래 합계 (VAT 포함)',fmt(ledTotal)+'원',true);
+  card('거래명세서',ledDocs+'건 · '+fmt(ledQty)+'개');
+  card('발주',orders.length+'건 · '+fmt(ordQty)+'개');
+  card('집계 대상 월',months.length+'개월');
+  wrap.appendChild(sr);
+
+  if(!orders.length&&!months.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.innerHTML='소속 약국에 등록된 발주·거래명세서가 아직 없습니다.<br>'+
+      '위 <b>약국 카드</b>를 눌러 각 약국 화면에서 발주를 등록하거나 거래명세서를 올리면 여기에 합산됩니다.';
+    wrap.appendChild(e);return wrap;
+  }
+
+  /* 약국별 요약 */
+  const perPharm={};
+  aquamediSources().forEach(src=>{perPharm[src.name]={src,ord:0,ordQty:0,docs:0,total:0,last:''};});
+  orders.forEach(x=>{const P=perPharm[x.src.name];if(!P)return;P.ord++;P.ordQty+=x.qty;
+    if(String(x.o.date||'')>P.last)P.last=String(x.o.date||'');});
+  months.forEach(m=>Object.values(m.byPharm).forEach(b=>{const P=perPharm[b.src.name];if(!P)return;
+    P.docs+=b.docs;P.total+=b.total;
+    b.rows.forEach(d=>{if(String(d.date||'')>P.last)P.last=String(d.date||'');});}));
+  const rows=Object.values(perPharm).filter(P=>P.ord||P.docs);
+  if(rows.length){
+    const b1=document.createElement('div');b1.style.cssText='overflow-x:auto;margin-bottom:8px;';
+    const t1=document.createElement('table');t1.className='led-table';t1.style.minWidth='620px';
+    t1.innerHTML='<thead><tr><th>약국</th><th style="text-align:right;">발주</th>'+
+      '<th style="text-align:right;">발주 수량</th><th style="text-align:right;">명세서</th>'+
+      '<th style="text-align:right;">거래금액</th><th style="width:96px;">최근</th></tr></thead>';
+    const tb1=document.createElement('tbody');
+    rows.forEach(P=>{
+      const tr=document.createElement('tr');
+      const tdN=document.createElement('td');
+      const nb=document.createElement('button');nb.className='icon-btn';
+      nb.style.cssText='font-weight:800;text-align:left;';nb.textContent=P.src.name;
+      nb.title=P.src.name+' 화면으로 이동';
+      nb.addEventListener('click',()=>switchView(P.src.view));
+      tdN.appendChild(nb);tr.appendChild(tdN);
+      tr.insertAdjacentHTML('beforeend',
+        '<td class="num-cell">'+P.ord+'건</td>'+
+        '<td class="num-cell">'+fmt(P.ordQty)+'개</td>'+
+        '<td class="num-cell">'+P.docs+'건</td>'+
+        '<td class="num-cell"><b>'+fmt(P.total)+'</b></td>'+
+        '<td style="font-size:12px;color:var(--ink-soft);">'+(P.last||'-')+'</td>');
+      tb1.appendChild(tr);
+    });
+    t1.appendChild(tb1);b1.appendChild(t1);wrap.appendChild(b1);
+  }
+
+  /* 발주 내역 합산 */
+  const oh=document.createElement('div');oh.className='sec-h';
+  oh.innerHTML='<span>발주 내역 합산 ('+orders.length+')</span>';wrap.appendChild(oh);
+  if(!orders.length){
+    const e=document.createElement('div');e.className='empty-box';e.textContent='등록된 발주가 없습니다.';
+    wrap.appendChild(e);
+  }else{
+    const b2=document.createElement('div');b2.style.cssText='overflow-x:auto;';
+    const t2=document.createElement('table');t2.className='ord-table';t2.style.minWidth='700px';
+    t2.innerHTML='<thead><tr><th style="width:96px;">발주일</th><th style="width:150px;">약국</th>'+
+      '<th style="width:70px;">상태</th><th>품목</th><th style="text-align:right;width:70px;">총수량</th></tr></thead>';
+    const tb2=document.createElement('tbody');
+    orders.forEach(x=>{
+      const tr=document.createElement('tr');
+      const names=(x.o.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
+      tr.innerHTML='<td>'+(x.o.date||'-')+'</td><td class="apx"></td>'+
+        '<td><span class="st-badge st-'+(x.o.status||'접수')+'">'+(x.o.status||'접수')+'</span></td>'+
+        '<td style="font-size:12.5px;">'+names+(x.o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+x.o.note+'</div>':'')+'</td>'+
+        '<td class="num-cell">'+fmt(x.qty)+'</td>';
+      const nb=document.createElement('button');nb.className='icon-btn';nb.style.textAlign='left';
+      nb.textContent=x.src.name;nb.addEventListener('click',()=>switchView(x.src.view));
+      tr.querySelector('.apx').appendChild(nb);
+      tb2.appendChild(tr);
+    });
+    t2.appendChild(tb2);b2.appendChild(t2);wrap.appendChild(b2);
+  }
+
+  /* 거래명세서 합산 (월별) */
+  const lh=document.createElement('div');lh.className='sec-h';
+  lh.innerHTML='<span>거래명세서 합산 (월별)</span>';wrap.appendChild(lh);
+  if(!months.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.textContent='등록된 거래명세서가 없습니다. 각 약국 화면에서 명세서 PDF를 올리면 여기에 합산됩니다.';
+    wrap.appendChild(e);
+  }else{
+    months.forEach(m=>{
+      const lsKey='setPriceCalc:aqM:'+m.mk;
+      const open=localStorage.getItem(lsKey)==='1';
+      const pnl=document.createElement('div');pnl.className='ch-panel'+(open?' open':'');
+      const hd=document.createElement('div');hd.className='ch-head';
+      hd.innerHTML='<span><span class="chev">▶</span> '+mkLabel(m.mk)+' · '+m.docs+'건 · '+fmt(m.qty)+'개</span>'+
+        '<span class="num-mono" style="font-weight:800;">'+fmt(m.total)+'원</span>';
+      hd.addEventListener('click',()=>{pnl.classList.toggle('open');
+        localStorage.setItem(lsKey,pnl.classList.contains('open')?'1':'0');});
+      pnl.appendChild(hd);
+      const bd=document.createElement('div');bd.className='ch-body';
+      const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';
+      const tt=document.createElement('table');tt.className='led-table';tt.style.minWidth='640px';
+      tt.innerHTML='<thead><tr><th style="width:96px;">일자</th><th style="width:150px;">약국</th>'+
+        '<th>품목</th><th style="text-align:right;width:66px;">수량</th>'+
+        '<th style="text-align:right;width:100px;">합계</th></tr></thead>';
+      const tbd=document.createElement('tbody');
+      Object.values(m.byPharm).forEach(B=>{
+        B.rows.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))).forEach(d=>{
+          const tr=document.createElement('tr');
+          const items=(d.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>')||(d.file||'-');
+          tr.innerHTML='<td style="font-size:12.5px;">'+(d.date||'-')+'</td><td class="apx"></td>'+
+            '<td style="font-size:12.5px;">'+items+'</td>'+
+            '<td class="num-cell">'+fmt(d.qty||0)+'</td>'+
+            '<td class="num-cell"><b>'+fmt(d.total||0)+'</b></td>';
+          const nb=document.createElement('button');nb.className='icon-btn';nb.style.textAlign='left';
+          nb.textContent=B.src.name;nb.addEventListener('click',()=>switchView(B.src.view));
+          tr.querySelector('.apx').appendChild(nb);
+          tbd.appendChild(tr);
+        });
+        const st=document.createElement('tr');st.style.background='var(--surface-2)';
+        st.innerHTML='<td colspan="3" style="text-align:right;font-weight:800;font-size:12.5px;">'+
+          B.src.name+' 소계</td><td class="num-cell"><b>'+fmt(B.qty)+'</b></td>'+
+          '<td class="num-cell"><b>'+fmt(B.total)+'</b></td>';
+        tbd.appendChild(st);
+      });
+      tt.appendChild(tbd);bx.appendChild(tt);bd.appendChild(bx);pnl.appendChild(bd);
+      wrap.appendChild(pnl);
+    });
+  }
   return wrap;
 }
 
