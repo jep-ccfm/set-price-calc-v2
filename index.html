@@ -2726,8 +2726,8 @@ function buildCloseCheck(){
       '<td style="color:'+col(c2)+';font-weight:700;">'+c2+'</td>'+
       '<td style="color:'+col(c3)+';font-weight:700;">'+c3+'</td>'+
       '<td style="text-align:right;">'+fmt(r.sale)+'</td>'+
-      '<td style="text-align:right;'+(r.ar>0&&r.sale?'color:#C62828;font-weight:800;':'color:var(--ink-soft);')+'">'+
-        ((r.ar>0&&r.sale)?fmt(r.ar):'—')+'</td>';
+      '<td style="text-align:right;'+((r.ar>0&&r.sale&&!r.weekly)?'color:#C62828;font-weight:800;':'color:var(--ink-soft);')+'">'+
+        ((r.ar>0&&r.sale&&!r.weekly)?fmt(r.ar):'—')+'</td>';
     tb.appendChild(tr);
   });
   t.appendChild(tb);wrap.appendChild(t);
