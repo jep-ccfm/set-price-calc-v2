@@ -1427,7 +1427,9 @@ async function syncPull(force){
   if(libR.row)lastRemoteAt=libR.row.updated_at||lastRemoteAt;
   if(dbR.row&&dbR.row.payload&&Object.keys(dbR.row.payload).length){costDB=dbR.row.payload;sSet('costDB',costDB);}
   else if(Object.keys(costDB).length){pushCostDBSoon();}
-  if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sortAllStreams();sSet('libraryV2',lib);}
+  if(libR.row&&libR.row.payload&&libR.row.payload.companies){lib=libR.row.payload;ensureCompanies();migrateJp();sortAllStreams();
+    const vfix=migrateVat();sSet('libraryV2',lib);
+    if(vfix){showToast('부가세 기준 보정 '+vfix+'건 (바로팜·자사몰)');pushLibSoon();}}
   else if(hasLibData(lib)){pushLibSoon();}
   rerenderAll();
   setSync('synced');
@@ -1445,7 +1447,7 @@ setInterval(async()=>{
 function loadState(){
   const db=sGet('costDB');costDB=db||{...DEFAULT_DB};
   const L=sGet('libraryV2');
-  if(L&&L.companies){lib=L;COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]={rounds:[],activeId:null};});migrateJp();}
+  if(L&&L.companies){lib=L;COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]={rounds:[],activeId:null};});migrateJp();migrateVat();}
   const s=sGet('currentSet');
   if(s){margin=typeof s.margin==='number'?s.margin:0.68;rows=(s.rows&&s.rows.length)?s.rows.map(r=>({id:rowIdSeq++,name:r.name||'',qty:r.qty||''})):[newRow(),newRow()];if(s.roundupUnit===100||s.roundupUnit===1000){roundupUnit=s.roundupUnit;}if(s.setRoundUnit===100||s.setRoundUnit===1000){setRoundUnit=s.setRoundUnit;}}
   else rows=[newRow(),newRow()];
@@ -1464,6 +1466,32 @@ function migrateJp(){
   if(!jp.brands.merable)jp.brands.merable={rounds:[],activeId:null};
   if(!jp.brands.lusolve)jp.brands.lusolve={rounds:[],activeId:null};
   if(!jp.activeBrand)jp.activeBrand='merable';
+}
+/* 부가세 소급 보정 — 바로팜·자사몰은 예전에 VAT 포함 금액을 공급가액 칸에 그대로 넣었습니다.
+   '부가세 0 && 공급가액===합계' 인 건만 고치므로 몇 번을 돌려도 안전합니다(멱등).
+   레디영·아쿠아메디(PDF)는 원래 분리되어 있고, 홍콩은 영세율이라 대상이 아닙니다. */
+function migrateVat(){
+  if(!lib||!lib.ledger)return 0;
+  let n=0;
+  ['barofarm','pharmmall'].forEach(id=>{
+    const led=lib.ledger[id];if(!led||!led.months)return;
+    Object.keys(led.months).forEach(mk=>{
+      (led.months[mk].docs||[]).forEach(d=>{
+        const tot=Number(d.total)||0;
+        if(!tot||Number(d.vat)||Number(d.supply)!==tot)return;   // 금액 없음 / 이미 분리됨
+        (d.items||[]).forEach(it=>{
+          const s=Number(it.supply)||0;
+          if(!s||Number(it.vat))return;
+          const ns=Math.round(s/1.1);it.supply=ns;it.vat=s-ns;
+        });
+        const isum=(d.items||[]).reduce((a,b)=>a+(Number(b.supply)||0),0);
+        d.supply=isum||Math.round(tot/1.1);
+        d.vat=tot-d.supply;
+        n++;
+      });
+    });
+  });
+  return n;
 }
 function dbNames(){return Object.keys(costDB).sort((a,b)=>a.localeCompare(b,'ko'));}
 function refreshDatalist(){const dl=document.getElementById('dbItems');dl.innerHTML='';dbNames().forEach(n=>{const o=document.createElement('option');o.value=n;dl.appendChild(o);});}
@@ -2592,12 +2620,14 @@ function barofarmParse(rows,fileName){
     const qty=c.qty>=0?(Number(r[c.qty])||0):0;
     const unit=c.price>=0?(Number(r[c.price])||0):(qty?Math.round(total/qty):0);
     const name=String(r[c.item]||'').trim()||'(상품명 없음)';
+    /* 바로팜 판매가는 VAT 포함 단가 → 공급가액/부가세로 분리 */
+    const sup=Math.round(total/1.1), vt=total-sup;
     out.push({
       file:fileName,serial:String(r[c.no]||''),date:d,
       branch:String(r[c.ph]||'미상').trim(),
       status:String(r[c.st]||''),
-      items:[{name,qty,unit,supply:total,vat:0}],
-      qty,supply:total,vat:0,total,src:'barofarm',
+      items:[{name,qty,unit,supply:sup,vat:vt}],
+      qty,supply:sup,vat:vt,total,src:'barofarm',
       meta:{약사:String(r[c.ph2]||''),사업자번호:String(r[c.biz]||''),요양기관번호:String(r[c.ykiho]||''),
             전화:String(r[c.tel]||''),배송지:String(r[c.addr]||'')},
       warn:(c.qty<0?'수량 정보 없음 (주문별 시트) — 금액만 집계됨':null)
@@ -4010,8 +4040,10 @@ async function fetchMallOrders(){
       meta:{약국주소:addr,전화:String(r2[c.tel]||'').trim(),접수일시:dt},
       isTest:isTestOrder(name,addr)};
     const o=byOrder[oid];
-    o.items.push({name:String(r2[c.item]||'').trim(),qty,unit,supply:sub,vat:0});
-    o.qty+=qty;o.supply+=sub;o.total+=sub;
+    /* 약사가는 VAT 포함 단가 → 공급가액/부가세로 분리 (항목별로 나눠 합산하므로 합계와 정확히 일치) */
+    const iSup=Math.round(sub/1.1), iVat=sub-iSup;
+    o.items.push({name:String(r2[c.item]||'').trim(),qty,unit,supply:iSup,vat:iVat});
+    o.qty+=qty;o.supply+=iSup;o.vat+=iVat;o.total+=sub;
   }
   return Object.values(byOrder);
 }
