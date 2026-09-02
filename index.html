@@ -2660,6 +2660,150 @@ function buildDeposits(id, opts){
   return wrap;
 }
 
+/* ---------- 월마감 체크리스트 ----------
+   마감은 전월 기준으로 돕니다(9월 초 = 8월분 마감).
+   채널마다 ①명세서 ②세금계산서 ③입금 세 단계가 어디까지 왔는지 한 줄로 봅니다. */
+function prevMonthKey(){
+  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
+function closeCheckRows(mk){
+  return [
+    {id:'ready',     name:'레디영'},
+    {id:'barofarm',  name:'바로팜'},
+    {id:'pharmmall', name:'자사몰 약사 전용관'},
+    {id:'aquamedi',  name:'아쿠아메디'}
+  ].map(c=>{
+    let docs=0;
+    salesIdsFor(c.id).forEach(sid=>{
+      const led=(lib.ledger&&lib.ledger[sid])||{months:{}};
+      docs+=(((led.months||{})[mk]||{}).docs||[]).length;
+    });
+    const sale=salesOf(c.id,mk), paid=depSum(c.id,mk);
+    let tax=0,taxTot=0;
+    salesIdsFor(c.id).forEach(sid=>{
+      (((lib.taxDocs||{})[sid])||[]).forEach(t=>{
+        if(String(t.date||'').slice(0,7)===mk){tax++;taxTot+=t.total||0;}
+      });
+    });
+    const weekly=(c.id==='barofarm');
+    return {ch:c.name,id:c.id,docs:docs,sale:sale,tax:tax,taxTot:taxTot,paid:paid,
+            ar:sale-paid,weekly:weekly};
+  });
+}
+function buildCloseCheck(){
+  const mk=prevMonthKey();
+  const rows=closeCheckRows(mk);
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');
+  const doneDoc=rows.filter(r=>r.docs>0).length;
+  const need=rows.filter(r=>!r.weekly&&r.sale>0);
+  const doneTax=need.filter(r=>r.tax>0).length;
+  const donePay=need.filter(r=>r.ar<=0).length;
+  hs.textContent='🗓 '+mkLabel(mk)+' 마감 체크  ·  명세서 '+doneDoc+'/4  ·  계산서 '+doneTax+'/'+need.length+'  ·  수금 '+donePay+'/'+need.length;
+  h.appendChild(hs);wrap.appendChild(h);
+
+  const t=document.createElement('table');t.className='led-table';
+  t.innerHTML='<thead><tr><th>채널</th><th>① 명세서·주문</th><th>② 세금계산서</th><th>③ 입금</th>'+
+    '<th style="text-align:right;">매출</th><th style="text-align:right;">미수금</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  const VIEW={ready:'ready',barofarm:'ch_barofarm',pharmmall:'ch_pharmmall',aquamedi:'ch_aquamedi'};
+  rows.forEach(r=>{
+    const tr=document.createElement('tr');tr.style.cursor='pointer';
+    tr.addEventListener('click',()=>switchView(VIEW[r.id]));
+    const c1=r.docs?('✅ '+r.docs+'건'):'❌ 없음';
+    let c2,c3;
+    if(r.weekly){ c2='— 주간 정산'; c3='— 주간 정산'; }
+    else if(!r.sale){ c2='—'; c3='—'; }
+    else{
+      c2=r.tax?(r.taxTot===r.sale?'✅ 발행':'⚠️ 금액 차이'):'⏳ 미발행';
+      c3=r.ar<=0?'✅ 완납':(r.paid?'🔵 일부':'⏳ 미입금');
+    }
+    const col=v=>v.indexOf('✅')===0?'#2E7D32':(v.indexOf('❌')===0||v.indexOf('⚠️')===0?'var(--warn)':'var(--ink-soft)');
+    tr.innerHTML='<td style="font-weight:700;">'+r.ch+'</td>'+
+      '<td style="color:'+col(c1)+';font-weight:700;">'+c1+'</td>'+
+      '<td style="color:'+col(c2)+';font-weight:700;">'+c2+'</td>'+
+      '<td style="color:'+col(c3)+';font-weight:700;">'+c3+'</td>'+
+      '<td style="text-align:right;">'+fmt(r.sale)+'</td>'+
+      '<td style="text-align:right;'+(r.ar>0&&r.sale?'color:#C62828;font-weight:800;':'color:var(--ink-soft);')+'">'+
+        ((r.ar>0&&r.sale)?fmt(r.ar):'—')+'</td>';
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);wrap.appendChild(t);
+
+  const todo=[];
+  rows.forEach(r=>{
+    if(!r.docs) todo.push(r.ch+' 명세서·주문 등록');
+    else if(!r.weekly&&r.sale&&!r.tax) todo.push(r.ch+' 세금계산서 등록');
+    else if(!r.weekly&&r.sale&&r.tax&&r.taxTot!==r.sale) todo.push(r.ch+' 계산서 금액 확인');
+    else if(!r.weekly&&r.sale&&r.ar>0) todo.push(r.ch+' 입금 확인');
+  });
+  const n=document.createElement('div');n.className='hint';n.style.marginTop='8px';
+  n.innerHTML=todo.length
+    ? '<b>다음에 할 일</b> — '+todo.join(' · ')
+    : '✅ '+mkLabel(mk)+' 마감에 남은 일이 없습니다.';
+  wrap.appendChild(n);
+  return wrap;
+}
+
+/* ---------- 자사몰 약국 정보 (명의 대조용) ---------- */
+const STORE_FIELDS=[
+  {k:'biz',   label:'사업자명(상호)', w:170},
+  {k:'ceo',   label:'대표자명',       w:110},
+  {k:'bizNo', label:'사업자등록번호', w:140},
+  {k:'bank',  label:'사업자 통장',    w:200},
+  {k:'email', label:'이메일',         w:180},
+  {k:'memo',  label:'비고',           w:180}
+];
+function storeInfoOf(name){
+  lib.storeInfo=lib.storeInfo||{};
+  lib.storeInfo[name]=lib.storeInfo[name]||{};
+  return lib.storeInfo[name];
+}
+function buildMallStoreInfo(){
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const list=mallStores();
+  const filled=list.filter(n=>String(storeInfoOf(n).biz||'').trim()).length;
+  const hs=document.createElement('span');
+  hs.textContent='🏪 약국 정보 ('+filled+'/'+list.length+' 입력됨)';
+  h.appendChild(hs);wrap.appendChild(h);
+
+  const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+  nt.innerHTML='개인 약사는 <b>입금자명이 사업자명과 다른 경우</b>가 많습니다. 여기에 사업자명을 넣어두면 '+
+    '입금 대조에서 자동으로 맞춰봅니다.<br>회원가입 폼에 사업자번호·이메일·대표자명이 추가되면 이 표도 자동으로 채워집니다.';
+  wrap.appendChild(nt);
+
+  if(!list.length){
+    const e=document.createElement('div');e.className='hint';
+    e.textContent='아직 자사몰 주문이 없습니다. 주문이 들어오면 약국이 여기에 나타납니다.';
+    wrap.appendChild(e);return wrap;
+  }
+  const t=document.createElement('table');t.className='led-table';
+  t.innerHTML='<thead><tr><th>약국명 (주문 기준)</th>'+
+    STORE_FIELDS.map(f=>'<th>'+f.label+'</th>').join('')+'</tr></thead>';
+  const tb=document.createElement('tbody');
+  list.forEach(name=>{
+    const info=storeInfoOf(name);
+    const tr=document.createElement('tr');
+    const td0=document.createElement('td');td0.innerHTML='<b>'+name+'</b>';tr.appendChild(td0);
+    STORE_FIELDS.forEach(f=>{
+      const td=document.createElement('td');
+      const i=document.createElement('input');i.className='cell-input';
+      i.value=info[f.k]||'';i.placeholder=f.label;
+      i.style.cssText='width:'+f.w+'px;padding:6px 7px;';
+      i.addEventListener('change',()=>{
+        info[f.k]=i.value.trim();persistLib();showToast(name+' 저장');
+      });
+      td.appendChild(i);tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);wrap.appendChild(t);
+  return wrap;
+}
+
 /* ---------- 채널 뷰 (바로팜 / 자사몰 약사 전용관) ---------- */
 const CHANNELS=[
   {key:'ch_barofarm',id:'barofarm',name:'바로팜',ic:'🛒',desc:'약국 유통 플랫폼 바로팜 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
@@ -2717,6 +2861,7 @@ function renderChannel(view){
   if(meta.id==='pharmmall'){
     box.appendChild(buildMallSync());
     box.appendChild(buildMallOrders());
+    box.appendChild(buildMallStoreInfo());
     box.appendChild(buildChannelGeo('pharmmall','자사몰'));
     box.appendChild(buildApplicants());
   }
@@ -4798,6 +4943,9 @@ function renderHome(){
     if(alerts.length>12){const m2=document.createElement('div');m2.className='hint';m2.style.marginTop='6px';
       m2.textContent='외 '+(alerts.length-12)+'건';box.appendChild(m2);}
   }
+
+  /* 월마감 체크리스트 — 전월 기준 */
+  box.appendChild(buildCloseCheck());
 
   /* ---- 채널 카드 ---- */
   const ch=document.createElement('div');ch.className='sec-h';ch.textContent='채널 현황';box.appendChild(ch);
