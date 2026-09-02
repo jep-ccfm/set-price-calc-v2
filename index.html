@@ -2424,9 +2424,16 @@ function parseCloveRows(rows, fileName){
     const r=rows[i]; if(!r||!String(r[c.dt]||'').trim())continue;
     const amt=Number(r[c.inn])||0;
     if(amt<=0)continue;                                   // 입금만
-    const dt=String(r[c.dt]);
-    const date=(dt.match(/\d{4}-\d{2}-\d{2}/)||[dt.slice(0,10)])[0];
-    const acct=String(r[c.acct]||'').replace(/\D/g,'');
+    let date='';
+    if(typeof r[c.dt]==='number'&&r[c.dt]>20000){          // 엑셀 날짜 일련번호
+      const dd=new Date(Date.UTC(1899,11,30)+r[c.dt]*86400000);
+      date=dd.toISOString().slice(0,10);
+    }else{
+      const dt=String(r[c.dt]);
+      const mo=dt.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+      date=mo?(mo[1]+'-'+('0'+mo[2]).slice(-2)+'-'+('0'+mo[3]).slice(-2)):dt.slice(0,10);
+    }
+    const acct=c.acct>=0?String(r[c.acct]||'').replace(/\D/g,''):'';
     const who=String(r[c.who]||'').trim();
     const memo=String(r[c.memo]||'').trim();
     const desc=String(r[c.desc]||'').trim();
@@ -2480,12 +2487,15 @@ async function importDeposits(files, logEl, onDone){
         try{raw=raw.concat(parseCloveRows(XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}),f.name));}catch(e){}
       });
       if(!raw.length)throw new Error('입금 행이 없습니다');
+      const seen={};
       raw.forEach(row=>{
         const id=depChannelOf(row);
         if(!id){skip++;return;}                                  // 약국 채널과 무관한 입금
         const list=depositsOf(id);
         const key=row.acct+'|'+row.date+'|'+row.amount+'|'+depNorm(row.payer);
-        if(list.some(x=>x.key===key)){dup++;return;}
+        seen[key]=(seen[key]||0)+1;                              // 파일 안에서 몇 번째인지
+        const have=list.filter(x=>x.key===key).length;
+        if(have>=seen[key]){dup++;return;}                       // 이미 그만큼 있으면 중복
         list.push({id:uid('dep'),key:key,date:row.date,amount:row.amount,
                    acct:row.acct,payer:row.payer,memo:row.memo||row.desc,
                    mk:depMonthOf(row),store:depStoreOf(id,row),src:'클로브'});
@@ -2567,6 +2577,45 @@ function buildDeposits(id, opts){
   uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');importDeposits(e.dataTransfer.files,log,ledgerRefresh);});
   wrap.appendChild(uz);
 
+  /* 수기 등록 */
+  const mf=document.createElement('div');mf.className='up-zone';mf.style.marginTop='10px';
+  const mt=document.createElement('div');mt.className='uz-title';mt.textContent='✍️ 직접 입력 (클로브에 안 잡히는 건)';
+  mf.appendChild(mt);
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;';
+  function inp(ph,w,type){const e=document.createElement('input');e.className='cell-input';e.placeholder=ph;
+    if(type)e.type=type;e.style.cssText='width:'+w+'px;padding:7px 8px;';return e;}
+  const iDate=inp('입금일',120,'date'), iAmt=inp('금액',110), iPayer=inp('입금자명',130);
+  const iMk=inp('귀속월 (2026-08)',130), iMemo=inp('메모',150);
+  const iAcct=document.createElement('select');iAcct.className='cell-input';iAcct.style.cssText='padding:7px 8px;';
+  BANKS.forEach(bk=>{const o=document.createElement('option');o.value=bk.no;o.textContent=bk.label;iAcct.appendChild(o);});
+  if(id==='pharmmall')iAcct.value='54106474904042';
+  row.append(iDate,iAmt,iPayer,iAcct,iMk);
+  let iStore=null;
+  if(id==='pharmmall'||store){
+    iStore=document.createElement('select');iStore.className='cell-input';iStore.style.cssText='padding:7px 8px;';
+    const o0=document.createElement('option');o0.value='';o0.textContent='(약국 미지정)';iStore.appendChild(o0);
+    mallStores().forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;iStore.appendChild(o);});
+    if(store)iStore.value=store;
+    row.appendChild(iStore);
+  }
+  row.appendChild(iMemo);
+  const addB=document.createElement('button');addB.className='up-btn';addB.textContent='＋ 추가';
+  row.appendChild(addB);
+  mf.appendChild(row);
+  addB.addEventListener('click',()=>{
+    const date=iDate.value.trim(), amt=parseInt(String(iAmt.value).replace(/[^0-9-]/g,''),10)||0;
+    if(!date||!amt){showToast('입금일과 금액을 입력하세요');return;}
+    let mk=iMk.value.trim();
+    if(!/^\d{4}-\d{2}$/.test(mk)) mk=depMonthOf({date:date,memo:''});
+    depositsOf(id).push({id:uid('dep'),key:'manual|'+uid('k'),date:date,amount:amt,
+      acct:iAcct.value,payer:iPayer.value.trim()||'(직접 입력)',memo:iMemo.value.trim(),
+      mk:mk,store:iStore?iStore.value:(store||''),src:'수기'});
+    depositsOf(id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    persistLib();showToast('입금을 추가했습니다');ledgerRefresh();
+  });
+  wrap.appendChild(mf);
+
   /* 입금 상세 */
   const list=depositsOf(id).filter(d=>!store||String(d.store||'')===store);
   if(list.length){
@@ -2592,9 +2641,10 @@ function buildDeposits(id, opts){
       const td=document.createElement('td');td.style.textAlign='right';
       const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
       x.addEventListener('click',()=>{
-        if(!confirm('이 입금 기록을 지울까요?'+String.fromCharCode(10)+d.date+' '+fmt(d.amount)+'원'))return;
+        if(!confirm('이 입금 기록을 지울까요? (휴지통에서 되돌릴 수 있습니다)'+String.fromCharCode(10)+d.date+' '+fmt(d.amount)+'원'))return;
+        trashPush('deposit',(CH_LABEL[id]||id)+' · '+d.date+' '+d.payer,fmt(d.amount)+'원',{id},d);
         const l=depositsOf(id);const i=l.indexOf(d);if(i>=0)l.splice(i,1);
-        persistLib();ledgerRefresh();
+        persistLib();ledgerRefresh();showToast('입금 기록을 휴지통으로 옮겼습니다');
       });
       td.appendChild(x);tr.appendChild(td);tb2.appendChild(tr);
     });
@@ -2891,9 +2941,11 @@ function barofarmParse(rows,fileName){
     ykiho:ix('요양기관번호'),ph2:ix('약사명'),tel:ix('약국전화번호'),addr:ix('배송주소'),
     item:ix('상품명'),qty:ix('주문수량'),price:ix('판매가'),amt:ix('실주문금액'),amt2:ix('주문금액'),sale:ix('판매금액')};
   if(c.date<0||c.ph<0)throw new Error('바로팜 양식이 아닙니다 (주문일시/약국명 없음)');
-  const out=[];
+  const out=[];out.excluded=0;
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!String(r[c.date]||'').trim())continue;
+    /* 취소·반품·환불 주문은 매출이 아니므로 제외합니다 */
+    if(c.st>=0&&/취소|반품|환불|반려|미결제/.test(String(r[c.st]||''))){out.excluded++;continue;}
     const dRaw=String(r[c.date]);const d=dRaw.slice(0,10).replace(/[./]/g,'-');
     const total=Number(r[c.amt>=0?c.amt:(c.amt2>=0?c.amt2:c.sale)])||0;
     const qty=c.qty>=0?(Number(r[c.qty])||0):0;
@@ -2929,7 +2981,7 @@ async function importBarofarm(id,files,logEl,onDone){
         const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
         try{docs=docs.concat(barofarmParse(rows,f.name));}catch(e){}
       });
-      if(!docs.length)throw new Error('읽을 주문이 없습니다');
+      if(!docs.length&&!docs.excluded)throw new Error('읽을 주문이 없습니다');
       docs.forEach(doc=>{
         const mk=doc.date?doc.date.slice(0,7):'기타';
         led.months[mk]=led.months[mk]||{docs:[]};
@@ -2937,7 +2989,7 @@ async function importBarofarm(id,files,logEl,onDone){
         if(exists){dup++;return;}
         doc.isNew=true;led.months[mk].docs.push(doc);ok++;
       });
-      log.push('✓ '+f.name+' — '+docs.length+'건 확인');
+      log.push('✓ '+f.name+' — '+docs.length+'건 확인'+(docs.excluded?' (취소·반품 '+docs.excluded+'건 제외)':''));
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
   }
   Object.keys(led.months).forEach(m=>{led.months[m].docs.sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)));});
@@ -3846,6 +3898,11 @@ function trashRestore(entry){
       if(l.some(x=>x.id===d.id))throw new Error('이미 복구되어 있습니다');
       l.push(d);break;
     }
+    case 'deposit':{
+      const l=depositsOf(c.id);
+      if(l.some(x=>x.id===d.id))throw new Error('이미 복구되어 있습니다');
+      l.push(d);l.sort((a,b)=>String(b.date).localeCompare(String(a.date)));break;
+    }
     case 'taxDoc':{
       const l=taxDocsOf(c.id);
       if(l.some(x=>x.id===d.id))throw new Error('이미 복구되어 있습니다');
@@ -4636,6 +4693,7 @@ function loadRedyoungPreset(){
    홈 대시보드 — B2B 채널 통합 현황
    ============================================================ */
 function thisMonthKey(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function ymdText(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function ledgerSummary(id,mk){
   const led=lib.ledger&&lib.ledger[id];
   if(!led||!led.months)return{total:0,qty:0,docs:0,months:0,latest:null};
@@ -4691,6 +4749,22 @@ function renderHome(){
         alerts.push({t:'📄 '+label+' '+mkLabel(m)+' 세금계산서 미등록',s:'발행 후 등록하면 자동 대사됩니다',view,kind:'info'});
     });
   });
+  // 기한이 지난 미수금
+  ['ready','barofarm','pharmmall','aquamedi'].forEach(id=>{
+    const label=CH_LABEL[id]||id;
+    const view={ready:'ready',barofarm:'ch_barofarm',pharmmall:'ch_pharmmall',aquamedi:'ch_aquamedi'}[id];
+    if(id==='barofarm')return;                       // 바로팜은 주간 정산 (미수 개념 아님)
+    depMonths(id).forEach(m2=>{
+      const sale=salesOf(id,m2), paid=depSum(id,m2), ar=sale-paid;
+      if(ar<=0||!sale)return;
+      const y=parseInt(m2.slice(0,4),10), mo=parseInt(m2.slice(5,7),10);
+      const due=new Date(y,mo,10);
+      if(new Date()<=due)return;                     // 결제일 전이면 알리지 않음
+      alerts.push({t:'🔴 '+label+' '+mkLabel(m2)+' 미수금 '+fmt(ar)+'원',
+        s:'결제 기한 '+ymdText(due)+' 경과 — 입금 확인 필요',view,kind:'warn'});
+    });
+  });
+
   // 미처리 가입심사
   const waiting=(lib.applicants||[]).filter(a=>(a.status||'대기')==='대기').length;
   if(waiting)alerts.push({t:'🧾 자사몰 가입 심사 대기 '+waiting+'건',s:'2km 규약 판정 후 승인/거절하세요',view:'ch_pharmmall',kind:'new'});
