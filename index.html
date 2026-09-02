@@ -2535,16 +2535,18 @@ function buildDeposits(id, opts){
     tr.innerHTML='<td colspan="7" style="color:var(--ink-soft);">아직 매출·입금 내역이 없습니다.</td>';
     tb.appendChild(tr);
   }
+  let onlyPaid=0;
   months.forEach(mk=>{
     const sale=salesOf(id,mk,store), paid=depSum(id,mk,store), ar=sale-paid;
-    if(ar>0)arTotal+=ar;
+    if(ar>0&&sale)arTotal+=ar;
+    if(!sale&&paid)onlyPaid++;
     const ds=depositsOf(id).filter(d=>d.mk===mk&&(!store||String(d.store||'')===store));
     const tr=document.createElement('tr');
     tr.innerHTML='<td style="white-space:nowrap;font-weight:700;">'+mkLabel(mk)+'</td>'+
       '<td style="text-align:right;">'+fmt(sale)+'</td>'+
       '<td style="text-align:right;'+(paid?'':'color:var(--ink-soft);')+'">'+fmt(paid)+'</td>'+
-      '<td style="text-align:right;'+(ar>0?'color:#C62828;font-weight:800;':(ar<0?'color:var(--warn);font-weight:700;':'color:var(--ink-soft);'))+'">'+
-        (ar===0?'—':fmt(ar))+'</td>'+
+      '<td style="text-align:right;'+(!sale?'color:var(--ink-soft);':(ar>0?'color:#C62828;font-weight:800;':(ar<0?'color:var(--warn);font-weight:700;':'color:var(--ink-soft);')))+'">'+
+        (!sale?'입금만':(ar===0?'—':fmt(ar)))+'</td>'+
       '<td style="white-space:nowrap;font-size:12px;">'+(ds.map(d=>d.date).join('<br>')||'-')+'</td>'+
       '<td style="font-size:12px;">'+(ds.map(d=>d.payer).join('<br>')||'-')+'</td>'+
       '<td style="font-size:11.5px;color:var(--ink-soft);">'+(ds.map(d=>bankLabel(d.acct)).join('<br>')||'-')+'</td>';
@@ -2555,6 +2557,11 @@ function buildDeposits(id, opts){
     const n=document.createElement('div');n.className='hint';n.style.cssText='margin-top:8px;color:#C62828;font-weight:700;';
     n.textContent='⚠ 미수금 합계 '+fmt(arTotal)+'원';
     wrap.appendChild(n);
+  }
+  if(onlyPaid){
+    const n2=document.createElement('div');n2.className='hint';n2.style.marginTop='6px';
+    n2.innerHTML='「입금만」 '+onlyPaid+'개월 — 입금은 확인됐지만 <b>그 달 거래명세서가 아직 안 올라왔습니다.</b> 미수금으로는 잡지 않습니다.';
+    wrap.appendChild(n2);
   }
 
   /* 업로드 */
