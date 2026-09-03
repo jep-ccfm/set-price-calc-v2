@@ -1978,6 +1978,14 @@ const SHEET_URL='https://docs.google.com/spreadsheets/d/1oJL1Lt1sXQK0U7JDmqaRrtj
 const PHARMS=[{key:'ph_sinsa',id:'sinsa',name:'신사 타워약국'},{key:'ph_apgujeong',id:'apgujeong',name:'압구정 생생 온누리약국'}];
 const pharmMeta=v=>PHARMS.find(p=>p.key===v);
 
+/* 보고 있는 월 = 브라우저별 개인 설정 (공용 저장 안 함) */
+function monthOf(id,months){
+  const k='setPriceCalc:mon:'+id;
+  const v=localStorage.getItem(k);
+  if(v&&months.indexOf(v)>=0)return v;
+  return months.length?months[months.length-1]:null;   /* 기본 = 가장 최근 월 */
+}
+function setMonthOf(id,mk){try{localStorage.setItem('setPriceCalc:mon:'+id,mk);}catch(e){}}
 function ledgerOf(id){lib.ledger=lib.ledger||{};lib.ledger[id]=lib.ledger[id]||{months:{},activeMonth:null};const l=lib.ledger[id];l.months=l.months||{};return l;}
 function pharmInfoOf(id){lib.pharmInfo=lib.pharmInfo||{};lib.pharmInfo[id]=lib.pharmInfo[id]||{files:[]};const o=lib.pharmInfo[id];o.files=o.files||[];return o;}
 
@@ -2078,8 +2086,9 @@ function buildLedger(id,opts){
     const a=document.createElement('a');a.className='link-btn';a.href=opts.sheet;a.target='_blank';a.rel='noopener';a.textContent='📊 정산 시트 바로가기';
     lb.appendChild(a);wrap.appendChild(lb);
   }
+  let upEl=null;   /* 업로드 존은 월별 화면보다 아래에 접어 둔다 */
   if(!opts.noPdf){
-  const uz=document.createElement('div');uz.className='up-zone';
+  const uz=document.createElement('div');uz.className='up-zone';uz.style.margin='0';
   const t1=document.createElement('div');t1.className='uz-title';t1.textContent='📄 거래명세서 업로드';
   const t2=document.createElement('div');t2.className='uz-desc';t2.innerHTML='월별 폴더를 통째로 올리거나, PDF 여러 개를 선택/드래그하세요.<br>지점·품목·수량·금액을 자동으로 읽어 월별로 집계합니다.<br><span style="color:var(--warn)">※ 세금계산서는 아래 「🧾 세금계산서」 칸에 등록하세요 (여기서는 인식되지 않습니다)</span>';
   uz.append(t1,t2);
@@ -2098,7 +2107,7 @@ function buildLedger(id,opts){
   uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('drag');});
   uz.addEventListener('dragleave',()=>uz.classList.remove('drag'));
   uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');importPdfs(id,e.dataTransfer.files,log,ledgerRefresh);});
-  wrap.appendChild(uz);
+  upEl=uz;
   }
 
   // 신규 건 알림
@@ -2114,18 +2123,26 @@ function buildLedger(id,opts){
     nb.append(left,okBtn);wrap.appendChild(nb);
   }
   const months=Object.keys(led.months).sort();
-  if(!months.length){const e=document.createElement('div');e.className='empty-box';e.innerHTML='아직 등록된 거래명세서가 없습니다.<br>위에서 월별 폴더를 올려보세요.';wrap.appendChild(e);return wrap;}
-  if(!led.activeMonth||!led.months[led.activeMonth])led.activeMonth=months[months.length-1];
+  if(!months.length){
+    if(upEl){const f0=foldPanel('📄 거래명세서 업로드','',null,true);f0.body.appendChild(upEl);wrap.appendChild(f0.panel);}
+    const e=document.createElement('div');e.className='empty-box';
+    e.innerHTML='아직 등록된 거래명세서가 없습니다.<br>위 <b>「거래명세서 업로드」</b>에서 월별 폴더를 올려보세요.';
+    wrap.appendChild(e);return wrap;
+  }
+  /* 업로드는 월별 화면 뒤로 — 자주 쓰는 월 선택이 먼저 오게 */
+  const upFold=upEl?foldPanel('📄 거래명세서 업로드','<span style="color:var(--ink-mute);font-weight:600;">PDF·월별 폴더</span>','setPriceCalc:upOpen:'+id,false):null;
+  if(upFold)upFold.body.appendChild(upEl);
+  const cur=monthOf(id,months);
   const mb=document.createElement('div');mb.className='month-bar';
-  months.forEach(mk=>{
-    const a=aggLedger(led,mk);
-    const p=document.createElement('button');p.className='month-pill'+(mk===led.activeMonth?' active':'');
-    p.innerHTML=mkLabel(mk)+'<span class="mp-sub">'+fmt(a.total)+'원</span>';
-    p.addEventListener('click',()=>{led.activeMonth=mk;persistLib();ledgerRefresh();});
+  months.forEach(m2=>{
+    const a=aggLedger(led,m2);
+    const p=document.createElement('button');p.className='month-pill'+(m2===cur?' active':'');
+    p.innerHTML=mkLabel(m2)+'<span class="mp-sub">'+fmt(a.total)+'원</span>';
+    p.addEventListener('click',()=>{setMonthOf(id,m2);ledgerRefresh();});   /* 개인 설정이라 공용 저장 없음 */
     mb.appendChild(p);
   });
   wrap.appendChild(mb);
-  const mk=led.activeMonth,ag=aggLedger(led,mk);
+  const mk=cur,ag=aggLedger(led,mk);
   const sr=document.createElement('div');sr.className='stat-row';
   sr.innerHTML='<div class="stat-card hero"><div class="sc-l">'+mkLabel(mk)+' 매출 합계 (VAT 포함)</div><div class="sc-v">'+fmt(ag.total)+'원</div></div>'+
     '<div class="stat-card"><div class="sc-l">공급가액</div><div class="sc-v">'+fmt(ag.supply)+'원</div></div>'+
@@ -2182,12 +2199,13 @@ function buildLedger(id,opts){
       trashPush('ledgerDoc',(CH_LABEL[id]||id)+' · '+(d.branch||'')+' '+(d.file||''),
         fmt(d.total||0)+'원',{id,mk},d);
       const a2=led.months[mk].docs;const i2=a2.indexOf(d);if(i2>=0)a2.splice(i2,1);
-      if(!a2.length){delete led.months[mk];led.activeMonth=null;}
+      if(!a2.length){delete led.months[mk];led.activeMonth=null;}   /* 월이 비면 다음 렌더에서 최근 월로 */
       persistLib();ledgerRefresh();showToast('명세서를 휴지통으로 이동했습니다');
     });
     td.appendChild(x);tr.appendChild(td);dtb.appendChild(tr);
   });
   dt.appendChild(dtb);wrap.appendChild(dt);
+  if(upFold)wrap.appendChild(upFold.panel);   /* 업로드는 맨 아래 접어서 */
   return wrap;
 }
 
@@ -2429,7 +2447,7 @@ function buildPriceTable(channelKey,openDefault){
 
 function buildBranchStock(){
   const lsKey='setPriceCalc:branchOpen';
-  const open=localStorage.getItem(lsKey)!=='0';
+  const open=localStorage.getItem(lsKey)==='1';   /* 기본 접힘 — 세로로 길어 월별 화면을 밀어낸다 */
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
   h.innerHTML='<span><span class="chev">▶</span> 🏪 지점별 취급 품목</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+BRANCH_UPDATED+'</span>';
@@ -2660,13 +2678,33 @@ async function importDeposits(files, logEl, onDone){
 }
 
 /* ---------- 입금·미수금 UI ---------- */
+/* 큰 섹션을 접어두고 헤더에 핵심 숫자만 남긴다.
+   접힌 상태에서도 결과를 알 수 있어야 하므로 요약을 헤더 우측에 넣는다. */
+function foldPanel(titleHtml,rightHtml,lsKey,openDefault){
+  const saved=lsKey?localStorage.getItem(lsKey):null;
+  const open=(saved===null)?!!openDefault:(saved==='1');
+  const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
+  const h=document.createElement('div');h.className='ch-head';
+  h.innerHTML='<span><span class="chev">▶</span> '+titleHtml+'</span>'+
+    '<span style="font-size:12.5px;font-weight:800;">'+(rightHtml||'')+'</span>';
+  h.addEventListener('click',()=>{p.classList.toggle('open');
+    if(lsKey)localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  p.appendChild(h);
+  const b=document.createElement('div');b.className='ch-body';p.appendChild(b);
+  return{panel:p,body:b};
+}
 function buildDeposits(id, opts){
   opts=opts||{};
   const store=opts.store||'';
-  const wrap=document.createElement('div');
-  const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');hs.textContent='💰 입금 · 미수금';h.appendChild(hs);
-  wrap.appendChild(h);
+  /* 미수금 합계를 먼저 구해 헤더에 붙인다 */
+  let arSum=0;
+  depMonths(id,store).forEach(m=>{const sv=salesOf(id,m,store);
+    const ar=sv-depSum(id,m,store); if(sv&&ar>0)arSum+=ar;});
+  const arTxt=arSum>0
+    ? '<span style="color:#C62828;">미수금 '+fmt(arSum)+'원</span>'
+    : '<span style="color:var(--good);">✓ 미수 없음</span>';
+  const fpD=foldPanel('💰 입금 · 미수금',arTxt,'setPriceCalc:depOpen:'+id+(store?':'+store:''),false);
+  const wrap=fpD.body;
 
   /* 월별 요약 */
   const months=depMonths(id,store);
@@ -2803,7 +2841,7 @@ function buildDeposits(id, opts){
     });
     t2b.appendChild(tb2);wrap.appendChild(t2b);
   }
-  return wrap;
+  return fpD.panel;
 }
 
 /* ---------- 월마감 체크리스트 ----------
@@ -3003,10 +3041,21 @@ const RDB_LABEL={ok:'일치',diff:'금액 다름',noTax:'계산서에 없음',no
 function buildReadyBranch(){
   const led=ledgerOf('ready');
   const months=Object.keys(led.months||{}).filter(m=>m!=='기타').sort();
-  const wrap=document.createElement('div');
-  const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');hs.textContent='🏬 지점별 대조 (명세서 ↔ 세금계산서)';
-  h.appendChild(hs);wrap.appendChild(h);
+  /* 마지막 월 판정을 헤더에 요약 */
+  let sumTxt='';
+  try{
+    const last=months[months.length-1];
+    if(last){
+      const R=rdBranchRows(last);
+      const bad=(R.rows||[]).filter(x=>x.status==='diff').length;
+      const noTax=(R.rows||[]).filter(x=>x.status==='noTax').length;
+      sumTxt=mkLabel(last)+' · '+(bad?'<span style="color:var(--warn);">차이 '+bad+'곳</span>'
+        :(noTax?'<span style="color:var(--ink-soft);">계산서 미등록</span>'
+               :'<span style="color:var(--good);">✓ 전 지점 일치</span>'));
+    }
+  }catch(e){sumTxt='';}
+  const fpB=foldPanel('🏬 지점별 대조 (명세서 ↔ 세금계산서)',sumTxt,'setPriceCalc:rdBranchOpen',false);
+  const wrap=fpB.body;
 
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
   nt.innerHTML='레디영은 <b>지점이 본사로 보내고 본사가 한 번에 입금</b>합니다. '+
@@ -3017,7 +3066,7 @@ function buildReadyBranch(){
   if(!months.length){
     const e=document.createElement('div');e.className='hint';
     e.textContent='아직 등록된 명세서가 없습니다.';
-    wrap.appendChild(e);return wrap;
+    wrap.appendChild(e);return fpB.panel;
   }
   months.slice().reverse().forEach(mk=>{
     const R=rdBranchRows(mk);
@@ -3084,7 +3133,7 @@ function buildReadyBranch(){
     pnl.appendChild(st);
     wrap.appendChild(pnl);
   });
-  return wrap;
+  return fpB.panel;
 }
 
 /* ---------- 채널 뷰 (바로팜 / 자사몰 약사 전용관) ---------- */
