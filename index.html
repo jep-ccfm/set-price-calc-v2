@@ -1007,6 +1007,7 @@
       <button class="nav-item" data-view="trash"><span class="ic">🗑️</span>휴지통<span class="badge" id="badge-trash">0</span></button>
     </nav>
     <div class="side-foot">
+      <div id="authBar" style="margin-bottom:10px;"></div>
       <button id="syncBtn" class="sync-btn" type="button">↻ 최신 불러오기</button>
       <div id="syncState" class="sync-state-line">동기화 준비 중…</div>
       <div class="side-note">등록한 내용·첨부 파일은 <b>팀 공용 데이터</b>로 저장돼 다른 사람에게도 같게 보입니다. 계산기 입력값과 API 키만 개인용입니다.</div>
@@ -1389,15 +1390,133 @@ const SB_URL='https://yehefdnyikbogimmjddh.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InllaGVmZG55aWtib2dpbW1qZGRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4NzQ4MDMsImV4cCI6MjEwMDQ1MDgwM30.vsouWuZ9coF8gkBLs1GtMqjnUmodVNF5q2XzNeA2cpg';
 const SB_T=SB_URL+'/rest/v1/set_calc_state';
 const SB_H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
+/* ============================================================
+   편집 권한 (Supabase Auth · 구글 로그인)
+   · 읽기 = 링크만 있으면 누구나 (anon 키)
+   · 쓰기 = 로그인한 편집자만 (세션 토큰)
+   ============================================================ */
+const AUTH_LS='setPriceCalc:auth';
+let session=null;              // {access_token, refresh_token, expires_at, email}
+
+function authLoad(){
+  try{const v=JSON.parse(localStorage.getItem(AUTH_LS)||'null');
+    if(v&&v.access_token)session=v;}catch(e){}
+}
+function authSave(){
+  try{ if(session)localStorage.setItem(AUTH_LS,JSON.stringify(session));
+       else localStorage.removeItem(AUTH_LS); }catch(e){}
+}
+function jwtEmail(t){
+  try{const b=t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    return JSON.parse(decodeURIComponent(escape(atob(b)))).email||'';}catch(e){return '';}
+}
+function canEdit(){ return !!(session&&session.access_token); }
+function authEmail(){ return session?session.email||'':''; }
+
+/* 로그인 후 돌아올 때 #access_token=... 을 받아 저장 */
+function authCatchRedirect(){
+  const h=location.hash||'';
+  if(h.indexOf('access_token=')<0)return false;
+  const q={};h.replace(/^#/,'').split('&').forEach(kv=>{
+    const i=kv.indexOf('=');if(i>0)q[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1));});
+  if(!q.access_token)return false;
+  session={access_token:q.access_token,refresh_token:q.refresh_token||'',
+    expires_at:Number(q.expires_at||0),email:jwtEmail(q.access_token)};
+  authSave();
+  history.replaceState(null,'',location.pathname+location.search);
+  return true;
+}
+function authLogin(){
+  const back=location.origin+location.pathname;
+  location.href=SB_URL+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(back);
+}
+function authLogout(){
+  const t=session&&session.access_token;
+  session=null;authSave();
+  if(t)fetch(SB_URL+'/auth/v1/logout',{method:'POST',
+    headers:{apikey:SB_KEY,Authorization:'Bearer '+t}}).catch(()=>{});
+  showToast('로그아웃했습니다 — 읽기 전용으로 전환됩니다');
+  renderAuthBar();setSync('readonly');
+}
+/* 만료 임박이면 갱신 */
+async function authRefresh(){
+  if(!session||!session.refresh_token)return false;
+  try{
+    const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',
+      {method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},
+       body:JSON.stringify({refresh_token:session.refresh_token})});
+    if(!r.ok){session=null;authSave();renderAuthBar();return false;}
+    const d=await r.json();
+    if(!d.access_token){session=null;authSave();renderAuthBar();return false;}
+    session={access_token:d.access_token,refresh_token:d.refresh_token||session.refresh_token,
+      expires_at:Math.floor(Date.now()/1000)+(d.expires_in||3600),email:jwtEmail(d.access_token)};
+    authSave();renderAuthBar();return true;
+  }catch(e){return false;}
+}
+async function authEnsure(){
+  if(!session)return false;
+  const now=Math.floor(Date.now()/1000);
+  if(session.expires_at&&session.expires_at-now<120)return await authRefresh();
+  return true;
+}
+/* 쓰기용 헤더 — 로그인 상태면 세션 토큰, 아니면 null(쓰기 불가) */
+async function writeHeaders(extra){
+  if(!canEdit())return null;
+  if(!(await authEnsure()))return null;
+  return Object.assign({apikey:SB_KEY,Authorization:'Bearer '+session.access_token},extra||{});
+}
+/* 사이드바 로그인 영역 */
+function renderAuthBar(){
+  const el=document.getElementById('authBar');if(!el)return;
+  el.innerHTML='';
+  if(canEdit()){
+    const w=document.createElement('div');w.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+    const b=document.createElement('span');
+    b.style.cssText='font-size:11.5px;font-weight:800;color:#8FE3B4;';
+    b.textContent='✎ 편집 가능';
+    const who=document.createElement('span');
+    who.style.cssText='font-size:11px;color:#98A1BC;word-break:break-all;';
+    who.textContent=authEmail();
+    const out=document.createElement('button');out.className='sync-btn';
+    out.style.cssText='width:auto;padding:5px 10px;font-size:11.5px;';
+    out.textContent='로그아웃';out.addEventListener('click',authLogout);
+    w.append(b,out);el.append(w,who);
+  }else{
+    const b=document.createElement('button');b.className='sync-btn';
+    b.style.cssText='display:flex;align-items:center;justify-content:center;gap:6px;';
+    b.innerHTML='<span>🔓</span><span>편집하려면 로그인</span>';
+    b.addEventListener('click',authLogin);
+    const n=document.createElement('div');
+    n.style.cssText='font-size:11px;color:#98A1BC;margin-top:6px;line-height:1.5;';
+    n.textContent='지금은 읽기 전용입니다. 구글 계정으로 로그인하면 저장·업로드가 켜집니다.';
+    el.append(b,n);
+  }
+}
+/* 읽기 전용인데 저장을 시도했을 때 한 번만 안내 */
+let roWarned=false;
+function warnReadonly(){
+  if(roWarned)return;roWarned=true;
+  showToast('읽기 전용입니다 — 좌측 하단 「편집하려면 로그인」을 눌러주세요');
+  setTimeout(()=>{roWarned=false;},8000);
+}
+
 let pendingPush=0,libPushT=null,dbPushT=null;
 let ioBusy=0,libRev=0;
-function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)',conflict:'⚠ 다른 사람이 먼저 저장함 — 최신본을 불러왔습니다'};el.textContent=m[s]||s;}
+function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)',conflict:'⚠ 다른 사람이 먼저 저장함 — 최신본을 불러왔습니다',readonly:'👁 읽기 전용 (로그인하면 저장됩니다)'};el.textContent=m[s]||s;}
 let lastRemoteAt=null;   // 마지막으로 확인한 서버 저장 시각
 async function sbGet(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=payload,updated_at',{headers:SB_H});if(!r.ok)return{ok:false,row:null};const a=await r.json();return{ok:true,row:(a&&a.length?a[0]:null)};}catch(e){return{ok:false,row:null};}}
 async function sbStamp(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=updated_at',{headers:SB_H});if(!r.ok)return undefined;const a=await r.json();return a&&a.length?a[0].updated_at:null;}catch(e){return undefined;}}
-async function sbUpsert(id,payload){try{const r=await fetch(SB_T,{method:'POST',headers:{...SB_H,Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id,payload,updated_at:new Date().toISOString()})});return r.ok;}catch(e){return false;}}
+async function sbUpsert(id,payload){
+  const h=await writeHeaders({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'});
+  if(!h)return 'readonly';
+  try{const r=await fetch(SB_T,{method:'POST',headers:h,
+    body:JSON.stringify({id,payload,updated_at:new Date().toISOString()})});
+    if(r.status===401||r.status===403){session=null;authSave();renderAuthBar();return 'denied';}
+    return r.ok;}catch(e){return false;}}
 function pushLibSoon(){
-  clearTimeout(libPushT);setSync('saving');pendingPush++;
+  clearTimeout(libPushT);
+  if(!canEdit()){setSync('readonly');warnReadonly();return;}   /* 읽기 전용이면 서버에 쓰지 않는다 */
+  setSync('saving');pendingPush++;
   libPushT=setTimeout(async()=>{
     /* 내가 마지막으로 본 이후 다른 사람이 저장했는지 확인 — 남의 작업을 덮어쓰지 않기 위함 */
     const remote=await sbStamp('libraryV2');
@@ -1409,11 +1528,21 @@ function pushLibSoon(){
       return;
     }
     const ok=await sbUpsert('libraryV2',lib);
-    if(ok)lastRemoteAt=await sbStamp('libraryV2');
-    pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');
+    if(ok===true)lastRemoteAt=await sbStamp('libraryV2');
+    pendingPush=Math.max(0,pendingPush-1);
+    if(ok==='readonly'){setSync('readonly');warnReadonly();}
+    else if(ok==='denied'){setSync('readonly');showToast('편집 권한이 없는 계정입니다 — 저장되지 않았습니다');}
+    else setSync(ok?'saved':'error');
   },600);
 }
-function pushCostDBSoon(){clearTimeout(dbPushT);setSync('saving');pendingPush++;dbPushT=setTimeout(async()=>{const ok=await sbUpsert('costDB',costDB);pendingPush=Math.max(0,pendingPush-1);setSync(ok?'saved':'error');},600);}
+function pushCostDBSoon(){
+  clearTimeout(dbPushT);
+  if(!canEdit()){setSync('readonly');return;}
+  setSync('saving');pendingPush++;
+  dbPushT=setTimeout(async()=>{const ok=await sbUpsert('costDB',costDB);
+    pendingPush=Math.max(0,pendingPush-1);
+    if(ok==='readonly'||ok==='denied')setSync('readonly');else setSync(ok?'saved':'error');},600);
+}
 function hasLibData(l){return Object.values((l&&l.companies)||{}).some(c=>c.brands?Object.values(c.brands).some(b=>(b.rounds||[]).length):(c.rounds||[]).length);}
 function ensureCompanies(){COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]=(c.key==='jp'?{brands:{merable:{rounds:[],activeId:null},lusolve:{rounds:[],activeId:null}},activeBrand:'merable'}:{rounds:[],activeId:null});});}
 function rerenderAll(){refreshDatalist();render();updateBadges();const v=currentView;if(v==='home'){if(typeof renderHome==='function')renderHome();}else if(v==='geo'){if(typeof renderGeo==='function')renderGeo();}else if(v==='trash'){if(typeof renderTrash==='function')renderTrash();}else if(v&&v.indexOf('ph_')===0){if(typeof renderPharm==='function')renderPharm(v);}else if(v&&v.indexOf('ch_')===0){if(typeof renderChannel==='function')renderChannel(v);}else if(v!=='calc')renderCompany(v);}
@@ -1445,6 +1574,7 @@ setInterval(async()=>{
 },60000);
 
 function loadState(){
+  authLoad();authCatchRedirect();renderAuthBar();
   const db=sGet('costDB');costDB=db||{...DEFAULT_DB};
   const L=sGet('libraryV2');
   if(L&&L.companies){lib=L;COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]={rounds:[],activeId:null};});migrateJp();migrateVat();}
@@ -1455,7 +1585,7 @@ function loadState(){
   sortAllStreams();
   refreshDatalist();render();updateBadges();
   switchView('home');
-  syncPull();
+  syncPull().then(()=>{if(!canEdit())setSync('readonly');});
 }
 let saveT=null;
 function persist(){clearTimeout(saveT);saveT=setTimeout(()=>{const ok=sSet('costDB',costDB)&&sSet('currentSet',{margin,roundupUnit,setRoundUnit,rows:rows.map(r=>({name:r.name,qty:r.qty}))});document.getElementById('saveState').textContent=ok?'저장됨 · '+new Date().toLocaleTimeString('ko-KR'):'저장 실패';},300);}
@@ -2069,13 +2199,17 @@ async function uploadPharmFile(pid,file){
   const _m=file.name.match(/\.[A-Za-z0-9]{1,8}$/);
   const _ext=_m?_m[0].toLowerCase():'';
   const path=pid+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,8)+_ext;
+  const h=await writeHeaders({'Content-Type':file.type||'application/octet-stream','x-upsert':'true'});
+  if(!h)throw new Error('읽기 전용입니다 — 좌측 하단에서 로그인하세요');
   const r=await fetch(SB_URL+'/storage/v1/object/'+SB_BUCKET+'/'+encPath(path),
-    {method:'POST',headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':file.type||'application/octet-stream','x-upsert':'true'},body:file});
+    {method:'POST',headers:h,body:file});
+  if(r.status===401||r.status===403)throw new Error('업로드 권한이 없습니다 (로그인 계정 확인)');
   if(!r.ok)throw new Error('업로드 실패 ('+r.status+')');
   return{name:file.name,path:path,url:SB_URL+'/storage/v1/object/public/'+SB_BUCKET+'/'+encPath(path),type:file.type||'',size:file.size,at:new Date().toISOString()};
 }
 async function deletePharmFile(rec){
-  try{await fetch(SB_URL+'/storage/v1/object/'+SB_BUCKET+'/'+encPath(rec.path),{method:'DELETE',headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY}});}catch(e){}
+  const h=await writeHeaders();if(!h)return;
+  try{await fetch(SB_URL+'/storage/v1/object/'+SB_BUCKET+'/'+encPath(rec.path),{method:'DELETE',headers:h});}catch(e){}
 }
 function isImgRec(rec){return /^image\//.test(rec.type)||/\.(png|jpe?g|gif|webp|bmp)$/i.test(rec.name);}
 function isPdfRec(rec){return /pdf/i.test(rec.type)||/\.pdf$/i.test(rec.name);}
