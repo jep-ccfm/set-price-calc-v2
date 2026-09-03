@@ -1636,6 +1636,7 @@ function renderCompany(k){
     box.appendChild(buildBranchStock());
     box.appendChild(buildPriceTable('ready',false));
     box.appendChild(buildTaxDocs('ready'));
+    box.appendChild(buildReadyBranch());
     box.appendChild(buildDeposits('ready'));
     box.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
     const dv=document.createElement('div');dv.style.cssText='border-top:1px solid var(--line);margin:26px 0 18px;';box.appendChild(dv);
@@ -2804,6 +2805,143 @@ function buildMallStoreInfo(){
   return wrap;
 }
 
+/* ---------- 레디영 지점별 대조 ----------
+   레디영은 지점이 각자 본사로 보내고, 본사가 우리에게 한 번에 입금합니다.
+   → 미수금은 지점별로 나누지 않고 「레디영」 하나로만 답니다.
+   이 표는 돈을 나누려는 게 아니라, 지점별 금액이 세금계산서와 맞는지 보는 용도입니다.
+     명세서(우리가 보낸 물건)  ↔  세금계산서(우리가 끊은 금액)  */
+function rdAliasOf(){lib.rdAlias=lib.rdAlias||{};return lib.rdAlias;}
+/* '강남 레디영 약국점' · '레디영 약국(강남점)' · '레디영약국(강남레디영약국점)' → 모두 '강남점' */
+function rdKey(s){
+  let t=String(s||'').trim();
+  const m=t.match(/[(（]([^()（）]*)[)）]\s*$/);        // 괄호가 있으면 그 안이 지점명
+  if(m)t=m[1];
+  t=t.replace(/\s+/g,'').replace(/레디영|약국/g,'');
+  return t||'(미상)';
+}
+/* 세금계산서 품목이 '외 N건'으로 묶여 있으면 지점별로 나눌 수 없습니다 */
+const rdLumped=n=>/외\s*\d+\s*건/.test(String(n||''));
+function rdBranchRows(mk){
+  const led=ledgerOf('ready');
+  const doc={},tax={},lump=[];
+  ((led.months||{})[mk]||{docs:[]}).docs.forEach(d=>{
+    const k=rdKey(d.branch||d.store||'');
+    doc[k]=doc[k]||{name:d.branch||d.store||'(미상)',amt:0,cnt:0};
+    doc[k].amt+=d.total||0;doc[k].cnt++;
+  });
+  ((lib.taxDocs||{}).ready||[]).forEach(t=>{
+    if(String(t.date||'').slice(0,7)!==mk)return;
+    (t.items||[]).forEach(it=>{
+      const isBr=(it.isBranch!==undefined)?it.isBranch:/[(（].+[)）]/.test(String(it.name||''));
+      if(!isBr)return;                                  // 반품·조정은 지점 대조 대상이 아닙니다
+      const amt=(Number(it.supply)||0)+(Number(it.vat)||0);
+      if(rdLumped(it.name)){lump.push({name:it.name,amt:amt});return;}
+      let k=rdKey(it.name);
+      k=rdAliasOf()[k]||k;
+      tax[k]=tax[k]||{name:it.name,amt:0};
+      tax[k].amt+=amt;
+    });
+  });
+  const keys={};Object.keys(doc).forEach(k=>keys[k]=1);Object.keys(tax).forEach(k=>keys[k]=1);
+  const rows=Object.keys(keys).sort().map(k=>{
+    const d=doc[k],x=tax[k];
+    return {key:k,name:(d&&d.name)||(x&&x.name)||k,
+      docAmt:d?d.amt:null,taxAmt:x?x.amt:null,cnt:d?d.cnt:0,
+      status:(!x?'noTax':(!d?'noDoc':(d.amt===x.amt?'ok':'diff')))};
+  });
+  return {rows:rows,lump:lump,
+    docTotal:rows.reduce((a,r)=>a+(r.docAmt||0),0),
+    taxTotal:rows.reduce((a,r)=>a+(r.taxAmt||0),0)+lump.reduce((a,l)=>a+l.amt,0)};
+}
+const RDB_ICON={ok:'✅',diff:'⚠',noTax:'❓',noDoc:'❓'};
+const RDB_LABEL={ok:'일치',diff:'금액 다름',noTax:'계산서에 없음',noDoc:'명세서에 없음'};
+function buildReadyBranch(){
+  const led=ledgerOf('ready');
+  const months=Object.keys(led.months||{}).filter(m=>m!=='기타').sort();
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');hs.textContent='🏬 지점별 대조 (명세서 ↔ 세금계산서)';
+  h.appendChild(hs);wrap.appendChild(h);
+
+  const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+  nt.innerHTML='레디영은 <b>지점이 본사로 보내고 본사가 한 번에 입금</b>합니다. '+
+    '그래서 <b>미수금은 지점별로 나누지 않고 「레디영」 하나로만</b> 답니다.<br>'+
+    '이 표는 지점별 금액이 세금계산서와 맞는지 확인하는 용도입니다. 숫자가 다르면 그 지점 명세서부터 다시 보세요.';
+  wrap.appendChild(nt);
+
+  if(!months.length){
+    const e=document.createElement('div');e.className='hint';
+    e.textContent='아직 등록된 명세서가 없습니다.';
+    wrap.appendChild(e);return wrap;
+  }
+  months.slice().reverse().forEach(mk=>{
+    const R=rdBranchRows(mk);
+    const bad=R.rows.filter(r=>r.status!=='ok');
+    const pnl=document.createElement('div');
+    pnl.style.cssText='border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;';
+    const top=document.createElement('div');
+    top.style.cssText='display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between;';
+    const gap=R.docTotal-R.taxTotal;
+    top.innerHTML='<div><b style="font-size:15px;">'+mkLabel(mk)+'</b>'+
+        '<span style="color:var(--ink-soft);margin-left:10px;font-size:12px;">지점 '+R.rows.length+'곳</span></div>'+
+      '<div style="font-size:13px;">명세서 <b>'+fmt(R.docTotal)+'</b> · 계산서 <b>'+fmt(R.taxTotal)+'</b>'+
+        (R.taxTotal?' · 차액 <b style="color:'+(gap?'var(--warn)':'#2E7D32')+';">'+fmt(gap)+'</b>':
+         ' <span style="color:var(--ink-soft);">· 계산서 미등록</span>')+'</div>';
+    pnl.appendChild(top);
+
+    if(R.lump.length){
+      const lv=document.createElement('div');lv.className='hint';lv.style.cssText='margin-top:6px;color:var(--warn);';
+      lv.innerHTML=R.lump.map(l=>'· 계산서에 <b>'+l.name+'</b> '+fmt(l.amt)+'원 — 여러 지점이 한 줄로 묶여 있어 지점별 대조가 안 됩니다').join('<br>');
+      pnl.appendChild(lv);
+    }
+    const t=document.createElement('table');t.className='led-table';t.style.marginTop='10px';
+    t.innerHTML='<thead><tr><th>판정</th><th>지점</th><th style="text-align:right;">명세서</th>'+
+      '<th style="text-align:right;">계산서</th><th style="text-align:right;">차액</th>'+
+      '<th style="text-align:right;">명세서 건수</th><th></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    R.rows.forEach(r=>{
+      const tr=document.createElement('tr');
+      const d=(r.docAmt!=null&&r.taxAmt!=null)?(r.docAmt-r.taxAmt):null;
+      const col=r.status==='ok'?'#2E7D32':'var(--warn)';
+      tr.innerHTML='<td style="white-space:nowrap;color:'+col+';font-weight:800;">'+RDB_ICON[r.status]+' '+RDB_LABEL[r.status]+'</td>'+
+        '<td><b>'+r.name+'</b></td>'+
+        '<td style="text-align:right;">'+(r.docAmt==null?'-':fmt(r.docAmt))+'</td>'+
+        '<td style="text-align:right;">'+(r.taxAmt==null?'-':fmt(r.taxAmt))+'</td>'+
+        '<td style="text-align:right;'+(d?'color:var(--warn);font-weight:800;':'')+'">'+(d?fmt(d):(d===0?'0':'-'))+'</td>'+
+        '<td style="text-align:right;">'+(r.cnt||'-')+'</td>';
+      const td=document.createElement('td');td.style.textAlign='right';
+      /* 이름이 서로 달라 못 붙은 계산서 항목은 어느 지점인지 직접 지정할 수 있습니다 */
+      if(r.status==='noDoc'){
+        const sel=document.createElement('select');sel.className='cell-input';sel.style.cssText='padding:5px 6px;font-size:12px;';
+        const o0=document.createElement('option');o0.value='';o0.textContent='어느 지점인가요?';sel.appendChild(o0);
+        R.rows.filter(x=>x.docAmt!=null).forEach(x=>{
+          const o=document.createElement('option');o.value=x.key;o.textContent=x.name;sel.appendChild(o);});
+        sel.addEventListener('change',()=>{
+          if(!sel.value)return;
+          rdAliasOf()[r.key]=sel.value;persistLib();
+          showToast(r.name+' → '+sel.options[sel.selectedIndex].text+' 로 묶었습니다');
+          ledgerRefresh();});
+        td.appendChild(sel);
+      }else if(rdAliasOf()[r.key]||Object.keys(rdAliasOf()).some(a=>rdAliasOf()[a]===r.key)){
+        const x=document.createElement('button');x.className='icon-btn';x.textContent='별칭 해제';
+        x.addEventListener('click',()=>{
+          Object.keys(rdAliasOf()).forEach(a=>{if(a===r.key||rdAliasOf()[a]===r.key)delete rdAliasOf()[a];});
+          persistLib();ledgerRefresh();});
+        td.appendChild(x);
+      }
+      tr.appendChild(td);tb.appendChild(tr);
+    });
+    t.appendChild(tb);pnl.appendChild(t);
+    const st=document.createElement('div');st.style.cssText='margin-top:8px;font-size:13px;font-weight:700;';
+    st.innerHTML=bad.length
+      ? '<span style="color:var(--warn);">⚠ '+bad.length+'곳 확인 필요</span>'
+      : '<span style="color:#2E7D32;">✅ 지점 '+R.rows.length+'곳 모두 일치</span>';
+    pnl.appendChild(st);
+    wrap.appendChild(pnl);
+  });
+  return wrap;
+}
+
 /* ---------- 채널 뷰 (바로팜 / 자사몰 약사 전용관) ---------- */
 const CHANNELS=[
   {key:'ch_barofarm',id:'barofarm',name:'바로팜',ic:'🛒',desc:'약국 유통 플랫폼 바로팜 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
@@ -2834,6 +2972,7 @@ function renderChannel(view){
     box.appendChild(nt);
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
+    box.appendChild(buildBarofarmSettle());
     box.appendChild(buildBarofarmVerify());
     box.appendChild(buildChannelGeo('barofarm','바로팜'));
     box.appendChild(buildTaxDocs(meta.id));
@@ -3118,6 +3257,18 @@ function barofarmParse(rows,fileName){
   }
   return out;
 }
+/* 한 주문에 상품이 여러 개면 엑셀에 여러 줄로 나옵니다 → 주문번호로 하나로 묶습니다.
+   묶지 않으면 두 번째 상품 줄이 "중복"으로 버려져 매출이 빠집니다. */
+function bfMergeBySerial(docs){
+  const map={},seq=[];
+  docs.forEach(d=>{
+    const k=String(d.serial||'')||('#'+seq.length);
+    if(!map[k]){map[k]=Object.assign({},d,{items:[]});seq.push(k);}
+    else{map[k].qty+=d.qty;map[k].supply+=d.supply;map[k].vat+=d.vat;map[k].total+=d.total;}
+    (d.items||[]).forEach(it=>map[k].items.push(it));
+  });
+  return seq.map(k=>map[k]);
+}
 async function importBarofarm(id,files,logEl,onDone){
   if(!xlsxReady()){showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)');return;}
   const led=ledgerOf(id);let ok=0,dup=0,fail=0;const log=[];
@@ -3128,20 +3279,37 @@ async function importBarofarm(id,files,logEl,onDone){
     try{
       const buf=await f.arrayBuffer();
       const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
-      let docs=[];
+      /* 한 파일에 주문별·상품별 시트가 같이 오면 같은 주문이 두 번 잡힙니다.
+         상품별(상품명이 있는) 시트가 있으면 그것만 읽습니다. */
+      const parsed=[];
       wb.SheetNames.forEach(sn=>{
         const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
-        try{docs=docs.concat(barofarmParse(rows,f.name));}catch(e){}
+        const head=(rows[0]||[]).map(x=>String(x||'').replace(/\s+/g,''));
+        try{
+          const got=barofarmParse(rows,f.name);
+          parsed.push({byItem:head.indexOf('상품명')>=0,docs:got,excluded:got.excluded||0});
+        }catch(e){}
       });
-      if(!docs.length&&!docs.excluded)throw new Error('읽을 주문이 없습니다');
+      const useItem=parsed.some(x=>x.byItem&&x.docs.length);
+      let flat=[],excl=0;
+      parsed.filter(x=>useItem?x.byItem:true).forEach(x=>{flat=flat.concat(x.docs);excl+=x.excluded;});
+      if(!flat.length&&!excl)throw new Error('읽을 주문이 없습니다');
+      const docs=bfMergeBySerial(flat);
+      let merged=0;
       docs.forEach(doc=>{
         const mk=doc.date?doc.date.slice(0,7):'기타';
         led.months[mk]=led.months[mk]||{docs:[]};
-        const exists=led.months[mk].docs.some(d=>d.serial&&d.serial===doc.serial);
-        if(exists){dup++;return;}
+        const cur=led.months[mk].docs.filter(d=>d.serial&&d.serial===doc.serial)[0];
+        if(cur){
+          if((cur.total||0)===doc.total){dup++;return;}
+          /* 같은 주문인데 금액이 다르면 새로 읽은 값으로 고칩니다 (상품이 빠져 있던 경우) */
+          cur.items=doc.items;cur.qty=doc.qty;cur.supply=doc.supply;
+          cur.vat=doc.vat;cur.total=doc.total;cur.isNew=true;merged++;return;
+        }
         doc.isNew=true;led.months[mk].docs.push(doc);ok++;
       });
-      log.push('✓ '+f.name+' — '+docs.length+'건 확인'+(docs.excluded?' (취소·반품 '+docs.excluded+'건 제외)':''));
+      log.push('✓ '+f.name+' — 주문 '+docs.length+'건'+
+        (merged?' (금액 보정 '+merged+'건)':'')+(excl?' (취소·반품 '+excl+'건 제외)':''));
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
   }
   Object.keys(led.months).forEach(m=>{led.months[m].docs.sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)));});
@@ -3152,6 +3320,413 @@ async function importBarofarm(id,files,logEl,onDone){
   showToast('바로팜 주문 '+ok+'건이 등록되었습니다');
   if(onDone)onDone();
 }
+/* ---------- 바로팜 정산서(XLSX) 대사 ----------
+   정산서는 바로팜이 "실제로 얼마를 보내주는지"를 적은 서류입니다.
+     주문금액 − 취소·반품 = 정산대상금액
+     정산대상금액 − 수수료(부가세 포함) = 지급금액   ← 통장에 찍히는 금액
+   그래서 정산서는 두 가지를 잡아줍니다.
+     ① 주문내역(원장)에 빠지거나 틀린 주문이 없는지
+     ② 매출과 입금이 다른 이유(수수료)를 숫자로 설명 */
+const BFS_ICON={ok:'✅',diff:'⚠',miss:'❓',extra:'➕'};
+const BFS_LABEL={ok:'일치',diff:'금액 다름',miss:'원장에 없음',extra:'정산서에 없음'};
+function bfSettleOf(){lib.bfSettle=lib.bfSettle||[];return lib.bfSettle;}
+
+/* 머리글은 '주문금액(줄바꿈)(판매금액-금융비용)' 처럼 옵니다 → 괄호 앞부분만 씁니다 */
+const bfKey=h=>String(h||'').replace(/\s+/g,'').replace(/[(（].*$/,'');
+function bfIx(head,names){
+  const k=head.map(bfKey);
+  for(let i=0;i<names.length;i++){const j=k.indexOf(names[i]);if(j>=0)return j;}
+  return -1;
+}
+const bfNum=v=>{const n=Number(String(v==null?'':v).replace(/[,\s]/g,''));return isFinite(n)?n:0;};
+const bfDate=v=>String(v==null?'':v).slice(0,10).replace(/[./]/g,'-');
+
+/* 정산서인지 판별 — 요약 시트에 정산번호와 지급금액이 있습니다 */
+function bfSettleSummary(rows){
+  if(!rows||rows.length<2)return null;
+  const h=rows[0];
+  const iNo=bfIx(h,['정산번호']),iPay=bfIx(h,['지급금액']);
+  if(iNo<0||iPay<0)return null;
+  const r=rows[1];
+  if(!String(r[iNo]||'').trim())return null;
+  return {
+    no:String(r[iNo]).trim(),
+    seller:String(r[bfIx(h,['도매상명'])]||'').trim(),
+    from:bfDate(r[bfIx(h,['정산시작일'])]),
+    to:bfDate(r[bfIx(h,['정산마감일'])]),
+    payout:bfNum(r[iPay]),
+    order:bfNum(r[bfIx(h,['주문금액'])]),
+    cancel:bfNum(r[bfIx(h,['취소반품금액'])]),
+    target:bfNum(r[bfIx(h,['정산대상금액'])]),
+    paid:bfNum(r[bfIx(h,['실결제금액'])]),
+    fee:bfNum(r[bfIx(h,['바로팜수수료'])]),
+    etc:bfNum(r[bfIx(h,['기타정산합계'])]),
+    point:bfNum(r[bfIx(h,['포인트사용금액'])]),
+    coupon:bfNum(r[bfIx(h,['쿠폰사용금액'])])
+  };
+}
+/* 상품별 시트가 있으면 수수료율까지 알 수 있어 주문별 수수료를 계산할 수 있습니다 */
+function bfSettleItems(rows){
+  if(!rows||rows.length<2)return null;
+  const h=rows[0];
+  const iNo=bfIx(h,['주문번호']),iNm=bfIx(h,['상품명']),iRate=bfIx(h,['수수료율']);
+  if(iNo<0||iNm<0||iRate<0)return null;
+  if(bfIx(h,['반품일'])>=0)return null;                 // 반품 시트는 따로 읽습니다
+  const c={dt:bfIx(h,['주문일시']),ph:bfIx(h,['약국명']),ph2:bfIx(h,['약사명']),
+    biz:bfIx(h,['사업자번호']),qty:bfIx(h,['주문수량']),unit:bfIx(h,['단가']),
+    amt:bfIx(h,['실주문금액','주문금액','판매금액']),cq:bfIx(h,['취소수량']),ca:bfIx(h,['취소금액'])};
+  if(c.amt<0)return null;
+  const out=[];
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];if(!r||!String(r[iNo]||'').trim())continue;
+    const amt=bfNum(r[c.amt]),rate=bfNum(r[iRate]);
+    out.push({serial:String(r[iNo]).trim(),date:bfDate(r[c.dt]),
+      store:String(r[c.ph]||'').trim(),pharm:String(r[c.ph2]||'').trim(),
+      biz:String(r[c.biz]||'').trim(),name:String(r[iNm]||'').trim(),
+      qty:bfNum(r[c.qty]),unit:bfNum(r[c.unit]),total:amt,
+      cancelQty:bfNum(r[c.cq]),cancel:bfNum(r[c.ca]),rate:rate,
+      /* 수수료는 부가세 포함입니다 (15% → 16.5%) */
+      fee:Math.round(amt*rate/100*1.1)});
+  }
+  return out.length?out:null;
+}
+/* 상품별 시트가 없을 때 쓰는 주문별 시트 */
+function bfSettleOrdersOnly(rows){
+  if(!rows||rows.length<2)return null;
+  const h=rows[0];
+  const iNo=bfIx(h,['주문번호']);
+  if(iNo<0||bfIx(h,['상품명'])>=0||bfIx(h,['반품일'])>=0)return null;
+  const c={dt:bfIx(h,['주문일시']),ph:bfIx(h,['약국명']),ph2:bfIx(h,['약사명']),
+    biz:bfIx(h,['사업자번호']),qty:bfIx(h,['주문수량']),
+    amt:bfIx(h,['주문금액','판매금액']),ca:bfIx(h,['취소금액'])};
+  if(c.amt<0)return null;
+  const out=[];
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];if(!r||!String(r[iNo]||'').trim())continue;
+    out.push({serial:String(r[iNo]).trim(),date:bfDate(r[c.dt]),
+      store:String(r[c.ph]||'').trim(),pharm:String(r[c.ph2]||'').trim(),
+      biz:String(r[c.biz]||'').trim(),qty:bfNum(r[c.qty]),
+      total:bfNum(r[c.amt]),cancel:bfNum(r[c.ca]),fee:0,items:[]});
+  }
+  return out.length?out:null;
+}
+function bfSettleReturns(rows){
+  if(!rows||rows.length<2)return [];
+  const h=rows[0];
+  if(bfIx(h,['반품일'])<0)return [];
+  const c={d:bfIx(h,['반품일']),no:bfIx(h,['주문번호']),ph:bfIx(h,['약국명']),
+    nm:bfIx(h,['상품명']),q:bfIx(h,['수량']),amt:bfIx(h,['반품금액','판매금액']),rate:bfIx(h,['수수료율'])};
+  const out=[];
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];if(!r||!String(r[c.d]||'').trim())continue;
+    out.push({date:bfDate(r[c.d]),serial:String(r[c.no]||'').trim(),
+      store:String(r[c.ph]||'').trim(),name:String(r[c.nm]||'').trim(),
+      qty:bfNum(r[c.q]),total:bfNum(r[c.amt]),rate:bfNum(r[c.rate])});
+  }
+  return out;
+}
+/* 상품 행들을 주문 하나로 묶습니다 */
+function bfGroupOrders(items){
+  const map={},seq=[];
+  items.forEach(it=>{
+    if(!map[it.serial]){
+      map[it.serial]={serial:it.serial,date:it.date,store:it.store,pharm:it.pharm,
+        biz:it.biz,qty:0,total:0,cancel:0,fee:0,items:[]};
+      seq.push(it.serial);
+    }
+    const o=map[it.serial];
+    o.qty+=it.qty;o.total+=it.total;o.cancel+=it.cancel;o.fee+=it.fee;
+    o.items.push({name:it.name,qty:it.qty,unit:it.unit,total:it.total,rate:it.rate,fee:it.fee});
+    if(!o.date&&it.date)o.date=it.date;
+    if(!o.store&&it.store)o.store=it.store;
+  });
+  return seq.map(s=>map[s]);
+}
+function bfParseSettle(wb,fileName){
+  const sheets=wb.SheetNames.map(sn=>XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}));
+  let sum=null,items=null,ordersOnly=null,rets=[];
+  sheets.forEach(rows=>{
+    if(!sum)sum=bfSettleSummary(rows);
+    if(!items)items=bfSettleItems(rows);
+    if(!ordersOnly)ordersOnly=bfSettleOrdersOnly(rows);
+    if(!rets.length)rets=bfSettleReturns(rows);
+  });
+  if(!sum)throw new Error('정산서 양식이 아닙니다 (요약 시트에 정산번호·지급금액 없음)');
+  const orders=items?bfGroupOrders(items):(ordersOnly||[]);
+  /* 상품별 수수료 합계를 정산서 수수료와 맞춥니다 (반올림 오차는 가장 큰 주문이 흡수) */
+  let feeSum=orders.reduce((a,o)=>a+(o.fee||0),0);
+  if(items&&sum.fee&&feeSum!==sum.fee&&orders.length){
+    const big=orders.slice().sort((a,b)=>b.total-a.total)[0];
+    big.fee+=sum.fee-feeSum;feeSum=sum.fee;
+  }
+  return {file:fileName,no:sum.no,seller:sum.seller,from:sum.from,to:sum.to,
+    payout:sum.payout,order:sum.order,cancel:sum.cancel,target:sum.target,paid:sum.paid,
+    fee:sum.fee,etc:sum.etc,point:sum.point,coupon:sum.coupon,
+    hasRate:!!items,feeSum:feeSum,orders:orders,returns:rets,at:new Date().toISOString()};
+}
+/* 정산서 자체의 앞뒤가 맞는지 검산 */
+function bfSettleAudit(s){
+  const w=[];
+  if(s.target&&s.order-s.cancel!==s.target)
+    w.push('주문 '+fmt(s.order)+' − 취소·반품 '+fmt(s.cancel)+' ≠ 정산대상 '+fmt(s.target));
+  if(s.payout&&s.target&&s.target-s.fee+(s.etc||0)!==s.payout)
+    w.push('정산대상 '+fmt(s.target)+' − 수수료 '+fmt(s.fee)+
+      ((s.etc||0)?' + 기타 '+fmt(s.etc):'')+' ≠ 지급금액 '+fmt(s.payout));
+  const os=s.orders.reduce((a,o)=>a+o.total,0);
+  if(s.order&&os&&os!==s.order)
+    w.push('주문 상세 합계 '+fmt(os)+' ≠ 요약 주문금액 '+fmt(s.order));
+  if(s.hasRate&&s.fee&&s.feeSum!==s.fee)
+    w.push('상품별 수수료 합계 '+fmt(s.feeSum)+' ≠ 요약 수수료 '+fmt(s.fee));
+  return w;
+}
+/* 정산서 주문 ↔ 원장(주문내역) 대사 */
+function bfSettleMatch(s){
+  const led=ledgerOf('barofarm');
+  const rows=s.orders.map(o=>{
+    const hit=bfFindOrder(o.serial);
+    const lt=hit?(hit.doc.total||0):null;
+    return {serial:o.serial,date:o.date,store:o.store,pharm:o.pharm,biz:o.biz,
+      qty:o.qty,total:o.total,cancel:o.cancel,fee:o.fee,items:o.items,
+      ledTotal:lt,ledMk:hit?hit.mk:null,ledBranch:hit?hit.doc.branch:null,
+      status:!hit?'miss':(lt===o.total?'ok':'diff')};
+  });
+  /* 정산 기간 안의 원장 주문인데 정산서에 없는 건 */
+  const seen={};s.orders.forEach(o=>{seen[o.serial]=1;});
+  Object.keys(led.months||{}).forEach(mk=>{
+    (led.months[mk].docs||[]).forEach(d=>{
+      const dt=String(d.date||'');
+      if(!dt||dt<s.from||dt>s.to)return;
+      if(seen[String(d.serial||'')])return;
+      rows.push({serial:String(d.serial||''),date:dt,store:d.branch||'',qty:d.qty||0,
+        total:null,cancel:0,fee:0,items:[],ledTotal:d.total||0,ledMk:mk,
+        ledBranch:d.branch||'',status:'extra'});
+    });
+  });
+  return rows;
+}
+/* 원장 금액을 정산서 기준으로 맞춥니다 (정산서가 바로팜의 확정 금액입니다) */
+function bfSettleFix(s){
+  const rows=bfSettleMatch(s).filter(r=>r.status==='diff'||r.status==='miss');
+  if(!rows.length){showToast('맞출 것이 없습니다');return;}
+  const NL=String.fromCharCode(10);
+  const msg=rows.map(r=>'· '+r.serial+' '+(r.store||'')+' — '+
+    (r.status==='miss'?'원장에 없음 → '+fmt(r.total)+'원 추가'
+     :fmt(r.ledTotal)+' → '+fmt(r.total)+'원')).join(NL);
+  if(!confirm('주문내역 '+rows.length+'건을 정산서 금액으로 맞출까요?'+NL+NL+msg))return;
+  const led=ledgerOf('barofarm');
+  let fixed=0,added=0;
+  rows.forEach(r=>{
+    const mk=r.date?r.date.slice(0,7):'기타';
+    led.months[mk]=led.months[mk]||{docs:[]};
+    const sup=Math.round(r.total/1.1),vt=r.total-sup;
+    const items=(r.items||[]).map(it=>{
+      const s2=Math.round(it.total/1.1);
+      return {name:it.name,qty:it.qty,unit:it.unit,supply:s2,vat:it.total-s2};
+    });
+    if(r.status==='miss'){
+      led.months[mk].docs.push({file:'정산서 '+s.no,serial:r.serial,date:r.date,
+        branch:r.store||'미상',status:'',items:items,qty:r.qty,supply:sup,vat:vt,
+        total:r.total,src:'barofarm',isNew:true,fixedBy:'정산서 '+s.no,
+        meta:{약사:r.pharm||'',사업자번호:r.biz||''}});
+      added++;
+    }else{
+      const hit=bfFindOrder(r.serial);
+      if(!hit)return;
+      const d=hit.doc;
+      d.total=r.total;d.supply=sup;d.vat=vt;d.qty=r.qty;
+      if(items.length)d.items=items;
+      d.fixedBy='정산서 '+s.no;fixed++;
+    }
+  });
+  Object.keys(led.months).forEach(m=>{
+    led.months[m].docs.sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)));});
+  persistLib();
+  showToast('주문내역 보정 완료 — 수정 '+fixed+'건'+(added?' · 추가 '+added+'건':''));
+  ledgerRefresh();
+}
+async function importBarofarmSettle(files,logEl,onDone){
+  if(!xlsxReady()){showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)');return;}
+  const list=bfSettleOf();
+  const arr=[].slice.call(files).filter(f=>/\.(xlsx|xls)$/i.test(f.name));
+  if(!arr.length){showToast('엑셀(.xlsx) 파일이 없습니다');return;}
+  const NL=String.fromCharCode(10);
+  logEl.classList.add('show');logEl.textContent='처리 중…';
+  const log=[];let ok=0,dup=0,fail=0;
+  for(const f of arr){
+    try{
+      const buf=await f.arrayBuffer();
+      const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
+      const s=bfParseSettle(wb,f.name);
+      const i=list.findIndex(x=>x.no===s.no);
+      if(i>=0){list[i]=s;dup++;}else{list.unshift(s);ok++;}
+      const w=bfSettleAudit(s);
+      log.push((w.length?'⚠ ':'✓ ')+f.name+' — 정산 '+s.no+' ('+s.from+'~'+s.to+') · 주문 '+
+        fmt(s.order)+' · 수수료 '+fmt(s.fee)+' · 지급 '+fmt(s.payout)+
+        (w.length?NL+'   '+w.join(NL+'   '):''));
+    }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
+  }
+  list.sort((a,b)=>String(b.from||'').localeCompare(String(a.from||'')));
+  persistLib();
+  logEl.textContent='완료 — 등록 '+ok+'건'+(dup?' · 갱신 '+dup+'건':'')+(fail?' · 실패 '+fail+'건':'')+
+    NL+log.join(NL);
+  showToast('정산서 '+(ok+dup)+'건을 읽었습니다');
+  if(onDone)onDone();
+}
+/* 월별(주문일 기준) 수수료 — 시트가 "매출 − 수수료 = 입금" 을 맞추는 데 씁니다 */
+function bfFeeByMonth(){
+  const out={};
+  bfSettleOf().forEach(s=>{
+    (s.orders||[]).forEach(o=>{
+      const mk=String(o.date||'').slice(0,7);
+      if(!mk)return;
+      out[mk]=out[mk]||{sale:0,fee:0,payout:0,cnt:0,nos:{}};
+      out[mk].sale+=o.total||0;
+      out[mk].fee+=o.fee||0;
+      out[mk].payout+=(o.total||0)-(o.fee||0);
+      out[mk].cnt++;
+      out[mk].nos[s.no]=1;
+    });
+  });
+  Object.keys(out).forEach(mk=>{out[mk].settles=Object.keys(out[mk].nos);delete out[mk].nos;});
+  return out;
+}
+function buildBarofarmSettle(){
+  const list=bfSettleOf();
+  const NL=String.fromCharCode(10);
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');
+  hs.textContent='💳 정산서 대사'+(list.length?'  ('+list.length+'건)':'');
+  h.appendChild(hs);
+  if(list.length){
+    const tools=document.createElement('div');tools.className='sh-tools';
+    const cb=document.createElement('button');cb.className='icon-btn';cb.textContent='정산 기록 비우기';
+    cb.addEventListener('click',()=>{
+      if(!confirm('정산 기록 '+list.length+'건을 지울까요?'+NL+'주문내역(매출)에는 영향이 없습니다.'))return;
+      lib.bfSettle=[];persistLib();showToast('정산 기록을 비웠습니다');ledgerRefresh();});
+    tools.appendChild(cb);h.appendChild(tools);
+  }
+  wrap.appendChild(h);
+
+  const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+  nt.innerHTML='바로팜은 <b>매출에서 수수료를 떼고 입금</b>합니다. 정산서를 올리면 '+
+    '<b>주문금액 − 수수료 = 지급금액</b>이 맞는지 검산하고, 주문내역에 빠지거나 틀린 주문이 없는지 대사합니다.';
+  wrap.appendChild(nt);
+
+  const uz=document.createElement('div');uz.className='up-zone';
+  const t1=document.createElement('div');t1.className='uz-title';t1.textContent='💳 바로팜 정산서 올리기';
+  const t2=document.createElement('div');t2.className='uz-desc';
+  t2.innerHTML='파트너센터 → 정산에서 내려받은 <b>정산 엑셀(.xlsx)</b>을 올리세요. 여러 개·폴더째 올려도 됩니다.<br>'+
+    '<span style="color:var(--warn)">매출로는 등록하지 않습니다</span> — 같은 주문이 주문내역에 이미 있습니다.';
+  uz.append(t1,t2);
+  const btns=document.createElement('div');btns.className='up-btns';
+  const fi=document.createElement('input');fi.type='file';fi.accept='.xlsx,.xls';fi.multiple=true;fi.hidden=true;
+  const di=document.createElement('input');di.type='file';di.accept='.xlsx,.xls';di.multiple=true;di.hidden=true;
+  di.setAttribute('webkitdirectory','');di.setAttribute('directory','');
+  const bF=document.createElement('button');bF.className='up-btn';bF.textContent='📁 폴더 올리기';
+  const bP=document.createElement('button');bP.className='up-btn ghost';bP.textContent='엑셀 파일 선택';
+  btns.append(bF,bP);uz.append(btns,fi,di);
+  const log=document.createElement('div');log.className='up-log';uz.appendChild(log);
+  bF.addEventListener('click',()=>di.click());
+  bP.addEventListener('click',()=>fi.click());
+  fi.addEventListener('change',e=>importBarofarmSettle(e.target.files,log,ledgerRefresh));
+  di.addEventListener('change',e=>importBarofarmSettle(e.target.files,log,ledgerRefresh));
+  uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('drag');});
+  uz.addEventListener('dragleave',()=>uz.classList.remove('drag'));
+  uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');importBarofarmSettle(e.dataTransfer.files,log,ledgerRefresh);});
+  wrap.appendChild(uz);
+  if(!list.length)return wrap;
+
+  list.forEach(s=>{
+    const m=bfSettleMatch(s);
+    const bad=m.filter(r=>r.status!=='ok');
+    const fixable=m.filter(r=>r.status==='diff'||r.status==='miss');
+    const warn=bfSettleAudit(s);
+    const pnl=document.createElement('div');
+    pnl.style.cssText='border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;';
+
+    const top=document.createElement('div');
+    top.style.cssText='display:flex;flex-wrap:wrap;gap:14px;align-items:baseline;justify-content:space-between;';
+    top.innerHTML='<div><b style="font-size:15px;">'+s.from+' ~ '+s.to+'</b>'+
+      '<span style="color:var(--ink-soft);margin-left:10px;font-size:12px;">정산번호 '+s.no+' · '+s.file+'</span></div>'+
+      '<div style="font-size:13px;">주문 <b>'+fmt(s.order)+'</b>'+
+        (s.cancel?' · 취소·반품 <b style="color:var(--warn);">'+fmt(s.cancel)+'</b>':'')+
+        ' · 수수료 <b style="color:var(--warn);">'+fmt(s.fee)+'</b>'+
+        (s.order?' <span style="color:var(--ink-soft);">('+(Math.round(s.fee/s.order*1000)/10)+'%)</span>':'')+
+        ' · 지급 <b style="color:#2E7D32;">'+fmt(s.payout)+'</b></div>';
+    pnl.appendChild(top);
+
+    const st=document.createElement('div');st.style.cssText='margin-top:8px;font-size:13px;font-weight:700;';
+    st.innerHTML=(bad.length||warn.length)
+      ? '<span style="color:var(--warn);">⚠ 확인 필요 — '+
+        (bad.length?'주문 '+bad.length+'건':'')+(bad.length&&warn.length?' · ':'')+
+        (warn.length?'검산 '+warn.length+'건':'')+'</span>'
+      : '<span style="color:#2E7D32;">✅ 주문 '+m.length+'건 · 검산 모두 일치</span>';
+    pnl.appendChild(st);
+
+    if(warn.length){
+      const wv=document.createElement('div');wv.className='hint';wv.style.cssText='margin-top:6px;color:var(--warn);';
+      wv.innerHTML=warn.map(x=>'· '+x).join('<br>');pnl.appendChild(wv);
+    }
+
+    const t=document.createElement('table');t.className='led-table';t.style.marginTop='10px';
+    t.innerHTML='<thead><tr><th>판정</th><th>주문일</th><th>주문번호</th><th>약국</th>'+
+      '<th style="text-align:right;">정산서</th><th style="text-align:right;">주문내역</th>'+
+      '<th style="text-align:right;">차액</th><th style="text-align:right;">수수료</th>'+
+      '<th style="text-align:right;">지급액</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    m.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(r=>{
+      const tr=document.createElement('tr');
+      const d=(r.total!=null&&r.ledTotal!=null)?(r.total-r.ledTotal):null;
+      const col=r.status==='ok'?'#2E7D32':(r.status==='extra'?'var(--ink-soft)':'var(--warn)');
+      const names=(r.items||[]).map(i=>i.name).join(', ');
+      tr.innerHTML='<td style="white-space:nowrap;color:'+col+';font-weight:800;">'+BFS_ICON[r.status]+' '+BFS_LABEL[r.status]+'</td>'+
+        '<td style="white-space:nowrap;">'+(r.date||'-')+'</td>'+
+        '<td style="white-space:nowrap;">'+(r.serial||'-')+'</td>'+
+        '<td>'+(r.store||r.ledBranch||'-')+(names?'<div style="color:var(--ink-soft);font-size:11px;">'+names+'</div>':'')+'</td>'+
+        '<td style="text-align:right;">'+(r.total==null?'-':fmt(r.total))+'</td>'+
+        '<td style="text-align:right;">'+(r.ledTotal==null?'-':fmt(r.ledTotal))+'</td>'+
+        '<td style="text-align:right;'+(d?'color:var(--warn);font-weight:800;':'')+'">'+(d?fmt(d):(d===0?'0':'-'))+'</td>'+
+        '<td style="text-align:right;color:var(--warn);">'+(r.fee?fmt(r.fee):'-')+'</td>'+
+        '<td style="text-align:right;">'+(r.total!=null?fmt(r.total-(r.fee||0)):'-')+'</td>';
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);pnl.appendChild(t);
+
+    if(s.returns&&s.returns.length){
+      const rh=document.createElement('div');rh.style.cssText='margin-top:12px;font-weight:700;font-size:13px;';
+      rh.textContent='↩ 반품 '+s.returns.length+'건';pnl.appendChild(rh);
+      const rt=document.createElement('table');rt.className='led-table';
+      rt.innerHTML='<thead><tr><th>반품일</th><th>주문번호</th><th>약국</th><th>상품명</th>'+
+        '<th style="text-align:right;">수량</th><th style="text-align:right;">반품금액</th></tr></thead>';
+      const rb=document.createElement('tbody');
+      s.returns.forEach(r=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML='<td>'+(r.date||'-')+'</td><td>'+(r.serial||'-')+'</td><td>'+(r.store||'-')+'</td>'+
+          '<td>'+(r.name||'-')+'</td><td style="text-align:right;">'+fmt(r.qty)+'</td>'+
+          '<td style="text-align:right;color:var(--warn);">'+fmt(r.total)+'</td>';
+        rb.appendChild(tr);
+      });
+      rt.appendChild(rb);pnl.appendChild(rt);
+    }
+
+    const act=document.createElement('div');act.style.cssText='margin-top:10px;display:flex;gap:8px;';
+    if(fixable.length){
+      const fx=document.createElement('button');fx.className='up-btn';
+      fx.textContent='🔧 주문내역을 정산서 금액으로 맞추기 ('+fixable.length+'건)';
+      fx.addEventListener('click',()=>bfSettleFix(s));
+      act.appendChild(fx);
+    }
+    const del=document.createElement('button');del.className='icon-btn';del.textContent='이 정산 기록 삭제';
+    del.addEventListener('click',()=>{
+      const i=bfSettleOf().indexOf(s);if(i>=0)bfSettleOf().splice(i,1);
+      persistLib();ledgerRefresh();});
+    act.appendChild(del);pnl.appendChild(act);
+    wrap.appendChild(pnl);
+  });
+  return wrap;
+}
+
 /* ---------- 바로팜 거래명세서 대조 ----------
    바로팜 명세서는 주문내역 엑셀과 "같은 주문"을 담고 있습니다.
    그래서 원장(매출)에 넣으면 같은 매출이 두 번 잡힙니다.
