@@ -2451,6 +2451,17 @@ function depChannelOf(row){
   for(const m of DEP_MATCH) if(m.re.test(t)) return m.id;
   return null;
 }
+/* 분할입금은 같은 값이 여러 번 나온다 → 중복은 접고 건수만 덧붙인다
+   (6건 분할입금이 같은 날·같은 입금자면 6줄이 아니라 「날짜 ×6」 한 줄) */
+function depCell(vals){
+  const list=vals.map(v=>String(v==null?'':v).trim()).filter(Boolean);
+  if(!list.length)return '-';
+  const seen=[],cnt={};
+  list.forEach(v=>{if(cnt[v]===undefined){cnt[v]=0;seen.push(v);}cnt[v]++;});
+  const parts=seen.slice(0,3).map(v=>v+(cnt[v]>1?' <span style="color:var(--ink-mute);font-weight:600;">×'+cnt[v]+'</span>':''));
+  if(seen.length>3)parts.push('<span style="color:var(--ink-mute);">외 '+(seen.length-3)+'건</span>');
+  return parts.join('<br>');
+}
 /* 귀속월 — 메모의 'N월'을 우선, 없으면 입금일 전월 */
 function depMonthOf(row){
   const y0=parseInt(row.date.slice(0,4),10), m0=parseInt(row.date.slice(5,7),10);
@@ -2548,9 +2559,9 @@ function buildDeposits(id, opts){
       '<td style="text-align:right;'+(paid?'':'color:var(--ink-soft);')+'">'+fmt(paid)+'</td>'+
       '<td style="text-align:right;'+(!sale?'color:var(--ink-soft);':(ar>0?'color:#C62828;font-weight:800;':(ar<0?'color:var(--warn);font-weight:700;':'color:var(--ink-soft);')))+'">'+
         (!sale?'입금만':(ar===0?'—':fmt(ar)))+'</td>'+
-      '<td style="white-space:nowrap;font-size:12px;">'+(ds.map(d=>d.date).join('<br>')||'-')+'</td>'+
-      '<td style="font-size:12px;">'+(ds.map(d=>d.payer).join('<br>')||'-')+'</td>'+
-      '<td style="font-size:11.5px;color:var(--ink-soft);">'+(ds.map(d=>bankLabel(d.acct)).join('<br>')||'-')+'</td>';
+      '<td style="white-space:nowrap;font-size:12px;">'+depCell(ds.map(d=>d.date))+'</td>'+
+      '<td style="font-size:12px;">'+depCell(ds.map(d=>d.payer))+'</td>'+
+      '<td style="font-size:11.5px;color:var(--ink-soft);">'+depCell(ds.map(d=>bankLabel(d.acct)))+'</td>';
     tb.appendChild(tr);
   });
   t.appendChild(tb);wrap.appendChild(t);
@@ -5425,7 +5436,9 @@ function ledgerSummary(id,mk){
   const led=lib.ledger&&lib.ledger[id];
   if(!led||!led.months)return{total:0,qty:0,docs:0,months:0,latest:null};
   const keys=Object.keys(led.months).sort();
-  const use=led.months[mk]?mk:(keys.length?keys[keys.length-1]:null);
+  /* '기타'(월 인식 실패분)는 최근 월 후보에서 뺀다 — 넣으면 정렬상 맨 뒤라 최신을 가린다 */
+  const real=keys.filter(k=>/^\d{4}-\d{2}$/.test(k));
+  const use=led.months[mk]?mk:(real.length?real[real.length-1]:(keys.length?keys[keys.length-1]:null));
   if(!use)return{total:0,qty:0,docs:0,months:0,latest:null};
   const ag=aggLedger(led,use);
   return{total:ag.total,qty:ag.qty,docs:ag.docs.length,months:keys.length,latest:use};
@@ -5472,7 +5485,7 @@ function renderHome(){
       if(r.hasTax&&r.diffTotal!==0)
         alerts.push({t:'⚠ '+label+' '+mkLabel(m)+' 대사 불일치 '+fmt(Math.abs(r.diffTotal))+'원',
           s:(r.rows.filter(x=>x.diff!==0).map(x=>x.branch).join(', ')||'세부 확인 필요'),view,kind:'warn'});
-      else if(!r.hasTax&&m<mk)
+      else if(!r.hasTax&&m<mk&&id!=='barofarm')   // 바로팜은 수수료에만 계산서가 발행됨 (마감 체크와 동일 규칙)
         alerts.push({t:'📄 '+label+' '+mkLabel(m)+' 세금계산서 미등록',s:'발행 후 등록하면 자동 대사됩니다',view,kind:'info'});
     });
   });
