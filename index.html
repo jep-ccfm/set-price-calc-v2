@@ -1974,7 +1974,9 @@ function loadCfgToCalc(cfg){
 /* ============================================================
    거래명세서(PDF) 파싱 · 월별 원장 · 개인약국
    ============================================================ */
-const SHEET_URL='https://docs.google.com/spreadsheets/d/1oJL1Lt1sXQK0U7JDmqaRrtjc3gtlmNZ7OCRg8t_m0MI/edit?gid=1438026459#gid=1438026459';
+/* [브.사] 레디영 매출 시트 (2026-09 신규본).
+   이전에는 구 성과시트(1oJL1Lt1…)를 가리키고 있었습니다. */
+const SHEET_URL='https://docs.google.com/spreadsheets/d/1R7KZpSo90SMAPjq5U-gu4XvxvJKne7snky1xOMdZMYw/edit';
 const PHARMS=[{key:'ph_sinsa',id:'sinsa',name:'신사 타워약국'},{key:'ph_apgujeong',id:'apgujeong',name:'압구정 생생 온누리약국'}];
 const pharmMeta=v=>PHARMS.find(p=>p.key===v);
 
