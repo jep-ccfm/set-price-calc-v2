@@ -5553,46 +5553,54 @@ async function docReadText(file,onStep){
   return (r&&r.data&&r.data.text)||'';
 }
 
-/* 라벨은 '상    호' 처럼 글자 사이가 벌어져 있어 사이 공백을 허용합니다 */
-function docLab_(w){ return w.split('').join('\\s*'); }
-function docPick_(t,word){
-  const m=t.match(new RegExp(docLab_(word)+'\\s*[:：]\\s*([^\\n]+)'));
-  return m?m[1].trim():'';
-}
-function docName_(s){ return String(s||'').replace(/\s+/g,''); }   // '이 상 곤' → '이상곤'
-function docYmd_(t,word){
-  const m=t.match(new RegExp(docLab_(word)+'\\s*[:：]?\\s*(\\d{4})\\s*[.년]\\s*(\\d{1,2})\\s*[.월]\\s*(\\d{1,2})'));
-  if(!m)return '';
-  return m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
-}
-/* 읽은 글자에서 가입 심사에 넣을 항목을 뽑습니다 */
+/* OCR 은 라벨을 자주 틀립니다 (상→a, 성→El, 사업자등록증→oc To).
+   그래서 라벨을 믿지 않고 값의 모양으로 찾습니다.
+   실제로 읽힌 예:
+     등록번호 : 578-09-02222
+     a       호 ： 신사스퀘어약국
+     El    명 : 이상곤      생 년 뭘 일 : 1988 년 12 월 09 일
+     사업징소재지   서물특별시 강낭구 강남대로 852 ...     ← 콜론이 없기도 합니다 */
+function docP2_(n){ return String(n).padStart(2,'0'); }
 function parseDocFields(text){
   const t=String(text||'').replace(/\r/g,'');
-  const flat=t.replace(/\s+/g,'');
+  const lines=t.split('\n').map(x=>x.trim()).filter(Boolean);
   const out={};
-  const isBiz=/사업자등록증/.test(flat);
-  const isLic=/약사면허증/.test(flat);
 
-  /* 사업자등록번호 — 숫자라 가장 정확하게 읽힙니다 */
-  const bn=t.match(/(\d{3})\s*-\s*(\d{2})\s*-\s*(\d{5})/);
-  if(bn) out.biz=bn[1]+'-'+bn[2]+'-'+bn[3];
+  /* 사업자등록번호 — 숫자라 가장 정확합니다 */
+  let m=t.match(/(\d{3})\s*-\s*(\d{2})\s*-\s*(\d{5})/);
+  if(m) out.biz=m[1]+'-'+m[2]+'-'+m[3];
 
-  if(isBiz){
-    let v=docPick_(t,'상호');
-    if(v) out.name=docName_(v.split(/\s{2,}/)[0]);
-    v=docPick_(t,'성명');
-    if(v) out.owner=docName_(v.split(/\s{2,}|생\s*년/)[0]);
-    v=docPick_(t,'사업장소재지')||docPick_(t,'사업장');
-    if(v) out.addr=v.replace(/\s{2,}/g,' ').trim();
+  /* 약사 면허번호 — '제 64283 호' (네 자리 이상만) */
+  m=t.match(/제\s*(\d{4,8})\s*호/);
+  if(m) out.license=m[1];
+
+  /* 생년월일 — 같은 줄에 '생'이 있는 날짜를 씁니다.
+     개업연월일과 헷갈리지 않게 하려는 것입니다. ('월'이 '뭘'로 읽히기도 합니다) */
+  const DATE=/(\d{4})\s*년\s*(\d{1,2})\s*[월뭘]\s*(\d{1,2})\s*일/;
+  for(const ln of lines){
+    if(ln.indexOf('생')<0) continue;
+    const d=ln.match(DATE);
+    if(d){ out.birth=d[1]+'-'+docP2_(d[2])+'-'+docP2_(d[3]); break; }
   }
-  if(isLic){
-    const l=t.match(/제\s*(\d{3,8})\s*호/);
-    if(l) out.license=l[1];
-    const v=docPick_(t,'성명');
-    if(v) out.owner=docName_(v.split(/\s{2,}|생\s*년/)[0]);
+
+  /* 상호 — '…호 :' 뒤의 값. 등록번호 줄과 겹치지 않게 숫자로 시작하면 버립니다 */
+  for(const ln of lines){
+    const h=ln.match(/호\s*[:：]\s*([^\d\s][^\n]*)/);
+    if(!h) continue;
+    const v=h[1].split(/\s{2,}/)[0].trim();
+    if(v && /[가-힣]/.test(v)){ out.name=v; break; }
   }
-  const b=docYmd_(t,'생년월일');
-  if(b) out.birth=b;
+
+  /* 성명 — '…명 :' 뒤의 한글 2~5자 */
+  m=t.match(/명\s*[:：]\s*([가-힣]{2,5})/);
+  if(m) out.owner=m[1];
+
+  /* 사업장 주소 — 라벨이 깨져도 '소재지' 는 잘 읽힙니다. 콜론은 없을 수 있습니다 */
+  m=t.match(/소\s*재\s*지\s*[:：]?\s*(.+)/);
+  if(m){
+    const v=m[1].replace(/\s{2,}/g,' ').trim();
+    if(v.length>5) out.addr=v;
+  }
   return out;
 }
 /* 모달의 빈 칸만 채웁니다. 채운 항목 이름을 돌려줍니다. */
