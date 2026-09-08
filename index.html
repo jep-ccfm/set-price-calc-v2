@@ -5500,14 +5500,26 @@ function loadTesseract(){
   });
   return _tessLoad;
 }
-/* 파일 → 글자. PDF 에 글자층이 있으면 그걸 쓰고, 없으면 OCR 합니다. */
+/* PDF 한 장을 그림(캔버스)으로 그립니다. 스캔 PDF 를 OCR 하려면 필요합니다.
+   글씨가 작아 그냥 읽히면 잘 틀려서 2배로 키워 그립니다. */
+async function pdfPageToCanvas(page,scale){
+  const vp=page.getViewport({scale:scale||2});
+  const cv=document.createElement('canvas');
+  cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
+  await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+  return cv;
+}
+/* 파일 → 글자.
+     PDF 에 글자층이 있으면  → 그대로 뽑습니다 (빠르고 정확)
+     스캔 PDF · 사진        → OCR 로 읽습니다 */
 async function docReadText(file,onStep){
   const isPdf=/\.pdf$/i.test(file.name)||file.type==='application/pdf';
+  let pdf=null;
   if(isPdf&&typeof pdfjsLib!=='undefined'){
     try{
       if(onStep)onStep('PDF 읽는 중…');
       pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+      pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
       let t='';
       for(let i=1;i<=pdf.numPages;i++){
         const c=await (await pdf.getPage(i)).getTextContent();
@@ -5515,13 +5527,29 @@ async function docReadText(file,onStep){
       }
       /* 글자가 충분히 나오면 그대로 씁니다 (홈택스 발급본이 여기 해당) */
       if(t.replace(/\s/g,'').length>30) return t;
-    }catch(e){}
+    }catch(e){ pdf=null; }
+  }
+  await loadTesseract();
+  const step=(pre,m)=>{
+    if(onStep&&m&&m.status==='recognizing text')
+      onStep(pre+'글자 읽는 중… '+Math.round((m.progress||0)*100)+'%');
+  };
+  if(pdf){
+    /* 스캔 PDF — 페이지를 그림으로 바꿔 읽습니다 (최대 3장) */
+    const n=Math.min(pdf.numPages,3);
+    let out='';
+    for(let i=1;i<=n;i++){
+      if(onStep)onStep('스캔 PDF '+i+'/'+n+'쪽 그리는 중…');
+      const cv=await pdfPageToCanvas(await pdf.getPage(i),2);
+      const pre=(n>1?i+'/'+n+'쪽 ':'');
+      if(onStep)onStep(pre+'글자 읽는 중… (처음 한 번은 20초쯤 걸립니다)');
+      const r=await Tesseract.recognize(cv,'kor+eng',{logger:m=>step(pre,m)});
+      out+=((r&&r.data&&r.data.text)||'')+'\n';
+    }
+    return out;
   }
   if(onStep)onStep('글자 읽는 중… (처음 한 번은 20초쯤 걸립니다)');
-  await loadTesseract();
-  const r=await Tesseract.recognize(file,'kor+eng',{logger:m=>{
-    if(onStep&&m.status==='recognizing text') onStep('글자 읽는 중… '+Math.round((m.progress||0)*100)+'%');
-  }});
+  const r=await Tesseract.recognize(file,'kor+eng',{logger:m=>step('',m)});
   return (r&&r.data&&r.data.text)||'';
 }
 
@@ -5598,7 +5626,8 @@ function openApplicantModal(appId){
   v('apNote',ex&&ex.note);v('apDate',ex?ex.date:new Date().toISOString().slice(0,10));
   renderApFiles();
   const dr=document.getElementById('apDocRead');
-  if(dr) dr.innerHTML='📎 <b>사업자등록증·약사면허증</b>을 첨부하면 사업자등록번호·상호·대표자·생년월일·주소를 읽어 빈 칸을 채웁니다.';
+  if(dr) dr.innerHTML='📎 <b>사업자등록증·약사면허증</b>을 첨부하면 사업자등록번호·상호·대표자·생년월일·주소를 읽어 빈 칸을 채웁니다. '+
+    '<b>PDF·사진(JPG/PNG)</b> 둘 다 됩니다.';
   document.getElementById('applicantModal').hidden=false;
 }
 function renderApFiles(){
