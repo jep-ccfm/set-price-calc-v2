@@ -1774,6 +1774,7 @@ function renderCompany(k){
     box.appendChild(buildPriceTable('ready',false));
     box.appendChild(buildTaxDocs('ready'));
     box.appendChild(buildEntrySync());
+    box.appendChild(buildOrders('ready','ready'));
     box.appendChild(buildReadyBranch());
     box.appendChild(buildDeposits('ready'));
     box.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
@@ -3629,6 +3630,7 @@ function renderChannel(view){
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
     box.appendChild(buildEntrySync());
+    box.appendChild(buildOrders(meta.id,view));
     box.appendChild(buildBarofarmSettle());
     box.appendChild(buildBarofarmVerify());
     box.appendChild(buildChannelGeo('barofarm','바로팜'));
@@ -6715,7 +6717,9 @@ function buildPartners(id,label){
     ? (ng?'<span style="color:var(--warn);">2km 이내 '+ng+'곳</span> · ':'')
       +(un?'<span style="color:var(--ink-mute);">미판정 '+un+'곳</span>':'<span style="color:var(--good);">✓ 전부 거래 가능</span>')
     : '<span style="color:var(--ink-mute);">등록 없음</span>';
-  const fp=foldPanel('🏥 거래처 관리 ('+real.length+')',sum,'setPriceCalc:ptOpen:'+id,false);
+  /* 자사몰은 약국이 직접 입점을 신청하는 구조라 이름을 달리 부릅니다 */
+  const ptTitle=(id==='pharmmall')?'🏥 신규 입점요청 (':'🏥 거래처 관리 (';
+  const fp=foldPanel(ptTitle+real.length+')',sum,'setPriceCalc:ptOpen:'+id,false);
   const wrap=fp.body;
 
   const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
