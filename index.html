@@ -1337,6 +1337,7 @@
       <div><label>생년월일</label><input type="text" id="apBirth" placeholder="예: 1988-12-09"></div>
       <div class="fg-full"><label>사업장 주소 (사업자등록증 기준)</label><input type="text" id="apAddr" placeholder="예: 서울특별시 강남구 도산대로 107"></div>
       <div class="fg-full"><label>비고</label><input type="text" id="apNote"></div>
+      <div class="fg-full"><div id="apDocRead" class="hint" style="margin:0;"></div></div>
     </div>
     <label class="flabel">제출 서류</label>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -5482,6 +5483,104 @@ function openApplicantDetail(a){
   });
 }
 
+/* ---------- 서류에서 정보 읽기 (사업자등록증 · 약사면허증) ----------
+   · PDF 는 글자를 그대로 뽑고, 사진·스캔은 브라우저에서 OCR 로 읽습니다.
+   · 읽은 값은 빈 칸만 채웁니다 — 직접 적어둔 값은 건드리지 않습니다.
+   · OCR 은 틀릴 수 있습니다. 채워진 값은 반드시 눈으로 확인하고 저장하세요. */
+const TESS_JS='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let _tessLoad=null;
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  if(_tessLoad) return _tessLoad;
+  _tessLoad=new Promise((ok,ng)=>{
+    const s=document.createElement('script');s.src=TESS_JS;
+    s.onload=()=>ok();
+    s.onerror=()=>{_tessLoad=null;ng(new Error('OCR 라이브러리를 못 불러왔습니다 (인터넷 확인)'));};
+    document.head.appendChild(s);
+  });
+  return _tessLoad;
+}
+/* 파일 → 글자. PDF 에 글자층이 있으면 그걸 쓰고, 없으면 OCR 합니다. */
+async function docReadText(file,onStep){
+  const isPdf=/\.pdf$/i.test(file.name)||file.type==='application/pdf';
+  if(isPdf&&typeof pdfjsLib!=='undefined'){
+    try{
+      if(onStep)onStep('PDF 읽는 중…');
+      pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+      let t='';
+      for(let i=1;i<=pdf.numPages;i++){
+        const c=await (await pdf.getPage(i)).getTextContent();
+        t+=pdfLines(c).join('\n')+'\n';
+      }
+      /* 글자가 충분히 나오면 그대로 씁니다 (홈택스 발급본이 여기 해당) */
+      if(t.replace(/\s/g,'').length>30) return t;
+    }catch(e){}
+  }
+  if(onStep)onStep('글자 읽는 중… (처음 한 번은 20초쯤 걸립니다)');
+  await loadTesseract();
+  const r=await Tesseract.recognize(file,'kor+eng',{logger:m=>{
+    if(onStep&&m.status==='recognizing text') onStep('글자 읽는 중… '+Math.round((m.progress||0)*100)+'%');
+  }});
+  return (r&&r.data&&r.data.text)||'';
+}
+
+/* 라벨은 '상    호' 처럼 글자 사이가 벌어져 있어 사이 공백을 허용합니다 */
+function docLab_(w){ return w.split('').join('\\s*'); }
+function docPick_(t,word){
+  const m=t.match(new RegExp(docLab_(word)+'\\s*[:：]\\s*([^\\n]+)'));
+  return m?m[1].trim():'';
+}
+function docName_(s){ return String(s||'').replace(/\s+/g,''); }   // '이 상 곤' → '이상곤'
+function docYmd_(t,word){
+  const m=t.match(new RegExp(docLab_(word)+'\\s*[:：]?\\s*(\\d{4})\\s*[.년]\\s*(\\d{1,2})\\s*[.월]\\s*(\\d{1,2})'));
+  if(!m)return '';
+  return m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
+}
+/* 읽은 글자에서 가입 심사에 넣을 항목을 뽑습니다 */
+function parseDocFields(text){
+  const t=String(text||'').replace(/\r/g,'');
+  const flat=t.replace(/\s+/g,'');
+  const out={};
+  const isBiz=/사업자등록증/.test(flat);
+  const isLic=/약사면허증/.test(flat);
+
+  /* 사업자등록번호 — 숫자라 가장 정확하게 읽힙니다 */
+  const bn=t.match(/(\d{3})\s*-\s*(\d{2})\s*-\s*(\d{5})/);
+  if(bn) out.biz=bn[1]+'-'+bn[2]+'-'+bn[3];
+
+  if(isBiz){
+    let v=docPick_(t,'상호');
+    if(v) out.name=docName_(v.split(/\s{2,}/)[0]);
+    v=docPick_(t,'성명');
+    if(v) out.owner=docName_(v.split(/\s{2,}|생\s*년/)[0]);
+    v=docPick_(t,'사업장소재지')||docPick_(t,'사업장');
+    if(v) out.addr=v.replace(/\s{2,}/g,' ').trim();
+  }
+  if(isLic){
+    const l=t.match(/제\s*(\d{3,8})\s*호/);
+    if(l) out.license=l[1];
+    const v=docPick_(t,'성명');
+    if(v) out.owner=docName_(v.split(/\s{2,}|생\s*년/)[0]);
+  }
+  const b=docYmd_(t,'생년월일');
+  if(b) out.birth=b;
+  return out;
+}
+/* 모달의 빈 칸만 채웁니다. 채운 항목 이름을 돌려줍니다. */
+const DOC_MAP={biz:['apBiz','사업자등록번호'],name:['apName','약국명'],owner:['apOwner','대표자'],
+  birth:['apBirth','생년월일'],addr:['apAddr','사업장 주소'],license:['apLicense','약사 면허번호']};
+function applyDocFields(f){
+  const done=[],skipped=[];
+  Object.keys(DOC_MAP).forEach(k=>{
+    const v=String(f[k]||'').trim(); if(!v) return;
+    const el=document.getElementById(DOC_MAP[k][0]); if(!el) return;
+    if(String(el.value||'').trim()){ if(String(el.value).trim()!==v) skipped.push(DOC_MAP[k][1]); return; }
+    el.value=v; done.push(DOC_MAP[k][1]+' '+v);
+  });
+  return {done,skipped};
+}
+
 /* ============================================================
    자사몰 약사 전용관 — 회원가입 심사 (2km 규약 자동 판정)
    ============================================================ */
@@ -5498,6 +5597,8 @@ function openApplicantModal(appId){
   v('apAddr',ex&&ex.addr);v('apLicense',ex&&ex.license);v('apTel',ex&&ex.tel);
   v('apNote',ex&&ex.note);v('apDate',ex?ex.date:new Date().toISOString().slice(0,10));
   renderApFiles();
+  const dr=document.getElementById('apDocRead');
+  if(dr) dr.innerHTML='📎 <b>사업자등록증·약사면허증</b>을 첨부하면 사업자등록번호·상호·대표자·생년월일·주소를 읽어 빈 칸을 채웁니다.';
   document.getElementById('applicantModal').hidden=false;
 }
 function renderApFiles(){
@@ -5517,8 +5618,34 @@ document.getElementById('apFileBtn').addEventListener('click',()=>document.getEl
 document.getElementById('apFile').addEventListener('change',async e=>{
   const files=[].slice.call(e.target.files);if(!files.length)return;
   const btn=document.getElementById('apFileBtn');btn.textContent='업로드 중…';btn.disabled=true;ioBusy++;
-  for(const f of files){try{apDraft.files.push(await uploadPharmFile('applicants',f));}catch(err){showToast(f.name+' — '+err.message);}}
+  const note=document.getElementById('apDocRead');
+  const say=m=>{ if(note){ note.innerHTML=m; } };
+  const picked=[];
+  for(const f of files){
+    try{ apDraft.files.push(await uploadPharmFile('applicants',f)); picked.push(f); }
+    catch(err){ showToast(f.name+' — '+err.message); }
+  }
   ioBusy=Math.max(0,ioBusy-1);btn.textContent='📎 서류 첨부';btn.disabled=false;e.target.value='';renderApFiles();
+
+  /* 올린 서류를 읽어 빈 칸을 채웁니다 (사업자등록증·약사면허증) */
+  const done=[],skipped=[],failed=[];
+  for(const f of picked){
+    try{
+      say('📄 <b>'+f.name+'</b> 읽는 중…');
+      const txt=await docReadText(f,st=>say('📄 <b>'+f.name+'</b> — '+st));
+      const got=parseDocFields(txt);
+      if(!Object.keys(got).length){ failed.push(f.name); continue; }
+      const r=applyDocFields(got);
+      r.done.forEach(x=>done.push(x)); r.skipped.forEach(x=>{if(skipped.indexOf(x)<0)skipped.push(x);});
+    }catch(err){ failed.push(f.name+' ('+err.message+')'); }
+  }
+  const lines=[];
+  if(done.length) lines.push('✅ 서류에서 채웠습니다 — <b>'+done.join(' · ')+'</b>'+
+    '<br><span style="color:var(--warn);">글자를 읽어 넣은 값입니다. 저장 전에 눈으로 꼭 확인해주세요.</span>');
+  if(skipped.length) lines.push('이미 적혀 있어 그대로 둔 항목: '+skipped.join(' · '));
+  if(failed.length) lines.push('읽지 못한 서류: '+failed.join(' · ')+' — 직접 입력해주세요');
+  say(lines.join('<br>'));
+  if(done.length) showToast('서류에서 '+done.length+'개 항목을 채웠습니다 — 확인해주세요');
 });
 document.getElementById('apCancel').addEventListener('click',()=>{document.getElementById('applicantModal').hidden=true;apDraft=null;});
 document.getElementById('applicantModal').addEventListener('click',e=>{if(e.target.id==='applicantModal'){document.getElementById('applicantModal').hidden=true;apDraft=null;}});
