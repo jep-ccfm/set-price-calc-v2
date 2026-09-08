@@ -1758,9 +1758,13 @@ function renderCompany(k){
   // 레디영: 정산 시트 + 월별 거래명세서 원장
   // 홍콩: 발주서(XLSX) 업로드 → 월별 집계
   if(k==='hk'){
+    /* 홍콩은 거래명세서가 없습니다 — 발주서 · 세금계산서 · 구매확정서 세 가지로 움직입니다 */
     box.appendChild(buildHKUploader('hk'));
-    box.appendChild(buildLedger('hk',{}));
+    const lhk=document.createElement('div');lhk.className='sec-h';
+    lhk.textContent='발주서 (월별 집계)';box.appendChild(lhk);
+    box.appendChild(buildLedger('hk',{noPdf:true,docLabel:'발주서'}));
     box.appendChild(buildTaxDocs('hk'));
+    box.appendChild(buildPurchaseDocs('hk'));
     const dv2=document.createElement('div');dv2.style.cssText='border-top:1px solid var(--line);margin:26px 0 18px;';box.appendChild(dv2);
     const sh3=document.createElement('div');sh3.className='sec-h';sh3.style.marginTop='0';sh3.textContent='세트 제안 저장소 (차수별)';box.appendChild(sh3);
   }
@@ -2085,6 +2089,8 @@ function ledgerRefresh(){if(typeof refreshCurrentView==='function')refreshCurren
 /* ---------- 원장 UI ---------- */
 function buildLedger(id,opts){
   opts=opts||{};
+  /* 채널마다 원장에 쌓이는 서류가 다릅니다 (홍콩은 발주서, 나머지는 거래명세서) */
+  const DOC=opts.docLabel||'거래명세서';
   const led=ledgerOf(id);const wrap=document.createElement('div');
   if(opts.sheet){
     const lb=document.createElement('div');lb.className='link-bar';
@@ -2129,13 +2135,14 @@ function buildLedger(id,opts){
   }
   const months=Object.keys(led.months).sort();
   if(!months.length){
-    if(upEl){const f0=foldPanel('📄 거래명세서 업로드','',null,true);f0.body.appendChild(upEl);wrap.appendChild(f0.panel);}
+    if(upEl){const f0=foldPanel('📄 '+DOC+' 업로드','',null,true);f0.body.appendChild(upEl);wrap.appendChild(f0.panel);}
     const e=document.createElement('div');e.className='empty-box';
-    e.innerHTML='아직 등록된 거래명세서가 없습니다.<br>위 <b>「거래명세서 업로드」</b>에서 월별 폴더를 올려보세요.';
+    e.innerHTML='아직 등록된 '+DOC+'가 없습니다.'+
+      (upEl?'<br>위 <b>「'+DOC+' 업로드」</b>에서 파일을 올려보세요.':'');
     wrap.appendChild(e);return wrap;
   }
   /* 업로드는 월별 화면 뒤로 — 자주 쓰는 월 선택이 먼저 오게 */
-  const upFold=upEl?foldPanel('📄 거래명세서 업로드','<span style="color:var(--ink-mute);font-weight:600;">PDF·월별 폴더</span>','setPriceCalc:upOpen:'+id,false):null;
+  const upFold=upEl?foldPanel('📄 '+DOC+' 업로드','<span style="color:var(--ink-mute);font-weight:600;">PDF·월별 폴더</span>','setPriceCalc:upOpen:'+id,false):null;
   if(upFold)upFold.body.appendChild(upEl);
   const cur=monthOf(id,months);
   const mb=document.createElement('div');mb.className='month-bar';
@@ -4660,6 +4667,93 @@ function refreshCurrentView(){
   else if(v.indexOf('ch_')===0)renderChannel(v);
   else renderCompany(v);
 }
+/* ---------- 구매확정서 (영세율 증빙) ----------
+   홍콩은 거래명세서가 없고 발주서·세금계산서·구매확정서로 움직입니다.
+   구매확정서는 영세율을 증명하는 서류라 따로 모아 둡니다. */
+function purchaseDocsOf(id){lib.purchaseDocs=lib.purchaseDocs||{};lib.purchaseDocs[id]=lib.purchaseDocs[id]||[];return lib.purchaseDocs[id];}
+function buildPurchaseDocs(id){
+  const list=purchaseDocsOf(id);
+  const sum=list.reduce((a,b)=>a+(Number(b.total)||0),0);
+  const fp=foldPanel('📑 구매확정서 ('+list.length+'건)',
+    list.length?'<span style="font-family:var(--mono);font-weight:700;">합계 '+fmt(sum)+'원</span>'
+      :'<span style="color:var(--ink-mute);">등록 없음</span>',
+    'setPriceCalc:pdOpen:'+id,false);
+  const wrap=fp.body;
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='수출 <b>영세율을 증명하는 서류</b>입니다. 발급일·번호·금액을 적고 파일을 올려두세요.';
+  wrap.appendChild(nt);
+
+  const uz=document.createElement('div');uz.className='up-zone';
+  const t1=document.createElement('div');t1.className='uz-title';t1.textContent='📑 구매확정서 올리기';
+  const t2=document.createElement('div');t2.className='uz-desc';
+  t2.innerHTML='PDF·이미지 모두 됩니다. 올린 뒤 발급일·번호·금액을 채워주세요.';
+  uz.append(t1,t2);
+  const btns=document.createElement('div');btns.className='up-btns';
+  const fi=document.createElement('input');fi.type='file';fi.accept='image/*,application/pdf';fi.multiple=true;fi.hidden=true;
+  const b=document.createElement('button');b.className='up-btn';b.textContent='파일 선택';
+  btns.appendChild(b);uz.append(btns,fi);
+  const log=document.createElement('div');log.className='up-log';uz.appendChild(log);
+  b.addEventListener('click',()=>fi.click());
+  fi.addEventListener('change',async e=>{
+    const files=[].slice.call(e.target.files);if(!files.length)return;
+    log.classList.add('show');log.textContent='올리는 중…';ioBusy++;
+    let ok=0;
+    for(const f of files){
+      try{ const up=await uploadPharmFile('purchase',f);
+        list.unshift({id:uid('pd'),date:'',no:'',total:0,file:up});ok++; }
+      catch(err){ showToast(f.name+' — '+err.message); }
+    }
+    ioBusy=Math.max(0,ioBusy-1);e.target.value='';
+    if(ok){persistLib();showToast('구매확정서 '+ok+'건을 올렸습니다');refreshCurrentView();}
+    else log.textContent='올리지 못했습니다';
+  });
+  wrap.appendChild(uz);
+
+  if(!list.length) return fp.panel;
+  const t=document.createElement('table');t.className='led-table';t.style.marginTop='10px';
+  t.innerHTML='<thead><tr><th style="min-width:120px;">발급일</th><th style="min-width:150px;">번호</th>'+
+    '<th style="min-width:130px;text-align:right;">금액</th><th>파일</th><th></th></tr></thead>';
+  const tb=document.createElement('tbody');
+  list.forEach(d=>{
+    const tr=document.createElement('tr');
+    const mk=(v,ph,type,align)=>{
+      const td=document.createElement('td');
+      const i=document.createElement('input');i.className='cell-input';
+      i.type=type||'text';i.value=v==null?'':v;i.placeholder=ph;
+      i.style.cssText='width:100%;box-sizing:border-box;padding:6px 7px;'+(align?'text-align:right;':'');
+      td.appendChild(i);tr.appendChild(td);return i;
+    };
+    const iD=mk(d.date,'2026-09-01','date');
+    const iN=mk(d.no,'구매확정서 번호');
+    const iT=mk(d.total||'','0','text',true);
+    [[iD,'date'],[iN,'no']].forEach(([el,k])=>el.addEventListener('change',()=>{
+      d[k]=el.value.trim();persistLib();showToast('저장했습니다');}));
+    iT.addEventListener('change',()=>{
+      d.total=Number(String(iT.value).replace(/[^0-9-]/g,''))||0;
+      persistLib();refreshCurrentView();});
+    const tdF=document.createElement('td');
+    if(d.file){
+      const a=document.createElement('a');a.href='#';a.textContent='📎 '+d.file.name;
+      a.style.cssText='color:var(--input-blue);font-weight:700;text-decoration:none;font-size:12.5px;';
+      a.addEventListener('click',e=>{e.preventDefault();openLightbox(d.file);});
+      tdF.appendChild(a);
+    } else tdF.textContent='-';
+    tr.appendChild(tdF);
+    const tdX=document.createElement('td');tdX.style.textAlign='right';
+    const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
+    x.addEventListener('click',()=>{
+      if(!confirm('이 구매확정서를 지울까요?'))return;
+      const k=list.indexOf(d);if(k>=0)list.splice(k,1);
+      persistLib();refreshCurrentView();});
+    tdX.appendChild(x);tr.appendChild(tdX);
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;margin-top:10px;';
+  box.appendChild(t);wrap.appendChild(box);
+  return fp.panel;
+}
+
 function buildTaxDocs(id){
   const list=taxDocsOf(id);
   const lsKey='setPriceCalc:taxOpen:'+id;
