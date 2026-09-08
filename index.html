@@ -3110,7 +3110,10 @@ async function importEntryOrders(logEl,onDone){
       return;
     }
     const recv=String(r[c.recv]||'').trim();
-    const date=entryDate_(r[c.odate])||entryDate_(r[c.date]);
+    /* 배송요청시트엔 '날짜'(A열)와 '발주일자'(E열) 가 따로 있고 172행에서 서로 다릅니다.
+       레디영 자동화가 '날짜' 를 쓰므로 여기서도 '날짜' 를 기준으로 맞춥니다.
+       ('발주일자' 만 있는 행은 그걸 씁니다) */
+    const date=entryDate_(r[c.date])||entryDate_(r[c.odate]);
     if(!recv||!date) return;
     const pid=(hit.pid==='aquamedi')?entryAquaPid_(recv):hit.pid;
     const key=pid+'|'+date+'|'+entryKey_(recv);
