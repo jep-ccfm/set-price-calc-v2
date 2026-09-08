@@ -3019,69 +3019,152 @@ function storeInfoOf(name){
   lib.storeInfo[name]=lib.storeInfo[name]||{};
   return lib.storeInfo[name];
 }
-function buildMallStoreInfo(){
+/* ---------- 자사몰 — 주문 목록(배송요청시트 양식) + 약국별 상세 ----------
+   · 표는 배송요청시트에 그대로 붙여넣을 수 있는 순서로 둡니다.
+     날짜 · 약국명 · 주소 · 전화번호 · 품목 · 수량
+   · 사업자 정보(사업자명·대표자명·사업자등록번호·통장·이메일)와 서류는
+     약국 이름을 누르면 나오는 약국별 화면에서 봅니다. */
+
+/* 시트에서 가져온 주문을 한 줄씩 펼칩니다 (품목 단위) */
+function mallOrderRows(storeName){
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  const out=[];
+  Object.keys(led.months||{}).forEach(mk=>{
+    (led.months[mk].docs||[]).forEach(d=>{
+      if(storeName && d.branch!==storeName) return;
+      const m=d.meta||{};
+      (d.items||[]).forEach(it=>{
+        out.push({date:d.date||'', store:d.branch||'미상',
+          addr:m['약국주소']||'', tel:m['전화']||'',
+          item:it.name||'', qty:Number(it.qty)||0,
+          total:(Number(it.supply)||0)+(Number(it.vat)||0), serial:d.serial||''});
+      });
+    });
+  });
+  out.sort((a,b)=>String(b.date+b.serial).localeCompare(String(a.date+a.serial)));
+  return out;
+}
+const MALL_COLS=[['date','날짜',95],['store','약국명',140],['addr','주소',300],
+  ['tel','전화번호',125],['item','품목',230],['qty','수량',60]];
+
+function buildMallOrderList(storeName){
+  const rows=mallOrderRows(storeName);
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
-  const list=mallStores();
-  const filled=list.filter(n=>String(storeInfoOf(n).biz||'').trim()).length;
   const hs=document.createElement('span');
-  hs.textContent='🏪 약국 정보 ('+filled+'/'+list.length+' 입력됨)';
-  h.appendChild(hs);wrap.appendChild(h);
-
+  hs.textContent='📋 주문 목록'+(rows.length?' ('+rows.length+'줄)':'');
+  h.appendChild(hs);
+  if(rows.length){
+    const tools=document.createElement('div');tools.className='sh-tools';
+    const cb=document.createElement('button');cb.className='icon-btn';cb.textContent='📋 배송요청시트용으로 복사';
+    cb.addEventListener('click',()=>{
+      const tsv=rows.map(r=>MALL_COLS.map(c=>r[c[0]]).join('\t')).join('\n');
+      (navigator.clipboard&&navigator.clipboard.writeText(tsv)
+        ? navigator.clipboard.writeText(tsv) : Promise.reject())
+        .then(()=>showToast(rows.length+'줄을 복사했습니다 — 배송요청시트에 붙여넣으세요'))
+        .catch(()=>showToast('복사가 안 됩니다 — 표를 직접 끌어서 복사해주세요'));
+    });
+    tools.appendChild(cb);h.appendChild(tools);
+  }
+  wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
-  nt.innerHTML='개인 약사는 <b>입금자명이 사업자명과 다른 경우</b>가 많습니다. 여기에 사업자명을 넣어두면 '+
-    '입금 대조에서 자동으로 맞춰봅니다.<br>'+
-    '<b>가입 심사에 서류와 사업자 정보를 등록해 두면</b>, 주문을 가져올 때 이 표가 자동으로 채워집니다. '+
-    '(빈 칸만 채우고 직접 고친 값은 그대로 둡니다)';
+  nt.innerHTML='시트에서 가져온 주문을 <b>배송요청시트와 같은 순서</b>로 펼쳐 놓았습니다.<br>'+
+    '사업자 정보·서류는 <b>약국 이름을 누르면</b> 나오는 화면에서 봅니다.';
   wrap.appendChild(nt);
-
-  /* 이미 들어온 약국도 지금 바로 채워볼 수 있게 */
-  const sb=document.createElement('div');sb.style.cssText='margin:0 0 10px;';
-  const sbtn=document.createElement('button');sbtn.className='up-btn';
-  sbtn.textContent='🧾 가입 심사에서 채우기';
-  sbtn.addEventListener('click',()=>{
-    const r=syncStoreInfoFromApplicants();
-    if(!r.filled){ showToast('채울 것이 없습니다 — 가입 심사에 사업자 정보가 있는지 확인해주세요'); return; }
-    persistLib();showToast('약국 '+r.stores+'곳 · '+r.filled+'칸을 채웠습니다');ledgerRefresh();
-  });
-  sb.appendChild(sbtn);wrap.appendChild(sb);
-
-  if(!list.length){
+  if(!rows.length){
     const e=document.createElement('div');e.className='hint';
-    e.textContent='아직 자사몰 주문이 없습니다. 주문이 들어오면 약국이 여기에 나타납니다.';
+    e.innerHTML='아직 가져온 주문이 없습니다. 위 <b>「시트에서 주문 가져오기」</b>를 눌러주세요.';
     wrap.appendChild(e);return wrap;
   }
-  const t=document.createElement('table');t.className='led-table';
-  t.style.minWidth='860px';
-  t.innerHTML='<thead><tr><th style="min-width:110px;">약국명 (주문 기준)</th>'+
-    STORE_FIELDS.map(f=>'<th style="min-width:'+f.w+'px;">'+f.label+'</th>').join('')+'</tr></thead>';
+  const t=document.createElement('table');t.className='led-table';t.style.minWidth='950px';
+  t.innerHTML='<thead><tr>'+MALL_COLS.map(c=>
+    '<th style="min-width:'+c[2]+'px;'+(c[0]==='qty'?'text-align:right;':'')+'">'+c[1]+'</th>').join('')+'</tr></thead>';
   const tb=document.createElement('tbody');
-  list.forEach(name=>{
-    const info=storeInfoOf(name);
+  rows.forEach(r=>{
     const tr=document.createElement('tr');
-    const td0=document.createElement('td');
-    td0.innerHTML='<b>'+name+'</b>'+
-      (info.from?'<div style="color:var(--ink-soft);font-size:11px;font-weight:400;">'+info.from+'에서 가져옴</div>':'');
-    tr.appendChild(td0);
-    STORE_FIELDS.forEach(f=>{
-      const td=document.createElement('td');
-      const i=document.createElement('input');i.className='cell-input';
-      i.value=info[f.k]||'';i.placeholder=f.label;
-      i.style.cssText='width:100%;box-sizing:border-box;padding:6px 7px;';
-      i.addEventListener('change',()=>{
-        info[f.k]=i.value.trim();persistLib();showToast(name+' 저장');
-      });
-      td.appendChild(i);tr.appendChild(td);
-    });
+    tr.innerHTML=
+      '<td style="white-space:nowrap;">'+(r.date||'-')+'</td>'+
+      '<td><b>'+r.store+'</b></td>'+
+      '<td style="font-size:12px;color:var(--ink-soft);">'+(r.addr||'-')+'</td>'+
+      '<td style="white-space:nowrap;">'+(r.tel||'-')+'</td>'+
+      '<td>'+(r.item||'-')+'</td>'+
+      '<td style="text-align:right;">'+fmt(r.qty)+'</td>';
     tb.appendChild(tr);
   });
   t.appendChild(tb);
-  /* 열이 많아 좁은 화면에서는 표만 가로로 스크롤되게 합니다 */
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
   box.appendChild(t);wrap.appendChild(box);
   return wrap;
 }
 
+/* 약국 이름 버튼 — 누르면 그 약국 화면으로 */
+let mallActive=null;
+function openMallStore(name){ mallActive=name; switchView('ph_mall'); }
+function buildMallStoreButtons(){
+  const list=mallStores();
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');hs.textContent='소속 약국 ('+list.length+')';h.appendChild(hs);
+  wrap.appendChild(h);
+  if(!list.length){
+    const e=document.createElement('div');e.className='hint';
+    e.textContent='아직 주문이 들어온 약국이 없습니다.';
+    wrap.appendChild(e);return wrap;
+  }
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='약국을 누르면 <b>주문 내역 · 사업자 정보 · 첨부 서류 · 2km 판정</b>을 한 화면에서 봅니다.';
+  wrap.appendChild(nt);
+  const g=document.createElement('div');
+  g.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:18px;';
+  list.forEach(name=>{
+    const info=storeInfoOf(name);
+    const rows=mallOrderRows(name);
+    const ap=(lib.applicants||[]).filter(a=>storeKey_(a.name)===storeKey_(name))[0];
+    const nFile=ap?((ap.files||[]).length):0;
+    const addr=(rows[0]&&rows[0].addr)||(ap&&ap.addr)||'';
+    const b=document.createElement('button');b.type='button';
+    b.style.cssText='text-align:left;background:#fff;border:1.5px solid var(--line);border-radius:12px;'+
+      'padding:14px 16px;cursor:pointer;font-family:inherit;transition:border-color .12s,box-shadow .12s;';
+    b.addEventListener('mouseenter',()=>{b.style.borderColor='var(--accent)';b.style.boxShadow='0 4px 14px rgba(27,42,74,.09)';});
+    b.addEventListener('mouseleave',()=>{b.style.borderColor='var(--line)';b.style.boxShadow='none';});
+    b.innerHTML='<div style="font-size:14px;font-weight:800;margin-bottom:5px;">💊 '+name+'</div>'+
+      '<div style="font-size:12.5px;color:var(--ink-soft);line-height:1.6;">'+
+      (addr||'주소 미확인')+'<br>주문 <b>'+rows.length+'</b>줄 · 서류 <b>'+nFile+'</b>건'+
+      (String(info.bizNo||'').trim()?'':' · <span style="color:var(--warn);">사업자 정보 미입력</span>')+'</div>';
+    b.addEventListener('click',()=>openMallStore(name));
+    g.appendChild(b);
+  });
+  wrap.appendChild(g);
+  return wrap;
+}
+
+/* 약국별 사업자 정보 입력 (가입 심사에서 자동으로 채워집니다) */
+function buildStoreInfoForm(name){
+  const info=storeInfoOf(name);
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');hs.textContent='사업자 정보';h.appendChild(hs);
+  wrap.appendChild(h);
+  const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+  nt.innerHTML='개인 약사는 <b>입금자명이 사업자명과 다른 경우</b>가 많습니다. 사업자명을 넣어두면 입금 대조에서 자동으로 맞춰봅니다.'+
+    (info.from?'<br><b>'+info.from+'</b>에서 가져온 값입니다.':'');
+  wrap.appendChild(nt);
+  const g=document.createElement('div');
+  g.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-bottom:14px;';
+  STORE_FIELDS.forEach(f=>{
+    const cell=document.createElement('div');
+    const lb=document.createElement('label');
+    lb.style.cssText='display:block;font-size:12px;color:var(--ink-soft);margin-bottom:4px;';
+    lb.textContent=f.label;
+    const i=document.createElement('input');i.className='cell-input';
+    i.value=info[f.k]||'';i.placeholder=f.label;
+    i.style.cssText='width:100%;box-sizing:border-box;padding:7px 8px;';
+    i.addEventListener('change',()=>{ info[f.k]=i.value.trim();persistLib();showToast(name+' 저장'); });
+    cell.append(lb,i);g.appendChild(cell);
+  });
+  wrap.appendChild(g);
+  return wrap;
+}
 /* ---------- 레디영 매출 시트 rawdata 가져오기 ----------
    레디영은 자료가 두 갈래로 쌓입니다.
      rawdata  = 배송요청 승인분  ([브.사] 레디영 매출 시트)
@@ -3410,8 +3493,9 @@ function renderChannel(view){
   if(meta.id==='pharmmall'){
     box.appendChild(buildPartners('pharmmall','자사몰 약사 전용관'));
     box.appendChild(buildMallSync());
+    box.appendChild(buildMallStoreButtons());
     box.appendChild(buildMallOrders());
-    box.appendChild(buildMallStoreInfo());
+    box.appendChild(buildMallOrderList(null));
     box.appendChild(buildChannelGeo('pharmmall','자사몰'));
     box.appendChild(buildApplicants());
   }
@@ -3420,6 +3504,65 @@ function renderChannel(view){
   box.appendChild(buildDeposits(meta.id));
   const lh=document.createElement('div');lh.className='sec-h';lh.textContent='거래명세서 (월별 집계)';box.appendChild(lh);
   box.appendChild(buildLedger(meta.id,{}));
+}
+
+/* ---------- 자사몰 약국별 화면 ---------- */
+function renderMallStore(){
+  const name=mallActive;
+  const box=document.getElementById('view-pharm');box.innerHTML='';
+  if(!name){
+    const e=document.createElement('div');e.className='hint';
+    e.textContent='약국을 먼저 선택해주세요.';box.appendChild(e);return;
+  }
+  const rows=mallOrderRows(name);
+  const ap=(lib.applicants||[]).filter(a=>storeKey_(a.name)===storeKey_(name))[0];
+  const addr=(rows[0]&&rows[0].addr)||(ap&&ap.addr)||'';
+  const head=document.createElement('header');head.className='page-head';
+  head.innerHTML='<div class="eyebrow">약국채널 · 자사몰 약사 전용관</div>'+
+    '<h1><span class="flag">💊</span>'+name+'</h1>'+
+    '<p class="sub">'+(addr||'주소 미확인')+'</p>';
+  box.appendChild(head);
+  const bk=document.createElement('div');bk.className='link-bar';
+  const bkb=document.createElement('button');bkb.className='link-btn alt';bkb.type='button';
+  bkb.textContent='← 자사몰 약사 전용관으로 돌아가기';
+  bkb.addEventListener('click',()=>switchView('ch_pharmmall'));
+  bk.appendChild(bkb);box.appendChild(bk);
+
+  box.appendChild(buildStoreInfoForm(name));
+  box.appendChild(buildMallOrderList(name));
+
+  /* 가입 심사에 올린 서류 */
+  const sh=document.createElement('div');sh.className='sec-h';
+  const shs=document.createElement('span');
+  shs.textContent='첨부 서류'+(ap?' ('+((ap.files||[]).length)+')':'');
+  sh.appendChild(shs);
+  if(ap){
+    const b=document.createElement('button');b.className='icon-btn';b.textContent='📋 가입 심사 열기';
+    b.addEventListener('click',()=>openApplicantModal(ap.id));
+    sh.appendChild(b);
+  }
+  box.appendChild(sh);
+  const fw=document.createElement('div');fw.className='hint';
+  if(!ap) fw.innerHTML='가입 심사에 등록된 기록이 없습니다. 자사몰 화면의 <b>「+ 신청 등록」</b>에서 서류를 올리면 여기에 보입니다.';
+  else if(!(ap.files||[]).length) fw.textContent='첨부된 서류가 없습니다.';
+  else {
+    fw.innerHTML='';
+    (ap.files||[]).forEach(f=>{
+      const a=document.createElement('a');a.href='#';a.textContent='📎 '+f.name;
+      a.style.cssText='display:inline-block;margin:0 12px 6px 0;color:var(--input-blue);font-weight:700;text-decoration:none;font-size:12.5px;';
+      a.addEventListener('click',e=>{e.preventDefault();openLightbox(f);});
+      fw.appendChild(a);
+    });
+  }
+  box.appendChild(fw);
+
+  /* 2km 판정 */
+  if(addr){
+    const gh=document.createElement('div');gh.className='sec-h';gh.style.marginTop='18px';
+    const ghs=document.createElement('span');ghs.textContent='레디영 2km 규약';gh.appendChild(ghs);
+    box.appendChild(gh);
+    renderPharmJudge(box,[{name:name,addr:addr,orders:rows.length}]);
+  }
 }
 
 /* ---------- 아쿠아메디 소속 약국 버튼 ---------- */
@@ -6516,6 +6659,7 @@ function buildChannelGeo(id,label){
 
 /* ---------- 개인약국 뷰 ---------- */
 function renderPharm(view){
+  if(view==='ph_mall'){ renderMallStore(); return; }
   const meta=pharmMeta(view);if(!meta)return;
   const pid=meta.id;const info=pharmInfoOf(pid);
   const box=document.getElementById('view-pharm');box.innerHTML='';
@@ -6776,7 +6920,8 @@ document.getElementById('modalInput').addEventListener('keydown',e=>{if(e.key===
    ============================================================ */
 function switchView(view){
   currentView=view;
-  const navKey=(view==='ph_sinsa'||view==='ph_apgujeong')?'ch_aquamedi':view;
+  const navKey=(view==='ph_sinsa'||view==='ph_apgujeong')?'ch_aquamedi'
+    :(view==='ph_mall'?'ch_pharmmall':view);
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===navKey));
   document.getElementById('view-calc').hidden=(view!=='calc');
   document.getElementById('view-home').hidden=(view!=='home');
