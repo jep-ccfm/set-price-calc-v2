@@ -5501,12 +5501,23 @@ function loadTesseract(){
   return _tessLoad;
 }
 /* PDF 한 장을 그림(캔버스)으로 그립니다. 스캔 PDF 를 OCR 하려면 필요합니다.
-   글씨가 작아 그냥 읽히면 잘 틀려서 2배로 키워 그립니다. */
-async function pdfPageToCanvas(page,scale){
+   글씨가 작아 그냥 읽히면 잘 틀려서 2배로 키워 그립니다.
+   ※ 브라우저 탭이 뒤로 가 있으면 화면 그리기가 멈춰 끝나지 않습니다.
+      그래서 시간을 재고, 오래 걸리면 이유를 알려주고 멈춥니다. */
+async function pdfPageToCanvas(page,scale,ms){
   const vp=page.getViewport({scale:scale||2});
   const cv=document.createElement('canvas');
   cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
-  await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+  const task=page.render({canvasContext:cv.getContext('2d'),viewport:vp});
+  let timer=null;
+  const guard=new Promise((_,ng)=>{ timer=setTimeout(()=>{
+    try{task.cancel();}catch(e){}
+    ng(new Error(document.hidden
+      ? '이 창이 뒤에 있는 동안에는 PDF 를 그리지 못합니다 — 창을 앞에 두고 다시 첨부해주세요'
+      : 'PDF 를 그리는 데 너무 오래 걸립니다 — 사진(JPG/PNG)으로 올려보세요'));
+  }, ms||30000); });
+  try{ await Promise.race([task.promise,guard]); }
+  finally{ if(timer) clearTimeout(timer); }
   return cv;
 }
 /* 파일 → 글자.
@@ -5538,14 +5549,18 @@ async function docReadText(file,onStep){
     /* 스캔 PDF — 페이지를 그림으로 바꿔 읽습니다 (최대 3장) */
     const n=Math.min(pdf.numPages,3);
     let out='';
+    let lastErr=null;
     for(let i=1;i<=n;i++){
-      if(onStep)onStep('스캔 PDF '+i+'/'+n+'쪽 그리는 중…');
-      const cv=await pdfPageToCanvas(await pdf.getPage(i),2);
-      const pre=(n>1?i+'/'+n+'쪽 ':'');
-      if(onStep)onStep(pre+'글자 읽는 중… (처음 한 번은 20초쯤 걸립니다)');
-      const r=await Tesseract.recognize(cv,'kor+eng',{logger:m=>step(pre,m)});
-      out+=((r&&r.data&&r.data.text)||'')+'\n';
+      try{
+        if(onStep)onStep('스캔 PDF '+i+'/'+n+'쪽 그리는 중…');
+        const cv=await pdfPageToCanvas(await pdf.getPage(i),2);
+        const pre=(n>1?i+'/'+n+'쪽 ':'');
+        if(onStep)onStep(pre+'글자 읽는 중… (처음 한 번은 20초쯤 걸립니다)');
+        const r=await Tesseract.recognize(cv,'kor+eng',{logger:m=>step(pre,m)});
+        out+=((r&&r.data&&r.data.text)||'')+'\n';
+      }catch(e){ lastErr=e; }
     }
+    if(!out.replace(/\s/g,'') && lastErr) throw lastErr;
     return out;
   }
   if(onStep)onStep('글자 읽는 중… (처음 한 번은 20초쯤 걸립니다)');
