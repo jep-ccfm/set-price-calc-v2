@@ -3113,8 +3113,14 @@ async function refreshShipped(){
     const k=shipKey_(r[got.c.recv],r[got.c.item],r[got.c.qty]);
     map[k]=(map[k]||0)+1;
   });
-  const S=shippedOf(); S.map=map; S.at=new Date().toISOString();
-  return Object.keys(map).length;
+  /* 배송요청시트 전체는 3천 건이 넘습니다. 그대로 담아두면 팀 공용 데이터가
+     쓸데없이 무거워지므로, 자사몰 주문에 해당하는 것만 남깁니다. */
+  const need={};
+  mallOrderRows(null,true).forEach(function(r){ need[shipKey_(r.store,r.item,r.qty)]=1; });
+  const slim={};
+  Object.keys(need).forEach(function(k){ if(map[k]) slim[k]=map[k]; });
+  const S=shippedOf(); S.map=slim; S.at=new Date().toISOString();
+  return Object.keys(slim).length;
 }
 async function importEntryOrders(logEl,onDone){
   if(logEl){logEl.classList.add('show');logEl.textContent='배송요청시트를 읽는 중…';}
@@ -3130,7 +3136,11 @@ async function importEntryOrders(logEl,onDone){
       if(!String(r[c.inv]||'').trim()) return;
       smap[shipKey_(r[c.recv],r[c.item],r[c.qty])]=(smap[shipKey_(r[c.recv],r[c.item],r[c.qty])]||0)+1;
     });
-    const S=shippedOf(); S.map=smap; S.at=new Date().toISOString();
+    const need={};
+    mallOrderRows(null,true).forEach(function(x){ need[shipKey_(x.store,x.item,x.qty)]=1; });
+    const slim={};
+    Object.keys(need).forEach(function(k){ if(smap[k]) slim[k]=smap[k]; });
+    const S=shippedOf(); S.map=slim; S.at=new Date().toISOString();
   }
 
   const groups={}, unknown={};
