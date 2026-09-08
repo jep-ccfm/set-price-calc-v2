@@ -3080,7 +3080,8 @@ async function fetchEntryRows(){
   const head=rows[0].map(h=>String(h||'').trim());
   const ix=n=>head.indexOf(n);
   const c={date:ix('날짜'),recv:ix('수취인명'),addr:ix('수취인 주소'),tel:ix('수취인 전화번호'),
-           odate:ix('발주일자'),memo:ix('관리메모1'),item:ix('출고상품명'),qty:ix('수량')};
+           odate:ix('발주일자'),memo:ix('관리메모1'),item:ix('출고상품명'),qty:ix('수량'),
+           inv:ix('송장번호')};
   if(c.recv<0||c.memo<0||c.item<0)
     throw new Error('시트 양식이 다릅니다 (수취인명·관리메모1·출고상품명 없음)');
   return {rows:rows.slice(1),c:c};
@@ -3091,12 +3092,46 @@ function entryDate_(v){
   if(!m) return '';
   return m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
 }
+/* 배송요청시트에 송장번호가 찍히면 출고가 끝난 것입니다.
+   자사몰 주문 시트와 배송요청시트는 표기가 조금 다릅니다.
+     날짜   주문 접수 다음 날 배송요청을 적는 경우가 많습니다 → 날짜로는 못 맞춥니다
+     약국명 '그린온누리약국' ↔ '그린 온누리약국'
+     품목   '유쎄라블 실프팅 4D 크림' ↔ '유쎄라블 실프팅 4D크림'
+   그래서 공백을 지운 뒤 약국·품목·수량으로 맞춥니다. */
+function shipKey_(recv,item,qty){
+  return entryKey_(recv)+'|'+entryKey_(item)+'|'+(parseInt(String(qty||'').replace(/[^0-9]/g,''),10)||0);
+}
+function shippedOf(){ lib.entryShipped=lib.entryShipped||{at:'',map:{}}; return lib.entryShipped; }
+/* 배송요청시트를 읽어 '송장 찍힌 건' 을 세어 둡니다.
+   같은 약국·품목·수량이 여러 번이면 그 횟수만큼만 출고로 봅니다. */
+async function refreshShipped(){
+  const got=await fetchEntryRows();
+  const map={};
+  got.rows.forEach(function(r){
+    if(got.c.inv<0) return;
+    if(!String(r[got.c.inv]||'').trim()) return;
+    const k=shipKey_(r[got.c.recv],r[got.c.item],r[got.c.qty]);
+    map[k]=(map[k]||0)+1;
+  });
+  const S=shippedOf(); S.map=map; S.at=new Date().toISOString();
+  return Object.keys(map).length;
+}
 async function importEntryOrders(logEl,onDone){
   if(logEl){logEl.classList.add('show');logEl.textContent='배송요청시트를 읽는 중…';}
   let got;
   try{ got=await fetchEntryRows(); }
   catch(e){ if(logEl)logEl.textContent='✕ '+e.message; showToast(e.message); return; }
   const {rows,c}=got;
+
+  /* 송장이 찍힌 건을 세어 둡니다 (자사몰 주문 목록에서 걸러내는 데 씁니다) */
+  if(c.inv>=0){
+    const smap={};
+    rows.forEach(function(r){
+      if(!String(r[c.inv]||'').trim()) return;
+      smap[shipKey_(r[c.recv],r[c.item],r[c.qty])]=(smap[shipKey_(r[c.recv],r[c.item],r[c.qty])]||0)+1;
+    });
+    const S=shippedOf(); S.map=smap; S.at=new Date().toISOString();
+  }
 
   const groups={}, unknown={};
   rows.forEach(function(r){
@@ -3191,7 +3226,8 @@ function buildEntrySync(){
      약국 이름을 누르면 나오는 약국별 화면에서 봅니다. */
 
 /* 시트에서 가져온 주문을 한 줄씩 펼칩니다 (품목 단위) */
-function mallOrderRows(storeName){
+/* showShipped 를 켜면 출고 완료된 줄도 같이 보여줍니다 */
+function mallOrderRows(storeName,showShipped){
   const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
   const out=[];
   Object.keys(led.months||{}).forEach(mk=>{
@@ -3207,17 +3243,30 @@ function mallOrderRows(storeName){
     });
   });
   out.sort((a,b)=>String(b.date+b.serial).localeCompare(String(a.date+a.serial)));
-  return out;
+  /* 배송요청시트에 송장이 찍힌 만큼만 출고로 처리합니다 (같은 품목이 여러 번일 수 있어 개수를 셉니다) */
+  const left={}; const S=shippedOf().map||{};
+  Object.keys(S).forEach(k=>{ left[k]=S[k]; });
+  out.forEach(r=>{
+    const k=shipKey_(r.store,r.item,r.qty);
+    if(left[k]>0){ r.shipped=true; left[k]--; }
+  });
+  out.hiddenShipped=out.filter(r=>r.shipped).length;
+  if(showShipped) return out;
+  const kept=out.filter(r=>!r.shipped);
+  kept.hiddenShipped=out.hiddenShipped;
+  return kept;
 }
 const MALL_COLS=[['date','날짜',95],['store','약국명',140],['addr','주소',300],
   ['tel','전화번호',125],['item','품목',230],['qty','수량',60]];
 
+let mallShowShipped=false;
 function buildMallOrderList(storeName){
-  const rows=mallOrderRows(storeName);
+  const rows=mallOrderRows(storeName,mallShowShipped);
+  const hid=rows.hiddenShipped||0;
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
   const hs=document.createElement('span');
-  hs.textContent='📋 주문 목록'+(rows.length?' ('+rows.length+'줄)':'');
+  hs.textContent='📋 출고할 주문'+(rows.length?' ('+rows.length+'줄)':'');
   h.appendChild(hs);
   if(rows.length){
     const tools=document.createElement('div');tools.className='sh-tools';
@@ -3231,14 +3280,39 @@ function buildMallOrderList(storeName){
     });
     tools.appendChild(cb);h.appendChild(tools);
   }
+  {
+    const tools=h.querySelector('.sh-tools')||document.createElement('div');
+    if(!tools.className){tools.className='sh-tools';h.appendChild(tools);}
+    const rb=document.createElement('button');rb.className='icon-btn';
+    rb.textContent='🚚 출고 상태 새로고침';
+    rb.addEventListener('click',async()=>{
+      rb.disabled=true;rb.textContent='확인 중…';
+      try{ const n=await refreshShipped(); persistLib();
+           showToast('출고 확인 완료 — 송장 찍힌 '+n+'종'); ledgerRefresh(); }
+      catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 출고 상태 새로고침'; }
+    });
+    tools.appendChild(rb);
+    if(hid){
+      const tg=document.createElement('button');tg.className='icon-btn';
+      tg.textContent=mallShowShipped?'출고 완료 숨기기':'출고 완료도 보기 ('+hid+')';
+      tg.addEventListener('click',()=>{mallShowShipped=!mallShowShipped;ledgerRefresh();});
+      tools.appendChild(tg);
+    }
+  }
   wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
-  nt.innerHTML='시트에서 가져온 주문을 <b>배송요청시트와 같은 순서</b>로 펼쳐 놓았습니다.<br>'+
-    '사업자 정보·서류는 <b>약국 이름을 누르면</b> 나오는 화면에서 봅니다.';
+  const S=shippedOf();
+  nt.innerHTML='<b>배송요청시트에 송장번호가 찍히면 목록에서 사라집니다.</b> 남은 줄이 아직 못 보낸 주문입니다.<br>'+
+    '순서는 배송요청시트와 같아 그대로 복사해 붙여넣을 수 있습니다. 사업자 정보·서류는 <b>약국 이름</b>을 누르세요.'+
+    (hid?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
+    (S.at?'<br><span style="color:var(--ink-mute);">출고 확인 '+String(S.at).slice(0,16).replace('T',' ')+'</span>'
+        :'<br><span style="color:var(--warn);">아직 출고 상태를 안 읽었습니다 — 「🚚 출고 상태 새로고침」을 눌러주세요.</span>');
   wrap.appendChild(nt);
   if(!rows.length){
     const e=document.createElement('div');e.className='hint';
-    e.innerHTML='아직 가져온 주문이 없습니다. 위 <b>「시트에서 주문 가져오기」</b>를 눌러주세요.';
+    e.innerHTML=hid
+      ? '✅ 출고할 주문이 없습니다 — '+hid+'줄 모두 송장이 찍혔습니다.'
+      : '아직 가져온 주문이 없습니다. 위 <b>「시트에서 주문 가져오기」</b>를 눌러주세요.';
     wrap.appendChild(e);return wrap;
   }
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='950px';
@@ -3659,6 +3733,7 @@ function renderChannel(view){
     return;
   }
   if(meta.id==='pharmmall'){
+    box.appendChild(buildMallContractBar());
     box.appendChild(buildPartners('pharmmall','자사몰 약사 전용관'));
     box.appendChild(buildMallSync());
     box.appendChild(buildMallStoreButtons());
@@ -5821,6 +5896,92 @@ function fileCards(files){
   return w;
 }
 /* 레디영 계약서 */
+/* ---------- 자사몰 약사 전용관 계약서 (공통 양식) ----------
+   약국마다 같은 양식으로 체결하므로 한 부만 올려두고 같이 봅니다.
+   원문 22개 조항 · 갑 = ㈜고지식바이오(서준석) / 을 = 약국 개설자 */
+function mallContractOf(){ lib.mallContract=lib.mallContract||[]; return lib.mallContract; }
+const MALL_CONTRACT_ARTICLES=[
+  '1 목적','2 거래자격','3 상품의 주문 및 공급','4 대금 결제 및 정산',
+  '5 배송 및 상품의 확인','6 판매목적 및 재유통 제한','7 판매채널','8 판매가격',
+  '9 상품의 보관 및 관리','10 표시·광고 및 제품정보','11 상품 이미지 및 소비자 클레임',
+  '12 상표·지식재산권','13 반품 및 교환','14 거래정보 및 비밀유지','15 회원정보 관리',
+  '16 계약기간','17 거래중단 및 계약해지','18 손해배상','19 독립된 거래관계',
+  '20 기존 유통계약과의 관계','21 계약 및 운영정책의 변경','22 분쟁해결 및 관할'
+];
+function openMallContract(){
+  docModalOpen('약사 전용관 상품 공급 및 재판매 거래 약정서',b=>{
+    const p1=document.createElement('p');
+    p1.style.cssText='margin:0 0 14px;font-size:12.5px;color:var(--ink-soft);line-height:1.6;';
+    p1.innerHTML='㈜고지식바이오(갑) ↔ 약국 개설자(을) · <b>약국마다 같은 공통 양식</b>입니다.';
+    b.appendChild(p1);
+    b.appendChild(kvGrid([
+      ['갑','㈜고지식바이오 · 대표 서준석'],
+      ['주소','서울특별시 강남구 선릉로 428, 9층 111호(대치동)'],
+      ['을','약사 전용관에 입점하는 약국 개설자'],
+      ['부수','2부 작성 · 갑과 을이 각 1부 보관']
+    ]));
+    const ah=document.createElement('div');
+    ah.style.cssText='font-size:12px;font-weight:800;color:var(--ink-soft);margin:16px 0 6px;';
+    ah.textContent='조항 (전 22조)';b.appendChild(ah);
+    const al=document.createElement('div');
+    al.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));'+
+      'gap:3px 12px;font-size:12.5px;color:var(--ink-soft);line-height:1.65;margin-bottom:16px;';
+    MALL_CONTRACT_ARTICLES.forEach(t=>{
+      const d=document.createElement('div');d.textContent='제'+t.replace(' ','조 ');al.appendChild(d);});
+    b.appendChild(al);
+    const w=document.createElement('div');
+    w.style.cssText='font-size:12.5px;color:var(--ink-soft);line-height:1.7;margin-bottom:16px;';
+    w.innerHTML='<b>제14조 거래정보 및 비밀유지</b> — 거래 조건·공급가 등은 <b>대외비</b>이며 계약 종료 후에도 유효합니다.<br>'+
+      '<span style="color:var(--warn);">금액·기간 같은 세부 조건은 아래 원본에서 확인하세요.</span>';
+    b.appendChild(w);
+    const fh=document.createElement('div');
+    fh.style.cssText='font-size:12px;font-weight:800;color:var(--ink-soft);margin-bottom:6px;';
+    fh.textContent='계약서 원본';b.appendChild(fh);
+    const list=mallContractOf();
+    if(list.length) b.appendChild(fileCards(list));
+    else{
+      const e=document.createElement('div');e.className='hint';
+      e.innerHTML='아직 올린 계약서가 없습니다. 자사몰 화면의 <b>「＋ 계약서 올리기」</b>로 올려주세요.';
+      b.appendChild(e);
+    }
+  });
+}
+/* 자사몰 화면 상단 — 계약서 보기 / 올리기 */
+function buildMallContractBar(){
+  const list=mallContractOf();
+  const lb=document.createElement('div');lb.className='link-bar';
+  const v=document.createElement('button');v.className='link-btn alt';v.type='button';
+  v.textContent='📄 계약서 보기'+(list.length?' ('+list.length+')':'');
+  v.addEventListener('click',openMallContract);
+  lb.appendChild(v);
+  const fi=document.createElement('input');fi.type='file';
+  fi.accept='application/pdf,.doc,.docx,image/*';fi.multiple=true;fi.hidden=true;
+  const up=document.createElement('button');up.className='link-btn alt';up.type='button';
+  up.textContent='＋ 계약서 올리기';
+  up.addEventListener('click',()=>fi.click());
+  fi.addEventListener('change',async e=>{
+    const files=[].slice.call(e.target.files);if(!files.length)return;
+    up.disabled=true;up.textContent='올리는 중…';ioBusy++;
+    let ok=0;
+    for(const f of files){
+      try{ const u=await uploadPharmFile('contracts',f);
+           list.push({name:f.name,url:u.url,type:f.type,tag:'약사 전용관 공통'}); ok++; }
+      catch(err){ showToast(f.name+' — '+err.message); }
+    }
+    ioBusy=Math.max(0,ioBusy-1);up.disabled=false;up.textContent='＋ 계약서 올리기';e.target.value='';
+    if(ok){ persistLib(); showToast('계약서 '+ok+'건을 올렸습니다'); ledgerRefresh(); }
+  });
+  lb.append(up,fi);
+  if(list.length){
+    const del=document.createElement('button');del.className='link-btn alt';del.type='button';
+    del.textContent='계약서 비우기';
+    del.addEventListener('click',()=>{
+      if(!confirm('올려둔 계약서 '+list.length+'건을 목록에서 지울까요?'))return;
+      lib.mallContract=[];persistLib();ledgerRefresh();});
+    lb.appendChild(del);
+  }
+  return lb;
+}
 function openReadyContract(){
   docModalOpen('레디영 판매 공급 계약서',b=>{
     const p1=document.createElement('p');p1.style.cssText='margin:0 0 14px;font-size:12.5px;color:var(--ink-soft);line-height:1.6;';
