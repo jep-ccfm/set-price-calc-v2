@@ -1773,6 +1773,7 @@ function renderCompany(k){
     box.appendChild(buildBranchStock());
     box.appendChild(buildPriceTable('ready',false));
     box.appendChild(buildTaxDocs('ready'));
+    box.appendChild(buildEntrySync());
     box.appendChild(buildReadyBranch());
     box.appendChild(buildDeposits('ready'));
     box.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
@@ -3140,8 +3141,9 @@ async function importEntryOrders(logEl,onDone){
   if(onDone) onDone();
 }
 function buildEntrySync(){
-  const fp=foldPanel('🚚 배송요청시트에서 발주 가져오기','',
-    'setPriceCalc:entryOpen',false);
+  const fp=foldPanel('🚚 배송요청시트에서 발주 가져오기',
+    '<span style="color:var(--ink-mute);font-weight:600;">관리메모1 로 약국 건만</span>',
+    'setPriceCalc:entryOpen',true);
   const wrap=fp.body;
   const lb=document.createElement('div');lb.className='link-bar';
   const a=document.createElement('a');a.className='link-btn';a.href=ENTRY_SHEET_URL;
@@ -3613,6 +3615,7 @@ function renderChannel(view){
     box.appendChild(buildPartners('barofarm','바로팜'));
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
+    box.appendChild(buildEntrySync());
     box.appendChild(buildBarofarmSettle());
     box.appendChild(buildBarofarmVerify());
     box.appendChild(buildChannelGeo('barofarm','바로팜'));
@@ -3623,6 +3626,7 @@ function renderChannel(view){
     return;
   }
   if(meta.id==='aquamedi'){
+    box.appendChild(buildEntrySync());
     box.appendChild(buildAquamediPharms());
     box.appendChild(buildPartners('aquamedi','아쿠아메디'));
     box.appendChild(buildAquamediRollup());
@@ -6594,6 +6598,8 @@ function renderHome(){
     ['압구정 생생온누리',ordS('apgujeong')+'건'],
     ['거래명세서',aq.latest?fmt(aq.total)+'원':'-']],'소속 약국 발주 · 서류 관리');
   box.appendChild(grid);
+
+  box.appendChild(buildEntrySync());
 
   /* ---- 빠른 이동 ---- */
   const qh=document.createElement('div');qh.className='sec-h';qh.textContent='바로가기';box.appendChild(qh);
