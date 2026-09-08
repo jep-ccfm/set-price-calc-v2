@@ -3039,11 +3039,21 @@ const ENTRY_SHEET_ID='1-mtjbPTW_2C72VSXk3Z-hvu0BGYJuwp4GOCfmFwqUOY';
 const ENTRY_TAB='Worksheet';
 const ENTRY_SHEET_URL='https://docs.google.com/spreadsheets/d/'+ENTRY_SHEET_ID+'/edit';
 /* 관리메모1 → 채널 (공백을 지우고 견줍니다: '바로팜 약국 판매' = '바로팜약국판매') */
+/* 위에서부터 먼저 걸리는 규칙을 씁니다 — 채널이 붙은 표기를 앞에 둬야
+   맨 아래 '약국판매' 같은 넓은 규칙에 먼저 잡히지 않습니다. */
 const ENTRY_RULES=[
-  {re:/약국공급/,      pid:'ready',     ch:'레디영'},
   {re:/바로팜약국판매/, pid:'barofarm',  ch:'바로팜'},
   {re:/개인약국판매/,   pid:'aquamedi',  ch:'아쿠아메디'},
-  {re:/자사몰약국판매/, pid:'pharmmall', ch:'자사몰 약사전용관'}
+  {re:/자사몰약국판매/, pid:'pharmmall', ch:'자사몰 약사전용관'},
+  /* 레디영은 표기가 여러 가지입니다 (약국공급이 표준, 나머지는 예전 표기·오타) */
+  {re:/약국공급/,      pid:'ready',     ch:'레디영'},
+  {re:/약국공금/,      pid:'ready',     ch:'레디영'},   // '공급' 오타
+  {re:/약국납품/,      pid:'ready',     ch:'레디영'},
+  {re:/레디영약국/,    pid:'ready',     ch:'레디영'},
+  {re:/레디영G마켓|레디영지마켓/i, pid:'ready', ch:'레디영'},
+  {re:/레디영본사/,    pid:'ready',     ch:'레디영'},
+  /* 채널이 안 붙은 '약국 판매' 는 바로팜 건이었습니다 (한도온누리약국) */
+  {re:/약국판매/,      pid:'barofarm',  ch:'바로팜'}
 ];
 /* 약국 관련 같은데 규칙에 안 걸린 메모는 버리지 않고 알려줍니다 */
 const ENTRY_LOOKS_PHARM=/약국|바로팜|자사몰|아쿠아|레디영/;
