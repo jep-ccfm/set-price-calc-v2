@@ -2976,13 +2976,14 @@ function buildCloseCheck(){
 }
 
 /* ---------- 자사몰 약국 정보 (명의 대조용) ---------- */
+/* w = 열 최소폭. 자리가 남으면 늘어나고, 좁으면 표가 가로로 스크롤됩니다. */
 const STORE_FIELDS=[
-  {k:'biz',   label:'사업자명(상호)', w:170},
-  {k:'ceo',   label:'대표자명',       w:110},
-  {k:'bizNo', label:'사업자등록번호', w:140},
-  {k:'bank',  label:'사업자 통장',    w:200},
-  {k:'email', label:'이메일',         w:180},
-  {k:'memo',  label:'비고',           w:180}
+  {k:'biz',   label:'사업자명(상호)', w:140},
+  {k:'ceo',   label:'대표자명',       w:80},
+  {k:'bizNo', label:'사업자등록번호', w:125},
+  {k:'bank',  label:'사업자 통장',    w:160},
+  {k:'email', label:'이메일',         w:150},
+  {k:'memo',  label:'비고',           w:110}
 ];
 function storeInfoOf(name){
   lib.storeInfo=lib.storeInfo||{};
@@ -3009,8 +3010,9 @@ function buildMallStoreInfo(){
     wrap.appendChild(e);return wrap;
   }
   const t=document.createElement('table');t.className='led-table';
-  t.innerHTML='<thead><tr><th>약국명 (주문 기준)</th>'+
-    STORE_FIELDS.map(f=>'<th>'+f.label+'</th>').join('')+'</tr></thead>';
+  t.style.minWidth='860px';
+  t.innerHTML='<thead><tr><th style="min-width:110px;">약국명 (주문 기준)</th>'+
+    STORE_FIELDS.map(f=>'<th style="min-width:'+f.w+'px;">'+f.label+'</th>').join('')+'</tr></thead>';
   const tb=document.createElement('tbody');
   list.forEach(name=>{
     const info=storeInfoOf(name);
@@ -3020,7 +3022,7 @@ function buildMallStoreInfo(){
       const td=document.createElement('td');
       const i=document.createElement('input');i.className='cell-input';
       i.value=info[f.k]||'';i.placeholder=f.label;
-      i.style.cssText='width:'+f.w+'px;padding:6px 7px;';
+      i.style.cssText='width:100%;box-sizing:border-box;padding:6px 7px;';
       i.addEventListener('change',()=>{
         info[f.k]=i.value.trim();persistLib();showToast(name+' 저장');
       });
@@ -3028,7 +3030,10 @@ function buildMallStoreInfo(){
     });
     tb.appendChild(tr);
   });
-  t.appendChild(tb);wrap.appendChild(t);
+  t.appendChild(tb);
+  /* 열이 많아 좁은 화면에서는 표만 가로로 스크롤되게 합니다 */
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  box.appendChild(t);wrap.appendChild(box);
   return wrap;
 }
 
