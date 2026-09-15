@@ -6260,6 +6260,179 @@ function applyDocFields(f){
   return {done,skipped};
 }
 
+/* ---------- 신청 서류(구글 드라이브)에서 주소 자동 수집 ----------
+   신청 메일에는 주소 칸이 없어 2km 판정을 바로 못 돌렸습니다.
+   그래서 첨부된 사업자등록증을 직접 읽어 「사업장 소재지」를 가져옵니다.
+
+   드라이브 링크는 그냥 fetch 하면 CORS 로 막힙니다.
+   lh3.googleusercontent.com/d/<파일ID> 만 CORS 를 허용해서 이 경로를 씁니다. */
+function driveFileId(u){
+  const s=String(u||'');
+  let m=s.match(/\/file\/d\/([A-Za-z0-9_-]{10,})/); if(m) return m[1];
+  m=s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);         if(m) return m[1];
+  m=s.match(/lh3\.googleusercontent\.com\/d\/([A-Za-z0-9_-]{10,})/); if(m) return m[1];
+  return '';
+}
+function driveImageUrl(u,w){
+  const id=driveFileId(u);
+  return id?('https://lh3.googleusercontent.com/d/'+id+'=w'+(w||2400)):'';
+}
+async function fetchDocFile(u){
+  const url=driveImageUrl(u);
+  if(!url) throw new Error('드라이브 링크가 아닙니다');
+  const r=await fetch(url);
+  if(!r.ok) throw new Error('서류를 못 받았습니다 ('+r.status+')');
+  const b=await r.blob();
+  if(!b.size) throw new Error('빈 파일입니다');
+  const ext=/pdf/i.test(b.type)?'.pdf':'.jpg';
+  return new File([b],'doc'+ext,{type:b.type||'image/jpeg'});
+}
+/* OCR 이 자주 틀리는 글자를 고칩니다. 번지수 같은 숫자는 못 고치므로
+   아래 지오코딩으로 한 번 더 확인합니다. */
+const OCR_ADDR_FIX=[
+  [/서\s*물\s*특\s*별\s*시/g,'서울특별시'],[/서\s*울\s*특\s*별\s*시/g,'서울특별시'],
+  [/강\s*낭\s*구/g,'강남구'],[/강\s*남\s*구/g,'강남구'],
+  [/경\s*기\s*도/g,'경기도'],[/부\s*산\s*광\s*역\s*시/g,'부산광역시'],
+  [/대\s*구\s*광\s*역\s*시/g,'대구광역시'],[/인\s*천\s*광\s*역\s*시/g,'인천광역시'],
+  [/광\s*주\s*광\s*역\s*시/g,'광주광역시'],[/대\s*전\s*광\s*역\s*시/g,'대전광역시'],
+  [/울\s*산\s*광\s*역\s*시/g,'울산광역시'],[/세\s*종\s*특\s*별\s*자\s*치\s*시/g,'세종특별자치시'],
+  [/제\s*주\s*특\s*별\s*자\s*치\s*도/g,'제주특별자치도'],
+  [/([가-힣])\s*로\s*(\d)/g,'$1로 $2'],
+  [/[|｜]/g,''],[/[０-９]/g,d=>String.fromCharCode(d.charCodeAt(0)-0xFEE0)]
+];
+function cleanOcrAddr(s){
+  let t=String(s||'').replace(/\s{2,}/g,' ').trim();
+  OCR_ADDR_FIX.forEach(([re,to])=>{t=t.replace(re,to);});
+  /* 한국 도로명주소에는 영문 단어가 없습니다 — 2글자 이상 라틴 덩어리는 깨진 글자입니다 */
+  t=t.replace(/(^|[\s,(])[A-Za-z]{2,}(?=[\s,)]|$)/g,'$1');
+  t=t.replace(/(\d)\s*충(?=[\s,)(（]|$)/g,'$1층');     // 1충 → 1층
+  t=t.replace(/(\d)\s*변\s*길/g,'$1번길');          // 37변길 → 37번길
+  t=t.replace(/번\s*길/g,'번길');
+  t=t.replace(/\s{2,}/g,' ').replace(/\s+,/g,',');
+  t=t.replace(/^[^가-힣0-9]+/,'').trim();
+  return t;
+}
+/* 지오코딩에 넣을 때는 상세주소(층·호·건물명)를 떼는 편이 잘 맞습니다 */
+function addrCore(s){
+  let t=String(s||'').split(',')[0];
+  /* 「비범로 19. 1층」처럼 마침표로 상세주소가 이어지기도 합니다 */
+  t=t.replace(/\.\s*\d+\s*(층|호).*$/, '');
+  t=t.replace(/\s\d+\s*(층|호)(\s|$).*$/, '');
+  t=t.replace(/[(（][^)）]*[)）]/g, ' ');
+  return t.replace(/\s{2,}/g, ' ').replace(/[.,\s]+$/, '').trim();
+}
+/* 서류 두 장을 읽어 빈 칸을 채울 값을 모읍니다.
+   어느 쪽이 사업자등록증인지 모르므로 둘 다 읽고, 나온 항목을 합칩니다. */
+async function readApplicantDocs(a,onStep){
+  const files=(a.files||[]).filter(f=>driveFileId(f.url));
+  if(!files.length) throw new Error('드라이브 서류가 없습니다');
+  const merged={}; const errs=[];
+  for(let i=0;i<files.length;i++){
+    try{
+      if(onStep)onStep('서류'+(i+1)+'/'+files.length+' 받는 중…');
+      const f=await fetchDocFile(files[i].url);
+      const txt=await docReadText(f,s=>{if(onStep)onStep('서류'+(i+1)+'/'+files.length+' '+s);});
+      const got=parseDocFields(txt);
+      Object.keys(got).forEach(k=>{ if(got[k]&&!merged[k]) merged[k]=got[k]; });
+    }catch(e){ errs.push('서류'+(i+1)+': '+e.message); }
+  }
+  if(!Object.keys(merged).length) throw new Error(errs.join(' / ')||'읽어낸 항목이 없습니다');
+  if(merged.addr) merged.addr=cleanOcrAddr(merged.addr);
+  return merged;
+}
+/* OCR 주소를 지오코딩으로 확인합니다.
+   VWorld 가 정규화한 주소를 돌려주므로 OCR 오탈자가 여기서 걸러집니다.
+   변환이 안 되면 OCR 원문을 그대로 두고 ⚠ 표시만 남깁니다. */
+/* 주소가 조금 깨져도 후보를 찾아주는 VWorld 검색 API (getcoord 는 정확해야 합니다) */
+async function vworldSearchAddr(q){
+  const k=mapsKey(); if(!k) return null;
+  for(const cat of ['road','parcel']){
+    const url='https://api.vworld.kr/req/search?service=search&request=search&version=2.0'+
+      '&crs=EPSG:4326&size=5&page=1&type=address&category='+cat+
+      '&key='+encodeURIComponent(k)+'&query='+encodeURIComponent(q);
+    try{
+      const d=await jsonp(url,9000);
+      const r=d&&d.response;
+      const it=r&&r.result&&r.result.items&&r.result.items[0];
+      if(it&&it.point){
+        return {lat:parseFloat(it.point.y),lng:parseFloat(it.point.x),
+          formatted:(it.address&&(it.address.road||it.address.parcel))||q};
+      }
+    }catch(e){}
+  }
+  return null;
+}
+async function verifyOcrAddr(raw){
+  if(!raw) return {addr:'',ok:false,why:'주소 없음'};
+  if(!mapsKey()) return {addr:raw,ok:false,why:'VWorld 인증키 없음 — 주소 확인 안 됨'};
+  const keep=(hit,how)=>{
+    const norm=(hit&&hit.formatted)||raw;
+    geoStore().checks[norm]={lat:hit.lat,lng:hit.lng,formatted:norm,at:new Date().toISOString()};
+    return {addr:norm,ok:true,how:how,changed:norm!==raw};
+  };
+  /* ① 있는 그대로 ② 상세주소를 뗀 도로명만 ③ 느슨한 검색 */
+  try{ return keep(await geocodeAddr(raw),'정확'); }catch(e){}
+  const core=addrCore(raw);
+  if(core&&core!==raw){ try{ return keep(await geocodeAddr(core),'상세주소 제외'); }catch(e){} }
+  try{
+    const hit=await vworldSearchAddr(core||raw);
+    if(hit) return keep(hit,'검색 보정');
+  }catch(e){}
+  return {addr:raw,ok:false,why:'주소 변환 실패 — 글자가 깨졌을 수 있습니다. 직접 확인해주세요'};
+}
+/* 주소가 빈 신청 건의 서류를 읽어 주소·대표자·면허번호 등을 채웁니다 */
+async function enrichApplicants(logEl,onDone,onlyIds){
+  const NL=String.fromCharCode(10);
+  const list=applicantsOf();
+  const todo=list.filter(a=>{
+    if(onlyIds&&onlyIds.indexOf(a.id)<0) return false;
+    if(String(a.addr||'').trim()) return false;
+    return (a.files||[]).some(f=>driveFileId(f.url));
+  });
+  if(logEl)logEl.classList.add('show');
+  if(!todo.length){
+    if(logEl)logEl.textContent='주소를 읽을 신청이 없습니다 (이미 다 채워졌거나 드라이브 서류가 없습니다)';
+    if(onDone)onDone(); return {done:0,fail:0};
+  }
+  let done=0,fail=0,judged=0; const lines=[];
+  const put=s=>{ if(logEl)logEl.textContent=s+(lines.length?NL+lines.join(NL):''); };
+  for(let i=0;i<todo.length;i++){
+    const a=todo[i];
+    put('('+(i+1)+'/'+todo.length+') '+a.name+' — 서류 읽는 중…');
+    try{
+      const got=await readApplicantDocs(a,s=>put('('+(i+1)+'/'+todo.length+') '+a.name+' — '+s));
+      /* 빈 칸만 채웁니다 (사람이 고쳐둔 값은 건드리지 않습니다) */
+      ['owner','birth','license','biz','bank'].forEach(k=>{
+        if(got[k]&&!String(a[k]||'').trim()) a[k]=got[k];
+      });
+      if(got.addr){
+        put('('+(i+1)+'/'+todo.length+') '+a.name+' — 주소 확인 중…');
+        const v=await verifyOcrAddr(got.addr);
+        a.addr=v.addr;
+        a.addrSrc='사업자등록증 OCR';
+        if(v.ok){ delete a.addrWarn; judged++; }
+        else a.addrWarn=v.why;
+        lines.push((v.ok?'✅ ':'⚠ ')+a.name+' — '+v.addr+
+          (v.ok?(v.how&&v.how!=='정확'?' ('+v.how+')':''):' ('+v.why+')'));
+        done++;
+      }else{
+        a.addrWarn='사업자등록증에서 주소를 못 찾았습니다';
+        lines.push('✕ '+a.name+' — 주소 항목 없음 (면허증만 있거나 글자가 흐립니다)');
+        fail++;
+      }
+    }catch(e){
+      a.addrWarn=e.message;
+      lines.push('✕ '+a.name+' — '+e.message);
+      fail++;
+    }
+    persistLib();
+  }
+  put('완료 — 주소 '+done+'건'+(judged?' (좌표 확인 '+judged+'건)':'')+(fail?' · 실패 '+fail+'건':''));
+  showToast('주소 '+done+'건을 서류에서 읽었습니다');
+  if(onDone)onDone();
+  return {done,fail};
+}
+
 /* ---------- 약사몰 신청메일 → 가입 심사 자동 등록 ----------
    medilabolab 계정의 Apps Script 가 신청 메일을 읽어
    자사몰 주문 시트의 「약사회원신청」 탭에 쌓아 둡니다.
@@ -6308,6 +6481,7 @@ async function importApplicants(logEl,onDone){
 
   const list=applicantsOf();
   let added=0, filled=0;
+  const newIds=[];
   picked.forEach(function(r){
     const store=String(r[c.store]||'').trim();
     const date=String(r[c.at]||'').slice(0,10);
@@ -6328,8 +6502,9 @@ async function importApplicants(logEl,onDone){
       if(t) filled++;
       return;
     }
-    list.push(Object.assign({id:uid('ap'), status:'대기', addr:'', tel:'', birth:'',
-      bank:'', note:'', files:files, src:'신청메일'}, src));
+    const rec=Object.assign({id:uid('ap'), status:'대기', addr:'', tel:'', birth:'',
+      bank:'', note:'', files:files, src:'신청메일'}, src);
+    list.push(rec); newIds.push(rec.id);
     added++;
   });
   if(added||filled){
@@ -6342,6 +6517,10 @@ async function importApplicants(logEl,onDone){
       (dup?'\n중복(원본+전달본) '+dup+'행 건너뜀':'')+
       (skipped?'\n테스트 신청 '+skipped+'행 제외':'');
     showToast('가입 신청 '+added+'건을 등록했습니다');
+    /* 신청 메일에는 주소 칸이 없습니다 — 첨부된 사업자등록증을 읽어 이어서 채웁니다 */
+    if(newIds.length){
+      try{ await enrichApplicants(logEl,null,newIds); }catch(e){}
+    }
   }else{
     if(logEl) logEl.textContent='새로 등록할 신청이 없습니다'+
       (dup?' · 중복 '+dup+'행':'')+(skipped?' · 테스트 '+skipped+'행':'');
@@ -6470,13 +6649,28 @@ function buildApplicants(){
     for(const a of list){if(!a.addr)continue;try{await judgeAddress(a.addr);ok++;}catch(e){fail++;}}
     showToast('판정 '+ok+'건'+(fail?' · 실패 '+fail+'건':''));refreshCurrentView();
   });
+  const noAddr=list.filter(a=>!String(a.addr||'').trim()&&(a.files||[]).some(f=>driveFileId(f.url)));
+  const scan=document.createElement('button');scan.className='icon-btn';
+  scan.textContent='🔍 서류에서 주소 읽기'+(noAddr.length?' ('+noAddr.length+')':'');
+  scan.disabled=!noAddr.length;
+  scan.title='사업자등록증을 읽어 사업장 소재지를 채웁니다';
+  scan.addEventListener('click',async()=>{
+    scan.textContent='읽는 중…';scan.disabled=true;
+    const lg=document.getElementById('apScanLog');
+    await enrichApplicants(lg,refreshCurrentView);
+  });
   const add=document.createElement('button');add.className='icon-btn';add.textContent='＋ 신청 등록';
   add.addEventListener('click',()=>openApplicantModal(null));
-  tools.append(chk,add);h.appendChild(tools);wrap.appendChild(h);
+  tools.append(scan,chk,add);h.appendChild(tools);wrap.appendChild(h);
 
   const note=document.createElement('div');note.className='hint';note.style.marginBottom='10px';
-  note.innerHTML='자사몰 약사 전용관은 가입 시 <b>사업자등록증·약사면허증</b>이 필수입니다. 사업자등록증 주소를 넣으면 <b>레디영 2km 규약</b>을 자동 판정합니다.';
+  note.innerHTML='자사몰 약사 전용관은 가입 시 <b>사업자등록증·약사면허증</b>이 필수입니다.<br>'+
+    '신청 메일에는 주소 칸이 없어서, 첨부된 <b>사업자등록증을 읽어 사업장 소재지를 자동으로 채웁니다</b>. '+
+    'OCR 오탈자는 주소 변환(VWorld)으로 교정하고, 변환이 안 되면 <span style="color:var(--warn)">⚠</span> 를 붙여 직접 확인하도록 남깁니다.';
   wrap.appendChild(note);
+  const apLog=document.createElement('div');apLog.id='apScanLog';apLog.className='up-log';
+  apLog.style.cssText='max-height:190px;margin-bottom:10px;white-space:pre-wrap;';
+  wrap.appendChild(apLog);
   wrap.appendChild(buildApplySync());
 
   if(!list.length){
@@ -6502,7 +6696,7 @@ function buildApplicants(){
     else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
     tr.innerHTML='<td style="font-size:12.5px;">'+(a.date||'-')+'</td>'+
       '<td class="ap-name"></td>'+
-      '<td style="font-size:12.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.note?'<div style="font-size:12px;">'+a.note+'</div>':'')+'</td>'+
+      '<td style="font-size:12.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.addrSrc&&!a.addrWarn?'<div style="font-size:11.5px;color:var(--ink-mute);">'+a.addrSrc+'</div>':'')+(a.addrWarn?'<div style="font-size:11.5px;color:var(--warn);font-weight:700;">⚠ '+a.addrWarn+'</div>':'')+(a.note?'<div style="font-size:12px;">'+a.note+'</div>':'')+'</td>'+
       '<td style="font-size:12px;">'+verdict+'</td>';
     // 약국명 = 상세 보기 버튼
     const tdN=tr.querySelector('.ap-name');
