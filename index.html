@@ -6260,6 +6260,33 @@ function applyDocFields(f){
   return {done,skipped};
 }
 
+/* ---------- 서류 종류 판정 ----------
+   신청 첨부는 보통 약사면허증·사업자등록증·통장사본 3종입니다.
+   「서류1·서류2」 로만 적혀 있으면 어느 게 뭔지 알 수 없어서,
+   ① 파일명 ② OCR 로 읽어낸 항목 순으로 종류를 붙입니다. */
+const DOC_KINDS=['사업자등록증','약사면허증','통장사본'];
+function docKindFromName(nm){
+  const t=String(nm||'').replace(/\s/g,'');
+  if(!t) return '';
+  /* 순서가 중요합니다 — 「사업자통장사본」 은 통장이지 등록증이 아닙니다 */
+  if(/통장|계좌|예금/.test(t)) return '통장사본';
+  if(/면허|자격/.test(t))      return '약사면허증';
+  if(/사업자|등록증/.test(t))  return '사업자등록증';
+  return '';
+}
+/* OCR 로 뽑은 항목이 가장 확실한 단서입니다 (OCR 은 제목 글자를 자주 깨뜨립니다) */
+function docKindFromFields(f,text){
+  const t=String(text||'').replace(/\s/g,'');
+  /* 통장 → 면허 → 등록증 순. 통장에도 주소가 찍혀 나올 수 있어 통장을 먼저 봅니다 */
+  if(/예금주|계좌번호|통장사본|입금계좌/.test(t)) return '통장사본';
+  if(f&&f.bank) return '통장사본';
+  if(/약사면허|보건복지부장관|면허합니다/.test(t)) return '약사면허증';
+  if(/소재지|사업자등록|일반과세|세무서장/.test(t)) return '사업자등록증';
+  if(f&&f.addr) return '사업자등록증';
+  if(f&&f.license) return '약사면허증';
+  return '';
+}
+
 /* ---------- 신청 서류(구글 드라이브)에서 주소 자동 수집 ----------
    신청 메일에는 주소 칸이 없어 2km 판정을 바로 못 돌렸습니다.
    그래서 첨부된 사업자등록증을 직접 읽어 「사업장 소재지」를 가져옵니다.
@@ -6300,6 +6327,19 @@ const OCR_ADDR_FIX=[
   [/([가-힣])\s*로\s*(\d)/g,'$1로 $2'],
   [/[|｜]/g,''],[/[０-９]/g,d=>String.fromCharCode(d.charCodeAt(0)-0xFEE0)]
 ];
+/* 한글 주소에 라틴 덩어리가 섞였다면 도로명이 통째로 깨졌을 수 있습니다.
+   이때는 느슨한 검색을 쓰면 엉뚱한 실제 주소가 잡히므로 검색을 막습니다.
+   (실제 사고: 「부산진구 MEZ 10, 1층(부전동)」 → 검색 → 「가야공원로 10 (가야동)」) */
+function addrHadGarbage(raw){
+  return /(^|[\s,(])[A-Za-z]{2,}(?=[\s,)]|$)/.test(String(raw||''));
+}
+/* 괄호 안 법정동 — 「…(부전동)」 */
+function addrDong(s){
+  const m=String(s||'').match(/[(（]\s*([가-힣]{1,6}[0-9]*(?:동|읍|면|가|리))\s*[)）]/);
+  if(m) return m[1];
+  const m2=String(s||'').match(/([가-힣]{1,6}[0-9]*(?:동|읍|면))(?:\s|,|$)/);
+  return m2?m2[1]:'';
+}
 function cleanOcrAddr(s){
   let t=String(s||'').replace(/\s{2,}/g,' ').trim();
   OCR_ADDR_FIX.forEach(([re,to])=>{t=t.replace(re,to);});
@@ -6326,18 +6366,27 @@ function addrCore(s){
 async function readApplicantDocs(a,onStep){
   const files=(a.files||[]).filter(f=>driveFileId(f.url));
   if(!files.length) throw new Error('드라이브 서류가 없습니다');
-  const merged={}; const errs=[];
+  const merged={}; const errs=[]; const kinds=[];
   for(let i=0;i<files.length;i++){
+    const lbl=files[i].kind||('서류'+(i+1));
     try{
-      if(onStep)onStep('서류'+(i+1)+'/'+files.length+' 받는 중…');
+      if(onStep)onStep(lbl+' ('+(i+1)+'/'+files.length+') 받는 중…');
       const f=await fetchDocFile(files[i].url);
-      const txt=await docReadText(f,s=>{if(onStep)onStep('서류'+(i+1)+'/'+files.length+' '+s);});
+      const txt=await docReadText(f,s=>{if(onStep)onStep(lbl+' ('+(i+1)+'/'+files.length+') '+s);});
       const got=parseDocFields(txt);
+      /* 어느 서류인지 붙입니다 — 파일명이 있으면 그걸 믿고, 없으면 내용으로 판단 */
+      const kind=files[i].kind||docKindFromName(files[i].file)||docKindFromFields(got,txt);
+      if(kind){
+        files[i].kind=kind;
+        files[i].name=(a.name?a.name+' ':'')+kind;
+        kinds.push(kind);
+      }
       Object.keys(got).forEach(k=>{ if(got[k]&&!merged[k]) merged[k]=got[k]; });
-    }catch(e){ errs.push('서류'+(i+1)+': '+e.message); }
+    }catch(e){ errs.push(lbl+': '+e.message); }
   }
+  merged.__kinds=kinds;
   if(!Object.keys(merged).length) throw new Error(errs.join(' / ')||'읽어낸 항목이 없습니다');
-  if(merged.addr) merged.addr=cleanOcrAddr(merged.addr);
+  if(merged.addr){ merged.__addrRaw=merged.addr; merged.addr=cleanOcrAddr(merged.addr); }
   return merged;
 }
 /* OCR 주소를 지오코딩으로 확인합니다.
@@ -6362,11 +6411,17 @@ async function vworldSearchAddr(q){
   }
   return null;
 }
-async function verifyOcrAddr(raw){
+async function verifyOcrAddr(raw,rawBefore){
   if(!raw) return {addr:'',ok:false,why:'주소 없음'};
   if(!mapsKey()) return {addr:raw,ok:false,why:'VWorld 인증키 없음 — 주소 확인 안 됨'};
+  const wantDong=addrDong(rawBefore||raw);
+  const broken=addrHadGarbage(rawBefore||'');
   const keep=(hit,how)=>{
     const norm=(hit&&hit.formatted)||raw;
+    /* 원본에 적힌 법정동과 다른 곳이 나오면 받아들이지 않습니다 */
+    const gotDong=addrDong(norm);
+    if(wantDong&&gotDong&&wantDong!==gotDong)
+      return {addr:raw,ok:false,why:'변환 결과가 다른 동('+gotDong+'≠'+wantDong+') — 직접 확인해주세요'};
     geoStore().checks[norm]={lat:hit.lat,lng:hit.lng,formatted:norm,at:new Date().toISOString()};
     return {addr:norm,ok:true,how:how,changed:norm!==raw};
   };
@@ -6374,11 +6429,15 @@ async function verifyOcrAddr(raw){
   try{ return keep(await geocodeAddr(raw),'정확'); }catch(e){}
   const core=addrCore(raw);
   if(core&&core!==raw){ try{ return keep(await geocodeAddr(core),'상세주소 제외'); }catch(e){} }
-  try{
-    const hit=await vworldSearchAddr(core||raw);
-    if(hit) return keep(hit,'검색 보정');
-  }catch(e){}
-  return {addr:raw,ok:false,why:'주소 변환 실패 — 글자가 깨졌을 수 있습니다. 직접 확인해주세요'};
+  /* 도로명이 깨진 주소로 느슨한 검색을 돌리면 남의 주소가 잡힙니다 — 시도하지 않습니다 */
+  if(!broken){
+    try{
+      const hit=await vworldSearchAddr(core||raw);
+      if(hit){ const r=keep(hit,'검색 보정'); if(r.ok) return r; }
+    }catch(e){}
+  }
+  return {addr:raw,ok:false,
+    why:broken?'도로명이 깨져 읽혔습니다 — 직접 입력해주세요':'주소 변환 실패 — 직접 확인해주세요'};
 }
 /* 주소가 빈 신청 건의 서류를 읽어 주소·대표자·면허번호 등을 채웁니다 */
 async function enrichApplicants(logEl,onDone,onlyIds){
@@ -6386,8 +6445,11 @@ async function enrichApplicants(logEl,onDone,onlyIds){
   const list=applicantsOf();
   const todo=list.filter(a=>{
     if(onlyIds&&onlyIds.indexOf(a.id)<0) return false;
-    if(String(a.addr||'').trim()) return false;
-    return (a.files||[]).some(f=>driveFileId(f.url));
+    const fs2=(a.files||[]).filter(f=>driveFileId(f.url));
+    if(!fs2.length) return false;
+    if(!String(a.addr||'').trim()) return true;
+    /* 주소는 있는데 서류 종류를 아직 모르는 건도 읽습니다 */
+    return fs2.some(f=>!f.kind&&!docKindFromName(f.file||f.name));
   });
   if(logEl)logEl.classList.add('show');
   if(!todo.length){
@@ -6405,15 +6467,24 @@ async function enrichApplicants(logEl,onDone,onlyIds){
       ['owner','birth','license','biz','bank'].forEach(k=>{
         if(got[k]&&!String(a[k]||'').trim()) a[k]=got[k];
       });
+      const kd=(got.__kinds||[]).filter(Boolean);
+      if(String(a.addr||'').trim()){
+        /* 주소는 이미 있으니 서류 종류만 붙이고 끝냅니다 */
+        lines.push((kd.length?'✅ ':'· ')+a.name+' — 서류 '+(kd.length?kd.join(', '):'종류 판별 실패'));
+        if(kd.length)done++; else fail++;
+        persistLib(); continue;
+      }
       if(got.addr){
         put('('+(i+1)+'/'+todo.length+') '+a.name+' — 주소 확인 중…');
-        const v=await verifyOcrAddr(got.addr);
+        const v=await verifyOcrAddr(got.addr,got.__addrRaw);
+        a.addrRaw=got.__addrRaw||got.addr;   /* 나중에 대조할 수 있게 OCR 원문을 남깁니다 */
         a.addr=v.addr;
         a.addrSrc='사업자등록증 OCR';
         if(v.ok){ delete a.addrWarn; judged++; }
         else a.addrWarn=v.why;
         lines.push((v.ok?'✅ ':'⚠ ')+a.name+' — '+v.addr+
-          (v.ok?(v.how&&v.how!=='정확'?' ('+v.how+')':''):' ('+v.why+')'));
+          (v.ok?(v.how&&v.how!=='정확'?' ('+v.how+')':''):' ('+v.why+')')+
+          (kd.length?'  [서류: '+kd.join(', ')+']':''));
         done++;
       }else{
         a.addrWarn='사업자등록증에서 주소를 못 찾았습니다';
@@ -6458,7 +6529,11 @@ async function fetchApplyRows(){
   const ix=n=>head.indexOf(n);
   const c={at:ix('접수일시'),store:ix('약국명'),name:ix('이름'),email:ix('이메일'),
            uid:ix('가입아이디'),lic:ix('약사면허번호'),biz:ix('사업자등록번호'),
-           f1:ix('서류1'),f2:ix('서류2')};
+           docNames:ix('서류명')};
+  /* 서류 열은 늘어날 수 있습니다 (면허증·사업자등록증·통장사본 …) */
+  c.docs=[];
+  for(let i=1;i<=9;i++){ const j=ix('서류'+i); if(j>=0) c.docs.push(j); }
+  if(!c.docs.length){ const j=ix('서류'); if(j>=0) c.docs.push(j); }
   if(c.store<0||c.at<0) throw new Error('탭 양식이 다릅니다 (약국명·접수일시 없음)');
   return {rows:rows.slice(1),c:c};
 }
@@ -6485,8 +6560,16 @@ async function importApplicants(logEl,onDone){
   picked.forEach(function(r){
     const store=String(r[c.store]||'').trim();
     const date=String(r[c.at]||'').slice(0,10);
-    const files=[r[c.f1],r[c.f2]].filter(x=>String(x||'').trim())
-      .map((u,i)=>({name:store+' 서류'+(i+1),url:String(u).trim(),type:'link',at:new Date().toISOString()}));
+    /* 시트의 「서류명」 열에 원본 파일명이 순서대로 들어옵니다 (없으면 서류N 로 둡니다) */
+    const dn=String(c.docNames>=0?(r[c.docNames]||''):'').split('|').map(x=>x.trim());
+    const files=c.docs.map(j=>r[j]).filter(x=>String(x||'').trim())
+      .map((u,i)=>{
+        const raw=dn[i]||'';
+        const kind=docKindFromName(raw);
+        return {name:kind?(store+' '+kind):(raw||(store+' 서류'+(i+1))),
+                kind:kind||'', file:raw, url:String(u).trim(),
+                type:'link', at:new Date().toISOString()};
+      });
     const src={name:store, owner:String(r[c.name]||'').trim(), email:String(r[c.email]||'').trim(),
       uid:String(r[c.uid]||'').trim(), license:String(r[c.lic]||'').trim(),
       biz:String(r[c.biz]||'').trim(), date:date};
@@ -6649,11 +6732,18 @@ function buildApplicants(){
     for(const a of list){if(!a.addr)continue;try{await judgeAddress(a.addr);ok++;}catch(e){fail++;}}
     showToast('판정 '+ok+'건'+(fail?' · 실패 '+fail+'건':''));refreshCurrentView();
   });
-  const noAddr=list.filter(a=>!String(a.addr||'').trim()&&(a.files||[]).some(f=>driveFileId(f.url)));
+  /* 주소가 비었거나, 서류 종류가 아직 안 붙은 건이 대상입니다 */
+  const needScan=list.filter(a=>{
+    const fs2=(a.files||[]).filter(f=>driveFileId(f.url));
+    if(!fs2.length) return false;
+    if(!String(a.addr||'').trim()) return true;
+    return fs2.some(f=>!f.kind&&!docKindFromName(f.file||f.name));
+  });
+  const noAddr=needScan;
   const scan=document.createElement('button');scan.className='icon-btn';
-  scan.textContent='🔍 서류에서 주소 읽기'+(noAddr.length?' ('+noAddr.length+')':'');
+  scan.textContent='🔍 서류 읽기'+(noAddr.length?' ('+noAddr.length+')':'');
   scan.disabled=!noAddr.length;
-  scan.title='사업자등록증을 읽어 사업장 소재지를 채웁니다';
+  scan.title='서류를 읽어 종류(사업자등록증·약사면허증·통장사본)를 붙이고, 사업장 소재지를 채웁니다';
   scan.addEventListener('click',async()=>{
     scan.textContent='읽는 중…';scan.disabled=true;
     const lg=document.getElementById('apScanLog');
@@ -6696,7 +6786,8 @@ function buildApplicants(){
     else if(j&&j.ok===null)verdict='<span style="color:var(--warn);">지점 좌표 필요</span>';
     tr.innerHTML='<td style="font-size:12.5px;">'+(a.date||'-')+'</td>'+
       '<td class="ap-name"></td>'+
-      '<td style="font-size:12.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.addrSrc&&!a.addrWarn?'<div style="font-size:11.5px;color:var(--ink-mute);">'+a.addrSrc+'</div>':'')+(a.addrWarn?'<div style="font-size:11.5px;color:var(--warn);font-weight:700;">⚠ '+a.addrWarn+'</div>':'')+(a.note?'<div style="font-size:12px;">'+a.note+'</div>':'')+'</td>'+
+      '<td style="font-size:12.5px;color:var(--ink-soft);">'+(a.addr||'-')+(a.addrSrc&&!a.addrWarn?'<div style="font-size:11.5px;color:var(--ink-mute);">'+a.addrSrc+'</div>':'')+(a.addrWarn?'<div style="font-size:11.5px;color:var(--warn);font-weight:700;">⚠ '+a.addrWarn+'</div>'+
+        (a.addrRaw?'<div style="font-size:11px;color:var(--ink-mute);">읽은 값: '+a.addrRaw+'</div>':''):'')+(a.note?'<div style="font-size:12px;">'+a.note+'</div>':'')+'</td>'+
       '<td style="font-size:12px;">'+verdict+'</td>';
     // 약국명 = 상세 보기 버튼
     const tdN=tr.querySelector('.ap-name');
@@ -6707,12 +6798,26 @@ function buildApplicants(){
     tdN.appendChild(nb);
     if(a.biz){const sb2=document.createElement('div');sb2.style.cssText='color:var(--ink-soft);font-size:12px;margin-top:3px;';sb2.textContent=a.biz;tdN.appendChild(sb2);}
     // 서류
-    const tdF=document.createElement('td');tdF.style.fontSize='11px';
+    const tdF=document.createElement('td');tdF.style.fontSize='12px';
     if((a.files||[]).length){
-      a.files.forEach(f=>{const l=document.createElement('a');l.href='#';l.textContent='📎';l.title=f.name;
-        l.style.cssText='margin-right:4px;text-decoration:none;';
-        l.addEventListener('click',e=>{e.preventDefault();openLightbox(f);});tdF.appendChild(l);});
-      const cnt=document.createElement('span');cnt.style.color='var(--ink-soft)';cnt.textContent=a.files.length+'건';tdF.appendChild(cnt);
+      const SHORT={'사업자등록증':'사업자','약사면허증':'면허','통장사본':'통장'};
+      a.files.forEach((f,i)=>{
+        const l=document.createElement('a');l.href='#';
+        const kind=f.kind||docKindFromName(f.file||f.name);
+        l.textContent='📎 '+(SHORT[kind]||('서류'+(i+1)));
+        l.title=f.file||f.name||'';
+        l.style.cssText='display:block;margin-bottom:2px;text-decoration:none;font-weight:700;'+
+          (kind?'color:var(--input-blue);':'color:var(--ink-mute);');
+        l.addEventListener('click',e=>{e.preventDefault();openLightbox(f);});tdF.appendChild(l);
+      });
+      /* 3종(사업자·면허·통장) 이 다 있는지 한눈에 */
+      const have={};a.files.forEach(f=>{const k=f.kind||docKindFromName(f.file||f.name);if(k)have[k]=1;});
+      const miss=DOC_KINDS.filter(k=>!have[k]);
+      const cnt=document.createElement('div');cnt.style.cssText='font-size:11.5px;margin-top:2px;';
+      if(!Object.keys(have).length) cnt.innerHTML='<span style="color:var(--ink-mute);">'+a.files.length+'건 · 종류 미확인</span>';
+      else if(miss.length) cnt.innerHTML='<span style="color:var(--warn);">'+miss.join('·')+' 없음</span>';
+      else cnt.innerHTML='<span style="color:var(--good);">✓ 3종 완비</span>';
+      tdF.appendChild(cnt);
     }else{const w2=document.createElement('span');w2.style.color='var(--warn)';w2.textContent='미제출';tdF.appendChild(w2);}
     tr.appendChild(tdF);
     // 승인 상태
