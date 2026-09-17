@@ -3059,6 +3059,18 @@ function findSite(key){
 /* 품목 표기가 흔들립니다 (타이트샷 ↔ 타이트닝샷).
    글자 두 개씩 묶어 겹치는 비율로 같은 품목인지 봅니다. */
 function itemKey(s){ return String(s||'').replace(/\s+/g,'').replace(/[()（）]/g,''); }
+/* 거래처가 늘 다르게 쓰는 품목 이름 (왼쪽 = 상대 표기, 오른쪽 = 우리 품목표 이름).
+   레디영은 발주서에 항상 '타이트샷' 으로 보냅니다 — 사용자 확인(2026-09-17).
+   유사도로도 걸리지만 매번 어림으로 맞추면 언젠가 틀리므로 못 박아 둡니다. */
+const ITEM_ALIAS={
+  '유쎄라블타이트샷600아이크림':'유쎄라블 타이트닝샷 600 아이크림'
+};
+/* 쓰다가 새로 만나는 표기는 확인 창에서 여기에 쌓입니다 */
+function itemAlias(){ lib.itemAlias=lib.itemAlias||{}; return lib.itemAlias; }
+function aliasOf(name){
+  const k=itemKey(name);
+  return itemAlias()[k]||ITEM_ALIAS[k]||'';
+}
 function bigrams(s){
   const out={};
   for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);out[g]=(out[g]||0)+1;}
@@ -3081,6 +3093,8 @@ function knownItemNames(){
 function matchItem(name){
   const k=itemKey(name);
   if(!k) return {name:name,how:'빈 이름'};
+  const al=aliasOf(name);
+  if(al) return {name:al,how:'별칭'};          /* 상대 표기 → 우리 이름 */
   const names=knownItemNames();
   let hit=names.find(n=>itemKey(n)===k);
   if(hit) return {name:hit,how:'정확'};
@@ -3134,8 +3148,21 @@ function openNewFromOrders(sites,items,onDone){
         const pr=document.createElement('input');pr.type='text';pr.value=it.unit?fmt(it.unit):'';
         pr.placeholder='레디영 공급가';
         pr.style.cssText='width:120px;padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;text-align:right;';
+        /* 새 품목이 아니라 '이미 있는 품목의 다른 표기' 인 경우가 많습니다 */
+        const sel=document.createElement('select');
+        sel.style.cssText='width:100%;padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;margin-top:4px;';
+        const o0=document.createElement('option');o0.value='';o0.textContent='새 품목으로 추가';sel.appendChild(o0);
+        knownItemNames().forEach(nn=>{const o=document.createElement('option');o.value=nn;
+          o.textContent='기존 품목의 다른 표기 → '+nn;sel.appendChild(o);});
+        sel.addEventListener('change',()=>{
+          const linked=!!sel.value;
+          pr.disabled=linked; nm.disabled=linked;
+          pr.style.opacity=linked?'.45':'1'; nm.style.opacity=linked?'.45':'1';
+        });
         row.append(cb,nm,pr);b.appendChild(row);
-        itemBoxes.push({cb,nm,pr,raw:it});
+        const row2=document.createElement('div');row2.style.cssText='margin:0 0 10px 26px;';
+        row2.appendChild(sel);b.appendChild(row2);
+        itemBoxes.push({cb,nm,pr,sel,raw:it});
       });
       const hint=document.createElement('div');hint.className='hint';hint.style.marginBottom='14px';
       hint.innerHTML='단가는 발주서에 적힌 <b>레디영 공급가</b>입니다. '+
@@ -3157,8 +3184,14 @@ function openNewFromOrders(sites,items,onDone){
         g.sites.push({id:uid('site'),name:name,addr:x.ad.value.trim(),lat:null,lng:null});
         nSite++;
       });
+      let nAlias=0;
       itemBoxes.forEach(x=>{
         if(!x.cb.checked)return;
+        /* 기존 품목에 연결하면 새로 만들지 않고 별칭만 남깁니다 */
+        if(x.sel&&x.sel.value){
+          itemAlias()[itemKey(x.raw.name)]=x.sel.value;
+          nAlias++; return;
+        }
         const name=x.nm.value.trim();if(!name)return;
         if(extraItems().some(e=>itemKey(e.name)===itemKey(name)))return;
         extraItems().push({name:name,ready:ryNum(x.pr.value),at:new Date().toISOString(),src:'발주메일'});
@@ -3176,7 +3209,8 @@ function openNewFromOrders(sites,items,onDone){
         persistLib();
       }
       document.getElementById('docModal').hidden=true;
-      showToast('지점 '+nSite+'곳 · 품목 '+nItem+'개 추가'+(geoOk?' · 좌표 '+geoOk+'곳':''));
+      showToast('지점 '+nSite+'곳 · 품목 '+nItem+'개 추가'+
+        (nAlias?' · 표기 연결 '+nAlias+'개':'')+(geoOk?' · 좌표 '+geoOk+'곳':''));
       if(onDone)onDone();
     });
     bar.append(ok,no);b.appendChild(bar);
