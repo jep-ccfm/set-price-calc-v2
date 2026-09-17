@@ -1776,6 +1776,7 @@ function renderCompany(k){
     box.appendChild(buildRySync());
     box.appendChild(buildEntrySync());
     box.appendChild(buildOrders('ready','ready'));
+    box.appendChild(buildRyVerify());
     box.appendChild(buildReadyBranch());
     box.appendChild(buildDeposits('ready'));
     box.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
@@ -3038,6 +3039,150 @@ function storeInfoOf(name){
   lib.storeInfo[name]=lib.storeInfo[name]||{};
   return lib.storeInfo[name];
 }
+/* ---------- 발주에서 처음 보는 지점·품목 알아채기 ----------
+   레디영은 지점을 계속 여는데, 새 지점 발주가 들어와도 지점 목록에
+   없으면 2km 판정도 집계도 빠집니다. 발주 메일에는 배송지 주소가
+   들어 있으므로 주소까지 같이 넣어 바로 좌표를 받을 수 있습니다. */
+
+/* '성수' 로 '성수점' 을 찾습니다. 정확 → +점 → 앞글자 순으로 봅니다
+   ('성수' 가 '성수2호점' 에 먼저 걸리면 안 됩니다) */
+function findSite(key){
+  const k=String(key||'').replace(/\s+/g,'');
+  if(!k) return null;
+  const sites=geoStore().sites;
+  const norm=s=>String(s.name||'').replace(/\s+/g,'');
+  return sites.find(s=>norm(s)===k)
+      || sites.find(s=>norm(s)===k+'점')
+      || sites.find(s=>norm(s).replace(/점$/,'')===k)
+      || null;
+}
+/* 품목 표기가 흔들립니다 (타이트샷 ↔ 타이트닝샷).
+   글자 두 개씩 묶어 겹치는 비율로 같은 품목인지 봅니다. */
+function itemKey(s){ return String(s||'').replace(/\s+/g,'').replace(/[()（）]/g,''); }
+function bigrams(s){
+  const out={};
+  for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);out[g]=(out[g]||0)+1;}
+  return out;
+}
+function simRatio(a,b){
+  if(!a||!b) return 0;
+  if(a===b) return 1;
+  const A=bigrams(a),B=bigrams(b);
+  let hit=0,tot=0;
+  Object.keys(A).forEach(g=>{tot+=A[g];hit+=Math.min(A[g],B[g]||0);});
+  Object.keys(B).forEach(g=>{tot+=B[g];});
+  return tot?(2*hit)/tot:0;
+}
+function knownItemNames(){
+  const a=(typeof PRICE_LIST!=='undefined'?PRICE_LIST.map(r=>r[1]):[]);
+  return a.concat(extraItems().map(x=>x.name));
+}
+/* 이미 아는 품목이면 그 이름을, 처음 보는 품목이면 null 을 돌려줍니다 */
+function matchItem(name){
+  const k=itemKey(name);
+  if(!k) return {name:name,how:'빈 이름'};
+  const names=knownItemNames();
+  let hit=names.find(n=>itemKey(n)===k);
+  if(hit) return {name:hit,how:'정확'};
+  hit=names.find(n=>{const a=itemKey(n);return a.indexOf(k)>=0||k.indexOf(a)>=0;});
+  if(hit) return {name:hit,how:'포함'};
+  let best=null,bs=0;
+  names.forEach(n=>{const sc=simRatio(itemKey(n),k);if(sc>bs){bs=sc;best=n;}});
+  if(best&&bs>=0.8) return {name:best,how:'비슷함('+Math.round(bs*100)+'%)',score:bs};
+  return null;
+}
+/* 발주에서 새로 나온 품목은 여기 쌓습니다 (PRICE_LIST 는 코드 상수라 못 늘립니다) */
+function extraItems(){ lib.extraItems=lib.extraItems||[]; return lib.extraItems; }
+
+/* ---------- 확인 창 ---------- */
+function openNewFromOrders(sites,items,onDone){
+  docModalOpen('발주에서 처음 보는 항목',b=>{
+    const note=document.createElement('div');note.className='hint';note.style.marginBottom='12px';
+    note.innerHTML='레디영 발주에 <b>지점 목록·품목표에 없는 항목</b>이 들어왔습니다.<br>'+
+      '체크한 것만 추가합니다. 이름·주소는 고쳐서 넣어도 됩니다.';
+    b.appendChild(note);
+
+    const siteBoxes=[],itemBoxes=[];
+    if(sites.length){
+      const h=document.createElement('div');h.className='sec-h';h.style.marginTop='0';
+      h.textContent='신규 지점 ('+sites.length+')';b.appendChild(h);
+      sites.forEach(s=>{
+        const row=document.createElement('div');
+        row.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;';
+        const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;
+        const nm=document.createElement('input');nm.type='text';nm.value=s.name;
+        nm.style.cssText='width:150px;padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;';
+        const ad=document.createElement('input');ad.type='text';ad.value=s.addr||'';
+        ad.placeholder='배송지 주소';
+        ad.style.cssText='flex:1;min-width:230px;padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;';
+        row.append(cb,nm,ad);b.appendChild(row);
+        siteBoxes.push({cb,nm,ad,raw:s});
+      });
+      const hint=document.createElement('div');hint.className='hint';hint.style.marginBottom='14px';
+      hint.textContent='주소는 발주 메일의 배송지입니다. 추가하면 바로 좌표를 받아 2km 판정에 들어갑니다.';
+      b.appendChild(hint);
+    }
+    if(items.length){
+      const h=document.createElement('div');h.className='sec-h';
+      h.textContent='신규 품목 ('+items.length+')';b.appendChild(h);
+      items.forEach(it=>{
+        const row=document.createElement('div');
+        row.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;';
+        const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;
+        const nm=document.createElement('input');nm.type='text';nm.value=it.name;
+        nm.style.cssText='flex:1;min-width:230px;padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;';
+        const pr=document.createElement('input');pr.type='text';pr.value=it.unit?fmt(it.unit):'';
+        pr.placeholder='레디영 공급가';
+        pr.style.cssText='width:120px;padding:6px 8px;border:1px solid #D6D2C8;border-radius:6px;font-size:12.5px;text-align:right;';
+        row.append(cb,nm,pr);b.appendChild(row);
+        itemBoxes.push({cb,nm,pr,raw:it});
+      });
+      const hint=document.createElement('div');hint.className='hint';hint.style.marginBottom='14px';
+      hint.innerHTML='단가는 발주서에 적힌 <b>레디영 공급가</b>입니다. '+
+        '표기만 다른 같은 품목이면 체크를 풀고 품목표에서 이름을 맞춰주세요.';
+      b.appendChild(hint);
+    }
+
+    const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;margin-top:14px;';
+    const ok=document.createElement('button');ok.className='btn btn-primary btn-sm';ok.textContent='✔ 수락하고 추가';
+    const no=document.createElement('button');no.className='btn btn-ghost btn-sm';no.textContent='나중에';
+    no.addEventListener('click',()=>{document.getElementById('docModal').hidden=true;});
+    ok.addEventListener('click',async()=>{
+      ok.disabled=true;ok.textContent='추가 중…';
+      const g=geoStore();let nSite=0,nItem=0;
+      siteBoxes.forEach(x=>{
+        if(!x.cb.checked)return;
+        const name=x.nm.value.trim();if(!name)return;
+        if(findSite(name))return;
+        g.sites.push({id:uid('site'),name:name,addr:x.ad.value.trim(),lat:null,lng:null});
+        nSite++;
+      });
+      itemBoxes.forEach(x=>{
+        if(!x.cb.checked)return;
+        const name=x.nm.value.trim();if(!name)return;
+        if(extraItems().some(e=>itemKey(e.name)===itemKey(name)))return;
+        extraItems().push({name:name,ready:ryNum(x.pr.value),at:new Date().toISOString(),src:'발주메일'});
+        nItem++;
+      });
+      persistLib();
+      /* 새 지점은 바로 좌표를 받아 둡니다 */
+      let geoOk=0;
+      if(nSite&&mapsKey()){
+        ok.textContent='좌표 받는 중…';
+        for(const s of geoStore().sites){
+          if(typeof s.lat==='number'||!s.addr)continue;
+          try{const p=await geocodeAddr(s.addr);s.lat=p.lat;s.lng=p.lng;geoOk++;}catch(e){}
+        }
+        persistLib();
+      }
+      document.getElementById('docModal').hidden=true;
+      showToast('지점 '+nSite+'곳 · 품목 '+nItem+'개 추가'+(geoOk?' · 좌표 '+geoOk+'곳':''));
+      if(onDone)onDone();
+    });
+    bar.append(ok,no);b.appendChild(bar);
+  });
+}
+
 /* ---------- 레디영 발주 메일 → 발주 자동등록 ----------
    readyyoung@readyyoung.kr 이 지점별로 보내는 발주서 메일을
    Apps Script(레디영_발주메일_수집.gs)가 시트에 쌓아두면 여기서 읽어옵니다.
@@ -3125,6 +3270,27 @@ async function importRyOrders(logEl,onDone){
     if(logEl) logEl.textContent='신규 발주 '+added+'건'+(dup?' · 이미 등록 '+dup+'건':'')+
       NL+lines.join(NL);
     showToast('레디영 발주 '+added+'건을 등록했습니다');
+
+    /* 처음 보는 지점·품목을 모읍니다 — 레디영은 지점을 계속 여는데
+       목록에 없으면 2km 판정도 집계도 빠집니다 */
+    const newSites={}, newItems={};
+    seq.forEach(k=>{
+      const d=byMail[k];
+      const key=ryStoreKey(d.store);
+      if(key&&key!=='(미상)'&&!findSite(key)&&!newSites[key])
+        newSites[key]={name:key,addr:d.addr||'',store:d.store};
+      (d.items||[]).forEach(it=>{
+        if(!it.name||matchItem(it.name))return;
+        const ik=itemKey(it.name);
+        if(!newItems[ik])newItems[ik]={name:it.name,unit:it.unit||0};
+      });
+    });
+    const sv=Object.values(newSites), iv=Object.values(newItems);
+    if(sv.length||iv.length){
+      if(logEl) logEl.textContent+=NL+'처음 보는 항목 — 지점 '+sv.length+'곳 · 품목 '+iv.length+'개';
+      openNewFromOrders(sv,iv,onDone);
+      return;                       /* 창을 닫을 때 다시 그립니다 */
+    }
   }else{
     if(logEl) logEl.textContent='새로 등록할 발주가 없습니다'+(dup?' (이미 등록 '+dup+'건)':'');
     showToast('새 발주가 없습니다');
@@ -3615,6 +3781,158 @@ async function fetchReadyRawdata(logEl, onDone){
   }
 }
 const won_=v=>{const n=Number(String(v==null?'':v).replace(/[,\s₩]/g,''));return isFinite(n)?n:0;};
+
+/* ---------- 발주서 ↔ 배송요청시트 대조 ----------
+   레디영 발주 메일이 원천이고 배송요청시트는 우리가 출고한 기록입니다.
+   둘을 맞춰 「발주는 왔는데 안 나갔거나 수량이 다른 건」 을 찾습니다.
+   맞추는 키: 지점 + 발주일자 (배송요청시트는 발주 다음 날 적히기도 해서
+   '날짜' 가 아니라 '발주일자' 를 씁니다) */
+const RV_ICON={ok:'✅',diff:'⚠',miss:'❌',extra:'➕'};
+const RV_LABEL={ok:'일치',diff:'수량 다름',miss:'출고 누락',extra:'발주서에 없음'};
+
+async function ryVerifyRows(){
+  const got=await fetchEntryRows();
+  const {rows,c}=got;
+  /* 배송요청시트에서 레디영 건만 — 관리메모1 규칙을 그대로 씁니다 */
+  const ship={};
+  rows.forEach(r=>{
+    if(!r) return;
+    const memo=entryKey_(r[c.memo]||'');
+    const rule=ENTRY_RULES.find(x=>x.re.test(memo));
+    if(!rule||rule.pid!=='ready') return;
+    if(ENTRY_FREE.test(memo)) return;                 /* 테스터·샘플은 발주가 아닙니다 */
+    const store=ryStoreKey(r[c.recv]);
+    const d=entryDate_(c.odate>=0?r[c.odate]:'')||entryDate_(r[c.date]);
+    if(!store||!d) return;
+    const name=String(r[c.item]||'').trim();
+    if(!name) return;
+    const m=matchItem(name);
+    const key=store+'|'+d;
+    ship[key]=ship[key]||{store,date:d,items:{},inv:{}};
+    const ik=itemKey(m?m.name:name);
+    ship[key].items[ik]=(ship[key].items[ik]||0)+(parseInt(String(r[c.qty]).replace(/[^0-9-]/g,''),10)||0);
+    ship[key].name=ship[key].name||{};
+    ship[key].name[ik]=m?m.name:name;
+    const inv=String(c.inv>=0?(r[c.inv]||''):'').trim();
+    if(inv) ship[key].inv[inv]=1;
+  });
+
+  /* 발주 메일로 들어온 건만 견줍니다 (배송요청시트에서 만든 발주는 제외) */
+  const orders=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일');
+  /* 발주 메일이 있는 기간만 견줍니다 (그 전 출고는 견줄 발주서가 없습니다) */
+  const dates=orders.map(o=>String(o.date||'')).filter(Boolean).sort();
+  const from=dates[0]||'';
+  const out=[]; const usedKeys={};
+  orders.forEach(o=>{
+    const store=o.storeKey||ryStoreKey(o.store);
+    const key=store+'|'+o.date;
+    usedKeys[key]=1;
+    const s=ship[key];
+    (o.items||[]).forEach(it=>{
+      const m=matchItem(it.name);
+      const ik=itemKey(m?m.name:it.name);
+      const want=it.qty||0;
+      const got2=s?(s.items[ik]||0):0;
+      out.push({store:o.store||store, date:o.date, item:(m?m.name:it.name),
+        want, got:got2, inv:s?Object.keys(s.inv).join(', '):'',
+        st: !s||!got2 ? 'miss' : (want===got2?'ok':'diff')});
+    });
+  });
+  /* 발주서에 없는데 나간 건 (지점·발주일이 발주서와 안 맞는 출고) */
+  Object.keys(ship).forEach(k=>{
+    if(usedKeys[k]) return;
+    const s=ship[k];
+    if(from && String(s.date||'') < from) return;      /* 수집 시작 전 출고는 건너뜁니다 */
+    Object.keys(s.items).forEach(ik=>{
+      out.push({store:s.store, date:s.date, item:s.name[ik]||ik,
+        want:0, got:s.items[ik], inv:Object.keys(s.inv).join(', '), st:'extra'});
+    });
+  });
+  out.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||
+    String(a.store).localeCompare(String(b.store),'ko'));
+  return out;
+}
+
+function buildRyVerify(){
+  const saved=lib.ryVerify||null;
+  const rows=saved&&saved.rows||[];
+  const bad=rows.filter(r=>r.st!=='ok').length;
+  const sum=!saved ? '<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
+    : (bad ? '<span style="color:var(--warn);">확인 필요 '+bad+'건</span>'
+           : '<span style="color:var(--good);">✓ 전부 일치</span>');
+  const fp=foldPanel('🔍 발주서 ↔ 배송요청 대조',sum,'setPriceCalc:ryVerifyOpen',false);
+  const wrap=fp.body;
+
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='레디영 <b>발주 메일</b>을 기준으로 <b>배송요청시트</b>에 빠진 건이나 수량이 다른 건을 찾습니다.<br>'+
+    '지점과 <b>발주일자</b>로 맞춥니다 (배송요청은 발주 다음 날 적히기도 해서 「날짜」가 아니라 「발주일자」를 봅니다).';
+  wrap.appendChild(nt);
+
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;';
+  const b=document.createElement('button');b.className='icon-btn';b.textContent='🔍 대조하기';
+  const lg=document.createElement('div');lg.className='up-log';lg.style.cssText='max-height:120px;margin-bottom:9px;';
+  b.addEventListener('click',async()=>{
+    b.textContent='대조 중…';b.disabled=true;lg.classList.add('show');lg.textContent='배송요청시트를 읽는 중…';
+    try{
+      const r=await ryVerifyRows();
+      lib.ryVerify={at:new Date().toISOString(),rows:r};
+      persistLib();
+      const n=r.filter(x=>x.st!=='ok').length;
+      lg.textContent='대조 완료 — '+r.length+'행 중 확인 필요 '+n+'건';
+      refreshCurrentView();
+    }catch(e){ lg.textContent='✕ '+e.message; }
+    b.textContent='🔍 대조하기';b.disabled=false;
+  });
+  bar.appendChild(b);wrap.append(bar,lg);
+
+  if(!rows.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.innerHTML=saved?'대조 결과가 없습니다 (발주 메일로 들어온 발주가 있어야 합니다).'
+      :'<b>「🔍 대조하기」</b>를 누르면 발주서와 배송요청시트를 맞춰봅니다.';
+    wrap.appendChild(e);return fp.panel;
+  }
+
+  const when=document.createElement('div');when.className='hint';when.style.marginBottom='8px';
+  const froms=rows.map(r=>r.date).filter(Boolean).sort()[0]||'';
+  when.textContent='마지막 대조 '+String(saved.at||'').replace('T',' ').slice(0,16)+
+    (froms?'  ·  대조 범위 '+froms+' 이후 (발주 메일이 들어온 기간)':'');
+  wrap.appendChild(when);
+
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  const t=document.createElement('table');t.className='led-table';t.style.minWidth='760px';
+  t.innerHTML='<thead><tr><th style="width:110px;">판정</th><th style="width:96px;">발주일</th>'+
+    '<th style="width:130px;">지점</th><th>품목</th>'+
+    '<th style="text-align:right;width:70px;">발주</th><th style="text-align:right;width:70px;">출고</th>'+
+    '<th style="width:130px;">송장</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  /* 문제 있는 것부터 */
+  const order={miss:0,diff:1,extra:2,ok:3};
+  rows.slice().sort((a,b)=>(order[a.st]-order[b.st])||String(b.date).localeCompare(String(a.date)))
+    .forEach(r=>{
+      const tr=document.createElement('tr');
+      if(r.st==='miss')tr.style.background='#FBEDE6';
+      else if(r.st==='diff')tr.style.background='#FFF7E6';
+      const col=r.st==='ok'?'var(--good)':(r.st==='extra'?'var(--ink-soft)':'var(--warn)');
+      tr.innerHTML='<td style="white-space:nowrap;color:'+col+';font-weight:800;">'+
+          RV_ICON[r.st]+' '+RV_LABEL[r.st]+'</td>'+
+        '<td style="font-size:12.5px;">'+(r.date||'-')+'</td>'+
+        '<td style="font-size:12.5px;font-weight:700;">'+(r.store||'-')+'</td>'+
+        '<td style="font-size:12.5px;">'+r.item+'</td>'+
+        '<td class="num-cell">'+(r.want||'-')+'</td>'+
+        '<td class="num-cell"'+(r.st==='diff'?' style="color:var(--warn);font-weight:800;"':'')+'>'+
+          (r.got||'-')+'</td>'+
+        '<td style="font-size:11.5px;color:var(--ink-mute);">'+(r.inv||'-')+'</td>';
+      tb.appendChild(tr);
+    });
+  t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
+
+  const cnt={};rows.forEach(r=>{cnt[r.st]=(cnt[r.st]||0)+1;});
+  const tot=document.createElement('div');tot.className='agg-total';
+  tot.innerHTML=Object.keys(RV_LABEL).filter(k=>cnt[k])
+    .map(k=>'<span>'+RV_ICON[k]+' '+RV_LABEL[k]+' <span class="num-mono">'+cnt[k]+'</span></span>').join('');
+  wrap.appendChild(tot);
+  return fp.panel;
+}
 
 /* ---------- 레디영 지점별 대조 ----------
    레디영은 지점이 각자 본사로 보내고, 본사가 우리에게 한 번에 입금합니다.
@@ -7303,7 +7621,6 @@ function buildMallOrders(){
 /* 레디영 지점 기본 목록 (실제 주소 — 2026-09-01 확인) */
 const REDYOUNG_PRESET=[
   ['강남점','서울 서초구 서초대로77길 5, 1층'],
-  ['레디영 본점','서울특별시 강남구 테헤란로5길 51-16, 2층'],
   ['명동점','서울시 중구 명동8나길 7, 1층'],
   ['명동타운점','서울시 중구 명동8가길 31, 1층'],
   ['두타몰점','서울 중구 장충단로 275 두타몰 B2층'],
@@ -7312,8 +7629,13 @@ const REDYOUNG_PRESET=[
   ['홍대점','서울특별시 마포구 홍익로6길 8, 지1층(동교동)'],
   ['홍대2호점(홍대스트리트)','서울특별시 마포구 와우산로21길 36-3, 1층(서교동, 태윤빌딩)'],
   ['부산점','부산광역시 중구 비프광장로 40 피프존쇼핑몰 B동'],
-  ['제주점','제주특별자치도 제주시 신광로 59, 1층(연동)']
+  ['제주점','제주특별자치도 제주시 신광로 59, 1층(연동)'],
+  /* 2026-09 신규 개국 (발주 메일의 배송지 기준) */
+  ['명동플래그쉽','서울특별시 중구 명동10길 36'],
+  ['제주애월점','제주특별자치도 제주시 애월읍 애월로1길 24-8']
 ];
+/* ※ 「레디영 본점」은 사무실이고 매장이 아니라 지점에서 뺐습니다.
+   사무실에서 발주가 나간 기록 때문에 지점처럼 잡혀 2km 판정을 어지럽혔습니다. */
 function loadRedyoungPreset(){
   const g=geoStore();
   let added=0,fixed=0;
