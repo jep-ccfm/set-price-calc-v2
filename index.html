@@ -3034,6 +3034,197 @@ function syncStoreInfoFromApplicants(){
   });
   return {filled, stores};
 }
+/* ---------- 같은 약국, 다른 이름 ----------
+   자사몰 주문은 약국이 직접 적은 이름이 그대로 들어옵니다.
+   같은 곳을 '베러미약국' / '해운대 베러미약국' 처럼 달리 적으면
+   매출도 발주도 미수금도 두 곳으로 갈라집니다.
+   이름은 믿을 수 없으니 주소·전화·좌표로 같은 자리인지 봅니다.
+   합치기로 정한 이름은 적어 두고, 이후 수집부터 자동으로 맞춥니다. */
+function storeAliasOf(){ lib.storeAlias=lib.storeAlias||{}; return lib.storeAlias; }
+function storeMergedOf(){ lib.storeMerged=lib.storeMerged||[]; return lib.storeMerged; }
+function mergeIgnoreOf(){ lib.storeMergeIgnore=lib.storeMergeIgnore||{}; return lib.storeMergeIgnore; }
+function canonStore(name){
+  const raw=String(name||'').trim(); if(!raw) return raw;
+  return storeAliasOf()[storeKey_(raw)]||raw;
+}
+/* 「부산시」와「부산광역시」는 같은 곳입니다 */
+const SIDO_SHORT=[
+  [/^서울(특별시|시)?/,'서울'],[/^부산(광역시|시)?/,'부산'],[/^대구(광역시|시)?/,'대구'],
+  [/^인천(광역시|시)?/,'인천'],[/^광주(광역시|시)?/,'광주'],[/^대전(광역시|시)?/,'대전'],
+  [/^울산(광역시|시)?/,'울산'],[/^세종(특별자치시|시)?/,'세종'],
+  [/^경기(도)?/,'경기'],[/^강원(특별자치도|도)?/,'강원'],[/^제주(특별자치도|도)?/,'제주'],
+  [/^충청북도|^충북/,'충북'],[/^충청남도|^충남/,'충남'],
+  [/^전라북도|^전북특별자치도|^전북/,'전북'],[/^전라남도|^전남/,'전남'],
+  [/^경상북도|^경북/,'경북'],[/^경상남도|^경남/,'경남']
+];
+/* 층·호·상호 꼬리를 떼고 시도 표기를 맞춘 주소. 같으면 같은 자리입니다. */
+function addrMatchKey(a){
+  let t=addrCore(String(a||'').replace(/\s{2,}/g,' ').trim());
+  SIDO_SHORT.forEach(function(x){ t=t.replace(x[0],x[1]); });
+  t=t.replace(/\s+/g,'');
+  /* 시도·시군구만 남은 건 주소라 할 수 없습니다 */
+  return /[0-9]/.test(t)?t:'';
+}
+function telKey_(t){ const d=String(t||'').replace(/[^0-9]/g,''); return d.length>=9?d:''; }
+function addrPoint_(a){
+  const c=(geoStore().checks||{})[String(a||'').trim()];
+  return (c&&c.lat!=null&&c.lng!=null)?{lat:c.lat,lng:c.lng}:null;
+}
+/* 자사몰 약국별로 주소·전화·거래 규모를 모읍니다 */
+function mallStoreRecs(){
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  const m={};
+  Object.keys(led.months||{}).sort().forEach(function(mk){
+    (led.months[mk].docs||[]).forEach(function(d){
+      if(!d.branch) return;
+      const r=m[d.branch]=m[d.branch]||{name:d.branch,addrs:[],tels:[],docs:0,total:0};
+      r.docs++; r.total+=(Number(d.total)||0);
+      const a=String((d.meta&&d.meta['약국주소'])||'').trim();
+      if(a&&r.addrs.indexOf(a)<0) r.addrs.push(a);
+      const t=String((d.meta&&d.meta['전화'])||'').trim();
+      if(t&&r.tels.indexOf(t)<0) r.tels.push(t);
+    });
+  });
+  /* 가입 심사에 적어둔 주소·전화도 근거로 씁니다 */
+  (lib.applicants||[]).forEach(function(a){
+    const r=m[a.name]; if(!r) return;
+    const ad=String(a.addr||'').trim();
+    if(ad&&r.addrs.indexOf(ad)<0) r.addrs.push(ad);
+    const tl=String(a.tel||'').trim();
+    if(tl&&r.tels.indexOf(tl)<0) r.tels.push(tl);
+  });
+  return Object.keys(m).map(function(k){ return m[k]; });
+}
+/* 두 약국이 같은 자리인지. 왜 그렇게 봤는지도 같이 돌려줍니다. */
+function sameStore_(a,b){
+  for(let i=0;i<a.addrs.length;i++) for(let j=0;j<b.addrs.length;j++){
+    const x=addrMatchKey(a.addrs[i]);
+    if(x&&x===addrMatchKey(b.addrs[j])) return '사업장 주소가 같습니다';
+  }
+  for(let i=0;i<a.tels.length;i++) for(let j=0;j<b.tels.length;j++){
+    const x=telKey_(a.tels[i]);
+    if(x&&x===telKey_(b.tels[j])) return '전화번호가 같습니다';
+  }
+  /* 지번과 도로명처럼 표기가 아예 다를 수 있어 좌표도 봅니다.
+     한 건물에 약국이 둘일 수도 있으니 이름이 닮았을 때만 봅니다. */
+  if(simRatio(storeKey_(a.name),storeKey_(b.name))>=0.5){
+    for(let i=0;i<a.addrs.length;i++) for(let j=0;j<b.addrs.length;j++){
+      const p1=addrPoint_(a.addrs[i]),p2=addrPoint_(b.addrs[j]);
+      if(p1&&p2){ const d=haversineM(p1,p2); if(d<=30) return '주소 좌표가 '+d+'m 차이 — 같은 건물입니다'; }
+    }
+  }
+  return '';
+}
+/* 같은 곳으로 보이는 이름 묶음 */
+function findStoreDupes(){
+  const recs=mallStoreRecs(), n=recs.length;
+  const par=recs.map(function(_,i){ return i; });
+  const find=function(i){ while(par[i]!==i){ par[i]=par[par[i]]; i=par[i]; } return i; };
+  const why={};
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+    const r=sameStore_(recs[i],recs[j]);
+    if(!r) continue;
+    const a=find(i),b=find(j); if(a!==b) par[a]=b;
+    why[[recs[i].name,recs[j].name].sort().join(' ↔ ')]=r;
+  }
+  const g={};
+  for(let i=0;i<n;i++){ const r=find(i); (g[r]=g[r]||[]).push(recs[i]); }
+  const ig=mergeIgnoreOf();
+  return Object.keys(g).map(function(k){ return g[k]; })
+    .filter(function(a){ return a.length>1; })
+    .map(function(a){
+      const names=a.map(function(x){ return x.name; }).sort();
+      const key=names.map(storeKey_).sort().join('|');
+      const reasons=[];
+      Object.keys(why).forEach(function(k){
+        const pr=k.split(' ↔ ');
+        if(names.indexOf(pr[0])>=0&&names.indexOf(pr[1])>=0) reasons.push(k+' — '+why[k]);
+      });
+      return {key:key,names:names,recs:a,reasons:reasons};
+    })
+    .filter(function(x){ return !ig[x.key]; });
+}
+/* 여러 이름을 한 이름으로 모읍니다.
+   되돌릴 수 있게 원래 이름을 branchRaw/storeRaw 에 남겨 둡니다. */
+function mergeStores(names,keep){
+  const kk=storeKey_(keep);
+  const from=names.filter(function(x){ return storeKey_(x)!==kk; });
+  const out={docs:0,orders:0,info:0,ship:0,apps:0};
+  if(!from.length) return out;
+  const hit=function(x){ const k=storeKey_(x); return from.some(function(y){ return storeKey_(y)===k; }); };
+  const A=storeAliasOf();
+  /* 이미 이 이름들을 가리키던 별칭이 있으면 사슬이 생깁니다 — 한 단계로 폅니다 */
+  Object.keys(A).forEach(function(k){ if(hit(A[k])) A[k]=keep; });
+  from.forEach(function(x){
+    A[storeKey_(x)]=keep;
+    storeMergedOf().push({from:x,to:keep,at:new Date().toISOString()});
+  });
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  Object.keys(led.months||{}).forEach(function(mk){
+    (led.months[mk].docs||[]).forEach(function(d){
+      if(!hit(d.branch)) return;
+      if(!d.branchRaw) d.branchRaw=d.branch;
+      d.branch=keep; out.docs++;
+    });
+  });
+  (((lib.orders||{}).pharmmall)||[]).forEach(function(o){
+    if(!hit(o.store)) return;
+    if(!o.storeRaw) o.storeRaw=o.store;
+    o.store=keep; out.orders++;
+    /* srcKey 는 재수집 때 중복을 걸러내는 열쇠라 같이 맞춰야 합니다 */
+    const pr=String(o.srcKey||'').split('|');
+    if(pr.length===3&&hit(pr[2])){
+      if(!o.srcKeyRaw) o.srcKeyRaw=o.srcKey;
+      pr[2]=entryKey_(keep); o.srcKey=pr.join('|');
+    }
+  });
+  /* 출고 카운트(약국|품목|수량)도 같은 열쇠로 모읍니다 */
+  const S=shippedOf(), nm={};
+  Object.keys(S.map||{}).forEach(function(k){
+    const pr=k.split('|');
+    if(pr.length===3&&hit(pr[0])){ pr[0]=entryKey_(keep); out.ship++; }
+    const nk=pr.join('|'); nm[nk]=(nm[nk]||0)+S.map[k];
+  });
+  S.map=nm;
+  /* 약국 정보는 빈 칸만 채우고 넘긴 쪽을 지웁니다 */
+  lib.storeInfo=lib.storeInfo||{};
+  const tgt=storeInfoOf(keep);
+  Object.keys(lib.storeInfo).forEach(function(nm2){
+    if(!hit(nm2)) return;
+    const src=lib.storeInfo[nm2]||{};
+    Object.keys(src).forEach(function(f){
+      if(String(src[f]||'').trim()&&!String(tgt[f]||'').trim()){ tgt[f]=src[f]; out.info++; }
+    });
+    delete lib.storeInfo[nm2];
+  });
+  (lib.applicants||[]).forEach(function(a){ if(hit(a.name)){ a.name=keep; out.apps++; } });
+  /* 무시해 둔 묶음에 이 이름들이 들어 있으면 이제 의미가 없습니다 */
+  const ig=mergeIgnoreOf();
+  Object.keys(ig).forEach(function(k){ if(k.split('|').some(hit)) delete ig[k]; });
+  return out;
+}
+/* 합친 것을 되돌립니다. 거래·발주는 원래 이름으로 돌아가지만,
+   약국 정보 표로 옮겨 담은 사업자 정보까지 되돌리지는 않습니다. */
+function unmergeStore(from){
+  const k=storeKey_(from);
+  delete storeAliasOf()[k];
+  lib.storeMerged=storeMergedOf().filter(function(m){ return storeKey_(m.from)!==k; });
+  let back=0;
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  Object.keys(led.months||{}).forEach(function(mk){
+    (led.months[mk].docs||[]).forEach(function(d){
+      if(d.branchRaw&&storeKey_(d.branchRaw)===k){ d.branch=d.branchRaw; delete d.branchRaw; back++; }
+    });
+  });
+  (((lib.orders||{}).pharmmall)||[]).forEach(function(o){
+    if(o.storeRaw&&storeKey_(o.storeRaw)===k){
+      o.store=o.storeRaw; delete o.storeRaw;
+      if(o.srcKeyRaw){ o.srcKey=o.srcKeyRaw; delete o.srcKeyRaw; }
+      back++;
+    }
+  });
+  return back;
+}
 function storeInfoOf(name){
   lib.storeInfo=lib.storeInfo||{};
   lib.storeInfo[name]=lib.storeInfo[name]||{};
@@ -3432,7 +3623,7 @@ function entryDate_(v){
      품목   '유쎄라블 실프팅 4D 크림' ↔ '유쎄라블 실프팅 4D크림'
    그래서 공백을 지운 뒤 약국·품목·수량으로 맞춥니다. */
 function shipKey_(recv,item,qty){
-  return entryKey_(recv)+'|'+entryKey_(item)+'|'+(parseInt(String(qty||'').replace(/[^0-9]/g,''),10)||0);
+  return entryKey_(canonStore(recv))+'|'+entryKey_(item)+'|'+(parseInt(String(qty||'').replace(/[^0-9]/g,''),10)||0);
 }
 function shippedOf(){ lib.entryShipped=lib.entryShipped||{at:'',map:{}}; return lib.entryShipped; }
 /* 배송요청시트를 읽어 '송장 찍힌 건' 을 세어 둡니다.
@@ -3462,7 +3653,7 @@ async function refreshShipped(){
 function mallStoreName_(recv){
   const k=entryKey_(recv);
   const hit=mallStores().filter(n=>entryKey_(n)===k)[0];
-  return hit||String(recv||'').trim();
+  return canonStore(hit||String(recv||'').trim());
 }
 async function importEntryOrders(logEl,onDone){
   if(logEl){logEl.classList.add('show');logEl.textContent='배송요청시트를 읽는 중…';}
@@ -3504,7 +3695,7 @@ async function importEntryOrders(logEl,onDone){
     const date=entryDate_(r[c.date])||entryDate_(r[c.odate]);
     if(!recv||!date) return;
     const pid=(hit.pid==='aquamedi')?entryAquaPid_(recv):hit.pid;
-    const key=pid+'|'+date+'|'+entryKey_(recv);
+    const key=pid+'|'+date+'|'+entryKey_(canonStore(recv));
     groups[key]=groups[key]||{pid:pid,ch:hit.ch,date:date,recv:recv,
       /* 자사몰만 약국별로 나뉘므로 그때만 채웁니다 */
       store:(pid==='pharmmall')?mallStoreName_(recv):'',
@@ -3699,6 +3890,133 @@ function buildMallOrderList(storeName){
 /* 약국 이름 버튼 — 누르면 그 약국 화면으로 */
 let mallActive=null;
 function openMallStore(name){ mallActive=name; switchView('ph_mall'); }
+/* 같은 약국이 두 이름으로 잡혀 있으면 알려주고, 눌러서 합치게 합니다 */
+function buildStoreMerge(){
+  const wrap=document.createElement('div');
+  let dupes=[];
+  try{ dupes=findStoreDupes(); }catch(e){ dupes=[]; }
+  const done=storeMergedOf();
+  if(!dupes.length&&!done.length) return wrap;
+
+  if(dupes.length){
+    const box=document.createElement('div');
+    box.style.cssText='border:1.5px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:16px;background:#FFF8F3;';
+    const t=document.createElement('div');
+    t.style.cssText='font-weight:800;color:var(--warn);margin-bottom:6px;';
+    t.textContent='⚠ 같은 약국이 이름만 다르게 잡혀 있습니다 ('+dupes.length+'건)';
+    box.appendChild(t);
+    const d=document.createElement('div');d.className='hint';d.style.marginBottom='4px';
+    d.innerHTML='이름이 갈리면 <b>매출·발주·미수금이 두 곳으로 나뉩니다</b>. '+
+      '사업장 주소·전화번호·좌표를 보고 같은 자리로 판단한 것들입니다 — 맞으면 하나로 합쳐주세요.';
+    box.appendChild(d);
+    dupes.forEach(function(g){
+      const row=document.createElement('div');
+      row.style.cssText='border-top:1px dashed var(--line);padding:10px 0;';
+      const nm=document.createElement('div');
+      nm.style.cssText='font-weight:700;margin-bottom:5px;';
+      nm.textContent=g.names.join('   ↔   ');
+      row.appendChild(nm);
+      g.recs.forEach(function(r){
+        const li=document.createElement('div');li.className='hint';li.style.lineHeight='1.6';
+        const b1=document.createElement('b');b1.textContent=r.name;
+        li.append('· ',b1,' — 거래 '+r.docs+'건 · '+fmt(r.total)+'원');
+        const sub=document.createElement('div');
+        sub.style.cssText='padding-left:12px;color:var(--ink-soft);';
+        sub.textContent=(r.addrs.join(' / ')||'주소 없음')+(r.tels.length?'  ·  '+r.tels.join(' / '):'');
+        li.appendChild(sub);
+        row.appendChild(li);
+      });
+      if(g.reasons.length){
+        const rz=document.createElement('div');rz.className='hint';
+        rz.style.cssText='margin:6px 0;color:var(--good);font-weight:700;';
+        rz.textContent='근거 — '+g.reasons.join('  /  ');
+        row.appendChild(rz);
+      }
+      const bar=document.createElement('div');
+      bar.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;';
+      const lb=document.createElement('span');lb.className='hint';lb.textContent='남길 이름';
+      const sel=document.createElement('select');
+      g.names.forEach(function(x){ const o=document.createElement('option');o.value=x;o.textContent=x;sel.appendChild(o); });
+      /* 가입 심사에 등록된 이름이 사업자등록증 상호입니다 — 그걸 먼저 씁니다.
+         없으면 거래가 많은 쪽으로 둡니다. */
+      const apNames=(lib.applicants||[]).map(function(a){ return storeKey_(a.name); });
+      const best=g.recs.slice().sort(function(a,b){
+        const ai=apNames.indexOf(storeKey_(a.name))>=0?1:0;
+        const bi=apNames.indexOf(storeKey_(b.name))>=0?1:0;
+        return (bi-ai)||(b.docs-a.docs)||(b.total-a.total);
+      })[0];
+      if(best) sel.value=best.name;
+      sel.style.cssText='max-width:220px;padding:5px 8px;font-family:inherit;font-size:13px;';
+      const ok=document.createElement('button');ok.className='icon-btn';
+      ok.style.cssText='border-color:var(--accent);color:var(--accent);font-weight:800;';
+      ok.textContent='하나로 합치기';
+      ok.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        const keep=sel.value;
+        const gone=g.names.filter(function(x){ return x!==keep; });
+        if(!confirm(gone.join(', ')+' → 「'+keep+'」 으로 합칩니다.'+String.fromCharCode(10)+String.fromCharCode(10)+
+          '거래명세서·발주·출고·약국 정보가 모두 「'+keep+'」 밑으로 모입니다.'+String.fromCharCode(10)+
+          '앞으로 들어오는 주문도 자동으로 맞춥니다. (나중에 해제할 수 있습니다)'+String.fromCharCode(10)+String.fromCharCode(10)+
+          '진행할까요?')) return;
+        const r=mergeStores(g.names,keep);
+        persistLib();
+        showToast('「'+keep+'」 으로 합쳤습니다 — 거래 '+r.docs+'건 · 발주 '+r.orders+'건');
+        refreshCurrentView();
+      });
+      const no=document.createElement('button');no.className='icon-btn';no.textContent='다른 곳입니다';
+      no.title='이 묶음은 다시 묻지 않습니다';
+      no.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        mergeIgnoreOf()[g.key]=new Date().toISOString();
+        persistLib(); showToast('다시 묻지 않습니다'); refreshCurrentView();
+      });
+      bar.append(lb,sel,ok,no);
+      if(apNames.indexOf(storeKey_(sel.value))>=0){
+        const tip=document.createElement('span');tip.className='hint';
+        tip.style.color='var(--good)';tip.textContent='기본값은 가입 심사에 등록된 상호입니다';
+        bar.appendChild(tip);
+      }
+      row.appendChild(bar);
+      box.appendChild(row);
+    });
+    wrap.appendChild(box);
+  }
+
+  if(done.length){
+    const fp=foldPanel('🔗 합쳐둔 약국 이름',
+      '<span style="color:var(--ink-soft);">'+done.length+'건</span>',
+      'setPriceCalc:storeMergeOpen',false);
+    const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='8px';
+    nt.innerHTML='해제하면 앞으로 들어오는 주문부터 다시 따로 잡히고, 이미 합쳐둔 거래·발주는 원래 이름으로 되돌립니다.<br>'+
+      '<span style="color:var(--ink-soft);">약국 정보 표로 옮겨 담은 사업자 정보와 출고 대조 기록은 되돌리지 않습니다 '+
+      '(출고는 배송요청시트를 다시 읽으면 맞춰집니다).</span>';
+    fp.body.appendChild(nt);
+    const tb=document.createElement('table');tb.className='led-table';
+    tb.innerHTML='<thead><tr><th>원래 이름</th><th>합친 이름</th><th style="width:90px;">합친 날</th><th style="width:60px;"></th></tr></thead>';
+    const tby=document.createElement('tbody');
+    done.slice().reverse().forEach(function(m){
+      const tr=document.createElement('tr');
+      const c1=document.createElement('td');c1.textContent=m.from;
+      const c2=document.createElement('td');c2.textContent='→  '+m.to;c2.style.fontWeight='700';
+      const c3=document.createElement('td');c3.textContent=String(m.at||'').slice(0,10);
+      c3.style.color='var(--ink-soft)';
+      const c4=document.createElement('td');
+      const bt=document.createElement('button');bt.className='icon-btn';bt.textContent='해제';
+      bt.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        if(!confirm('「'+m.from+'」 을(를) 다시 따로 잡습니다.'+String.fromCharCode(10)+'진행할까요?')) return;
+        const back=unmergeStore(m.from);
+        persistLib(); showToast('해제했습니다 — '+back+'건을 원래 이름으로 되돌렸습니다');
+        refreshCurrentView();
+      });
+      c4.appendChild(bt);
+      tr.append(c1,c2,c3,c4);tby.appendChild(tr);
+    });
+    tb.appendChild(tby);fp.body.appendChild(tb);
+    wrap.appendChild(fp.panel);
+  }
+  return wrap;
+}
 function buildMallStoreButtons(){
   const list=mallStores();
   const wrap=document.createElement('div');
@@ -4248,6 +4566,7 @@ function renderChannel(view){
     box.appendChild(buildMallContractBar());
     box.appendChild(buildPartners('pharmmall','자사몰 약사 전용관'));
     box.appendChild(buildMallSync());
+    box.appendChild(buildStoreMerge());
     box.appendChild(buildMallStoreButtons());
     box.appendChild(buildMallOrders());
     box.appendChild(buildMallOrderList(null));
@@ -7533,7 +7852,7 @@ async function fetchMallOrders(){
     const qty=parseInt(String(r2[c.qty]||'').replace(/[^0-9]/g,''),10)||0;
     const unit=parseInt(String(r2[c.price]||'').replace(/[^0-9]/g,''),10)||0;
     const sub=parseInt(String(r2[c.sum]||'').replace(/[^0-9]/g,''),10)||qty*unit;
-    if(!byOrder[oid])byOrder[oid]={file:'자사몰 시트',serial:oid,date,branch:name||'미상',
+    if(!byOrder[oid])byOrder[oid]={file:'자사몰 시트',serial:oid,date,branch:canonStore(name)||'미상',
       items:[],qty:0,supply:0,vat:0,total:0,src:'pharmmall',
       meta:{약국주소:addr,전화:String(r2[c.tel]||'').trim(),접수일시:dt},
       isTest:isTestOrder(name,addr)};
@@ -7805,6 +8124,10 @@ function renderHome(){
   // 미처리 가입심사
   const waiting=(lib.applicants||[]).filter(a=>(a.status||'대기')==='대기').length;
   if(waiting)alerts.push({t:'🧾 자사몰 가입 심사 대기 '+waiting+'건',s:'2km 규약 판정 후 승인/거절하세요',view:'ch_pharmmall',kind:'new'});
+  /* 같은 약국이 두 이름으로 잡히면 매출이 갈라집니다 */
+  let dupN=0; try{ dupN=findStoreDupes().length; }catch(e){}
+  if(dupN)alerts.push({t:'🔗 같은 약국인데 이름이 갈린 곳 '+dupN+'건',
+    s:'주소가 같습니다 — 합치지 않으면 매출·미수금이 두 곳으로 나뉩니다',view:'ch_pharmmall',kind:'warn'});
   // 지점 좌표 미등록
   const sites=(lib.geo&&lib.geo.sites)||[];
   const noCoord=sites.filter(s=>typeof s.lat!=='number').length;
