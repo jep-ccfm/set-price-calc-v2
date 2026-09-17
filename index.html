@@ -1773,6 +1773,7 @@ function renderCompany(k){
     box.appendChild(buildBranchStock());
     box.appendChild(buildPriceTable('ready',false));
     box.appendChild(buildTaxDocs('ready'));
+    box.appendChild(buildRySync());
     box.appendChild(buildEntrySync());
     box.appendChild(buildOrders('ready','ready'));
     box.appendChild(buildReadyBranch());
@@ -2359,13 +2360,20 @@ function buildOrders(pid,view){
     wrap.appendChild(e);return wrap;
   }
   const t=document.createElement('table');t.className='ord-table';
-  t.innerHTML='<thead><tr><th style="width:96px;">발주일</th><th style="width:70px;">상태</th><th>품목</th><th style="text-align:right;width:60px;">총수량</th><th style="width:58px;"></th></tr></thead>';
+  const hasStore=list.some(o=>o.store);
+  t.innerHTML='<thead><tr><th style="width:96px;">발주일</th>'+
+    (hasStore?'<th style="width:120px;">지점</th>':'')+
+    '<th style="width:70px;">상태</th><th>품목</th>'+
+    '<th style="text-align:right;width:60px;">총수량</th><th style="width:58px;"></th></tr></thead>';
   const tb=document.createElement('tbody');
   list.forEach(o=>{
     const tr=document.createElement('tr');
     const tq=(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
     const names=(o.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
-    tr.innerHTML='<td>'+(o.date||'-')+'</td><td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
+    tr.innerHTML='<td>'+(o.date||'-')+(o.isNew?'<span class="new-badge">NEW</span>':'')+'</td>'+
+      (hasStore?'<td style="font-size:12.5px;"><b>'+(o.store||'-')+'</b>'+
+        (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+o.src+'</div>':'')+'</td>':'')+
+      '<td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
       '<td style="font-size:12.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
       '<td class="num-cell">'+fmt(tq)+'</td>';
     const td=document.createElement('td');
@@ -3030,6 +3038,124 @@ function storeInfoOf(name){
   lib.storeInfo[name]=lib.storeInfo[name]||{};
   return lib.storeInfo[name];
 }
+/* ---------- 레디영 발주 메일 → 발주 자동등록 ----------
+   readyyoung@readyyoung.kr 이 지점별로 보내는 발주서 메일을
+   Apps Script(레디영_발주메일_수집.gs)가 시트에 쌓아두면 여기서 읽어옵니다.
+   첨부 엑셀은 보지 않습니다 — 메일 본문이 정본입니다. */
+const RY_TAB='레디영발주';
+/* '성수레디영' → '성수' 처럼 꼬리를 떼어 지점 이름만 남깁니다 */
+function ryStoreKey(s){
+  let t=String(s||'').replace(/\s+/g,'').replace(/레디영$/,'');
+  const alias=rdAliasOf();
+  return alias[t]||t||'(미상)';
+}
+async function fetchRyRows(){
+  const url='https://docs.google.com/spreadsheets/d/'+MALL_SHEET_ID+
+    '/gviz/tq?tqx=out:csv&sheet='+encodeURIComponent(RY_TAB)+'&cb='+Date.now();
+  const r=await fetch(url);
+  if(!r.ok) throw new Error('「'+RY_TAB+'」 탭을 읽지 못했습니다 ('+r.status+')\n'+
+    '레디영_발주메일_수집.gs 를 Apps Script 에 붙여넣고 setup() 을 한 번 실행했는지 확인해주세요.');
+  const rows=parseCSV(await r.text());
+  if(rows.length<2) throw new Error('아직 수집된 발주가 없습니다');
+  const head=rows[0].map(h=>String(h||'').trim());
+  const ix=n=>head.indexOf(n);
+  const c={date:ix('발주일'),store:ix('발주처'),code:ix('제품코드'),name:ix('품목'),
+    qty:ix('수량'),unit:ix('단가'),sum:ix('합계'),total:ix('주문총액'),
+    addr:ix('배송지'),to:ix('수령인'),toTel:ix('수령연락처'),
+    mgr:ix('담당자'),mgrTel:ix('담당자연락처'),mgrMail:ix('담당자이메일'),
+    mail:ix('메일ID')};
+  /* 없는 탭을 부르면 구글이 다른 탭을 돌려주기도 합니다 — 열 이름으로 판별합니다 */
+  if(c.date<0||c.store<0||c.name<0)
+    throw new Error('「'+RY_TAB+'」 탭이 없거나 양식이 다릅니다.'+String.fromCharCode(10)+
+      '레디영_발주메일_수집.gs 를 Apps Script 에 붙여넣고 setup() 을 한 번 실행하세요.');
+  return {rows:rows.slice(1),c};
+}
+async function importRyOrders(logEl,onDone){
+  if(logEl){logEl.classList.add('show');logEl.textContent='발주 목록을 읽는 중…';}
+  let got;
+  try{ got=await fetchRyRows(); }
+  catch(e){ if(logEl)logEl.textContent='✕ '+e.message; showToast('발주 목록을 못 읽었습니다'); return; }
+  const {rows,c}=got;
+  const NL=String.fromCharCode(10);
+
+  /* 한 행 = 한 품목이므로 메일ID 로 발주 한 건씩 묶습니다 */
+  const byMail={}, seq=[];
+  rows.forEach(r=>{
+    const name=String(r[c.name]||'').trim();
+    if(!name) return;
+    const key=String(c.mail>=0?(r[c.mail]||''):'')||
+      (String(r[c.date]||'')+'|'+String(r[c.store]||''));
+    if(!byMail[key]){
+      byMail[key]={mailId:String(c.mail>=0?(r[c.mail]||''):''),
+        date:String(r[c.date]||'').slice(0,10),
+        store:String(r[c.store]||'').trim(),
+        addr:String(c.addr>=0?(r[c.addr]||''):'').trim(),
+        to:String(c.to>=0?(r[c.to]||''):'').trim(),
+        toTel:String(c.toTel>=0?(r[c.toTel]||''):'').trim(),
+        mgr:String(c.mgr>=0?(r[c.mgr]||''):'').trim(),
+        total:ryNum(c.total>=0?r[c.total]:0),
+        items:[]};
+      seq.push(key);
+    }
+    byMail[key].items.push({name,qty:ryNum(r[c.qty]),
+      unit:ryNum(r[c.unit]),supply:ryNum(r[c.sum])});
+  });
+
+  const list=ordersOf('ready');
+  let added=0, dup=0;
+  const lines=[];
+  seq.forEach(k=>{
+    const d=byMail[k];
+    /* 이미 등록한 발주는 건너뜁니다 (메일ID 기준) */
+    if(d.mailId && list.some(o=>o.mailId===d.mailId)){ dup++; return; }
+    if(!d.mailId && list.some(o=>o.date===d.date&&o.store===d.store)){ dup++; return; }
+    const tot=d.total||d.items.reduce((a,b)=>a+(b.supply||0),0);
+    list.push({id:uid('ord'), date:d.date, status:'접수',
+      store:d.store, storeKey:ryStoreKey(d.store),
+      items:d.items.map(i=>({name:i.name,qty:i.qty,unit:i.unit,supply:i.supply})),
+      total:tot, addr:d.addr, recv:d.to, tel:d.toTel, mgr:d.mgr,
+      mailId:d.mailId, src:'발주메일', isNew:true});
+    lines.push('✅ '+d.date+' '+d.store+' — 품목 '+d.items.length+'종 · '+fmt(tot)+'원');
+    added++;
+  });
+
+  if(added){
+    list.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+    persistLib();
+    if(logEl) logEl.textContent='신규 발주 '+added+'건'+(dup?' · 이미 등록 '+dup+'건':'')+
+      NL+lines.join(NL);
+    showToast('레디영 발주 '+added+'건을 등록했습니다');
+  }else{
+    if(logEl) logEl.textContent='새로 등록할 발주가 없습니다'+(dup?' (이미 등록 '+dup+'건)':'');
+    showToast('새 발주가 없습니다');
+  }
+  if(onDone) onDone();
+}
+function ryNum(v){
+  const n=String(v==null?'':v).replace(/[^0-9-]/g,'');
+  return n?parseInt(n,10):0;
+}
+function buildRySync(){
+  const uz=document.createElement('div');uz.className='up-zone';
+  const t1=document.createElement('div');t1.className='uz-title';
+  t1.textContent='📧 레디영 발주 메일 가져오기';
+  const t2=document.createElement('div');t2.className='uz-desc';
+  t2.innerHTML='레디영이 지점별로 보내는 <b>발주서 메일</b>을 읽어 발주로 등록합니다.'+
+    '<br>첨부 엑셀은 보지 않고 <b>메일 본문</b>을 그대로 씁니다. 이미 등록한 건은 건너뜁니다.';
+  uz.append(t1,t2);
+  const btns=document.createElement('div');btns.className='up-btns';
+  const b=document.createElement('button');b.className='up-btn';b.textContent='📧 발주 가져오기';
+  const log=document.createElement('div');log.className='up-log';
+  log.style.cssText='max-height:190px;white-space:pre-wrap;';
+  b.addEventListener('click',async()=>{
+    b.textContent='가져오는 중…';b.disabled=true;
+    await importRyOrders(log,refreshCurrentView);
+    b.textContent='📧 발주 가져오기';b.disabled=false;
+  });
+  btns.appendChild(b);uz.append(btns,log);
+  return uz;
+}
+
 /* ---------- 배송요청시트 → 발주 자동등록 ----------
    배송요청시트에는 모든 채널이 섞여 있습니다 (체험단·샘플·일본라방…).
    관리메모1 로 약국 채널만 골라내고, 수취인명으로 약국을 맞춥니다.
