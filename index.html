@@ -6623,7 +6623,10 @@ async function importApplicants(logEl,onDone){
   let got;
   try{ got=await fetchApplyRows(); }
   catch(e){ if(logEl)logEl.textContent='✕ '+e.message; showToast('신청 목록을 못 읽었습니다'); return; }
-  const {rows,c}=got;
+  const {rows,c}=got;
+  /* 신청 첨부는 3장(면허·사업자·통장)인데 시트가 2장까지만 받으면 통장이 빠집니다 */
+  const shortCols=(c.docs.length<3)||(c.docNames<0);
+  const NLx=String.fromCharCode(10);
 
   const seen={}, picked=[]; let skipped=0, dup=0;
   rows.forEach(function(r){
@@ -6681,6 +6684,10 @@ async function importApplicants(logEl,onDone){
       (dup?'\n중복(원본+전달본) '+dup+'행 건너뜀':'')+
       (skipped?'\n테스트 신청 '+skipped+'행 제외':'');
     showToast('가입 신청 '+added+'건을 등록했습니다');
+    if(shortCols&&logEl) logEl.textContent+=NLx+
+      '⚠ 시트가 서류 '+c.docs.length+'장까지만 받고 있습니다 — 통장사본이 빠집니다.'+NLx+
+      '   Desktop/claude/약사몰_신청메일_수집.gs 를 최신본으로 붙여넣고 setup() 을 한 번 실행하세요.'+NLx+
+      '   (이미 수집된 행은 backfillDocs() 가 채웁니다)';
     /* 신청 메일에는 주소 칸이 없습니다 — 첨부된 사업자등록증을 읽어 이어서 채웁니다 */
     if(newIds.length){
       try{ await enrichApplicants(logEl,null,newIds); }catch(e){}
@@ -6688,6 +6695,10 @@ async function importApplicants(logEl,onDone){
   }else{
     if(logEl) logEl.textContent='새로 등록할 신청이 없습니다'+
       (dup?' · 중복 '+dup+'행':'')+(skipped?' · 테스트 '+skipped+'행':'');
+    if(shortCols&&logEl) logEl.textContent+=NLx+
+      '⚠ 시트가 서류 '+c.docs.length+'장까지만 받고 있습니다 — 통장사본이 빠집니다.'+NLx+
+      '   Desktop/claude/약사몰_신청메일_수집.gs 를 최신본으로 붙여넣고 setup() 을 한 번 실행하세요.'+NLx+
+      '   (이미 수집된 행은 backfillDocs() 가 채웁니다)';
     showToast('새 신청이 없습니다');
   }
   if(onDone) onDone();
