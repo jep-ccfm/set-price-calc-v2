@@ -3133,7 +3133,12 @@ function openNewFromOrders(sites,items,onDone){
         siteBoxes.push({cb,nm,ad,raw:s});
       });
       const hint=document.createElement('div');hint.className='hint';hint.style.marginBottom='14px';
-      hint.textContent='주소는 발주 메일의 배송지입니다. 추가하면 바로 좌표를 받아 2km 판정에 들어갑니다.';
+      hint.innerHTML='주소는 발주 메일의 배송지입니다. 추가하면 바로 좌표를 받아 2km 판정에 들어갑니다.<br>'+
+        '<span style="color:var(--warn);font-weight:700;">※ 이카운트 거래처는 따로 등록해야 합니다.</span> '+
+        '신규 지점은 사업자코드가 없어 거래처코드도 없습니다. 코드를 넣기 전까지 '+
+        '레디영 자동화가 그 지점 행을 <b>보류</b>하므로 명세서가 나가지 않습니다.<br>'+
+        '→ 이카운트에 거래처 등록 → 레디영 자동화 「거래처표」에 코드 입력 → 2km 규약 검사 화면의 '+
+        '<b>이카운트 거래처코드</b> 칸에도 같은 코드를 넣어주세요.';
       b.appendChild(hint);
     }
     if(items.length){
@@ -6232,7 +6237,9 @@ function renderGeo(){
     box.appendChild(e);
   }else{
     const t=document.createElement('table');t.className='led-table';
-    t.innerHTML='<thead><tr><th style="width:130px;">지점명</th><th>주소</th><th style="width:150px;">좌표</th><th style="width:30px;"></th></tr></thead>';
+    t.innerHTML='<thead><tr><th style="width:130px;">지점명</th><th>주소</th>'+
+      '<th style="width:150px;">좌표</th><th style="width:120px;">이카운트 거래처코드</th>'+
+      '<th style="width:30px;"></th></tr></thead>';
     const tb=document.createElement('tbody');
     g.sites.forEach((s,i)=>{
       const tr=document.createElement('tr');
@@ -6246,6 +6253,16 @@ function renderGeo(){
       tdC.textContent=(typeof s.lat==='number')?(s.lat.toFixed(5)+', '+s.lng.toFixed(5)):'미변환';
       if(typeof s.lat!=='number')tdC.style.color='var(--warn)';
       tr.appendChild(tdC);
+      /* 이카운트에 거래처가 없으면 명세서를 못 끊습니다 —
+         레디영 자동화가 코드 없는 행을 자동 보류하므로 여기서 미리 알려줍니다 */
+      const tdE=document.createElement('td');
+      const ei=document.createElement('input');ei.type='text';ei.value=s.ecount||'';
+      ei.placeholder='미등록';
+      ei.style.cssText='width:100%;padding:5px 7px;border:1px solid '+
+        (s.ecount?'#D6D2C8':'var(--warn)')+';border-radius:6px;font-size:12.5px;';
+      ei.title='이카운트 거래처코드 — 레디영 자동화 「거래처표」의 코드와 같게 넣으세요';
+      ei.addEventListener('change',e=>{s.ecount=e.target.value.trim();persistLib();renderGeo();});
+      tdE.appendChild(ei);tr.appendChild(tdE);
       const tdD=document.createElement('td');const del=document.createElement('button');del.className='del-btn';del.textContent='✕';
       del.addEventListener('click',()=>{
         if(s.name||s.addr)trashPush('geoSite',s.name||'(이름 없음)',s.addr||'',{},s);
@@ -7767,6 +7784,23 @@ function renderHome(){
         s:'결제 기한 '+ymdText(due)+' 경과 — 입금 확인 필요',view,kind:'warn'});
     });
   });
+
+  /* 발주가 들어왔는데 이카운트 거래처코드가 없는 지점 —
+     그대로 두면 출고는 했는데 명세서를 못 끊습니다 */
+  try{
+    const need={};
+    (ordersOf('ready')||[]).forEach(o=>{
+      if(o.src!=='발주메일') return;
+      const key=o.storeKey||ryStoreKey(o.store);
+      const site=findSite(key);
+      if(site&&!String(site.ecount||'').trim()) need[site.name]=1;
+      else if(!site) need[(o.store||key)+' (지점 미등록)']=1;
+    });
+    const names=Object.keys(need);
+    if(names.length)
+      alerts.push({t:'🧾 이카운트 거래처코드 없음 '+names.length+'곳',
+        s:names.join(', ')+' — 코드가 없으면 명세서 발행이 보류됩니다',view:'geo',kind:'warn'});
+  }catch(e){}
 
   // 미처리 가입심사
   const waiting=(lib.applicants||[]).filter(a=>(a.status||'대기')==='대기').length;
