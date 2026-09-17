@@ -3235,17 +3235,38 @@ function storeInfoOf(name){
    없으면 2km 판정도 집계도 빠집니다. 발주 메일에는 배송지 주소가
    들어 있으므로 주소까지 같이 넣어 바로 좌표를 받을 수 있습니다. */
 
-/* '성수' 로 '성수점' 을 찾습니다. 정확 → +점 → 앞글자 순으로 봅니다
+/* 이름 하나에서 찾아볼 열쇠를 여러 개 뽑습니다.
+   양쪽 다 애칭을 괄호로 답니다 — 지점 목록은 '홍대2호점(홍대스트리트)',
+   레디영 발주서는 '홍대스트리트레디영(홍대2호점)' 처럼 씁니다.
+   괄호 안과 밖을 따로 떼어 둘 다 열쇠로 써야 서로 만납니다. */
+function siteKeys(s){
+  const raw=String(s||'').replace(/\s+/g,'');
+  if(!raw) return [];
+  const parts=[];
+  const m=raw.match(/^(.*?)[(（]([^)）]+)[)）](.*)$/);
+  if(m){ parts.push(m[1]+m[3]); parts.push(m[2]); }
+  parts.push(raw);
+  const out=[];
+  parts.forEach(function(x){
+    const t=String(x||'').replace(/레디영/g,'').replace(/[()（）]/g,'');
+    if(!t) return;
+    [t, t.replace(/점$/,''), /점$/.test(t)?'':t+'점'].forEach(function(v){
+      if(v&&out.indexOf(v)<0) out.push(v);
+    });
+  });
+  return out;
+}
+/* '성수' 로 '성수점' 을 찾습니다. 또렷한 열쇠부터 봅니다
    ('성수' 가 '성수2호점' 에 먼저 걸리면 안 됩니다) */
 function findSite(key){
-  const k=String(key||'').replace(/\s+/g,'');
-  if(!k) return null;
-  const sites=geoStore().sites;
-  const norm=s=>String(s.name||'').replace(/\s+/g,'');
-  return sites.find(s=>norm(s)===k)
-      || sites.find(s=>norm(s)===k+'점')
-      || sites.find(s=>norm(s).replace(/점$/,'')===k)
-      || null;
+  const want=siteKeys(key);
+  if(!want.length) return null;
+  const sites=geoStore().sites||[];
+  for(let i=0;i<want.length;i++){
+    const hit=sites.find(function(s){ return siteKeys(s.name).indexOf(want[i])>=0; });
+    if(hit) return hit;
+  }
+  return null;
 }
 /* 품목 표기가 흔들립니다 (타이트샷 ↔ 타이트닝샷).
    글자 두 개씩 묶어 겹치는 비율로 같은 품목인지 봅니다. */
@@ -3419,10 +3440,31 @@ function openNewFromOrders(sites,items,onDone){
    첨부 엑셀은 보지 않습니다 — 메일 본문이 정본입니다. */
 const RY_TAB='레디영발주';
 /* '성수레디영' → '성수' 처럼 꼬리를 떼어 지점 이름만 남깁니다 */
+/* 지점 목록에 없을 때 쓸 이름 — 괄호 안이 대개 정식 지점명입니다
+   ('성수연무장길레디영(성수2호점)' → '성수2호점') */
+/* 발주처로 찍히지만 매장이 아닌 곳 — 2km 규약도 지점 집계도 해당 없습니다 */
+const RY_NOT_STORE=/창고|물류|온라인몰|G마켓|지마켓|쿠팡|네이버|본사|사무실|무상|샘플/i;
+function isRyStore(s){ return !RY_NOT_STORE.test(String(s||'')); }
+function ryStoreName(s){
+  const raw=String(s||'').replace(/\s+/g,'');
+  const m=raw.match(/[(（]([^)）]+)[)）]/);
+  const t=(m?m[1]:raw).replace(/레디영/g,'').replace(/[()（）]/g,'');
+  return t||raw;
+}
+/* 발주서와 배송요청시트가 같은 지점을 다르게 적어도 한 열쇠로 모으려면,
+   지점 목록에 있는 이름으로 맞춰 두어야 합니다.
+     발주서 '성수연무장길레디영(성수2호점)'  ┐
+     배송요청 '레디영 성수2호점'             ┘ → 둘 다 '성수2호점' */
 function ryStoreKey(s){
-  let t=String(s||'').replace(/\s+/g,'').replace(/레디영$/,'');
+  const raw=String(s||'').replace(/\s+/g,'');
+  if(!raw) return '(미상)';
   const alias=rdAliasOf();
-  return alias[t]||t||'(미상)';
+  const t=raw.replace(/레디영$/,'');
+  if(alias[t]) return alias[t];
+  if(alias[raw]) return alias[raw];
+  const site=findSite(raw);
+  if(site&&site.name) return site.name;
+  return ryStoreName(raw)||'(미상)';
 }
 async function fetchRyRows(){
   const url='https://docs.google.com/spreadsheets/d/'+MALL_SHEET_ID+
@@ -3507,7 +3549,7 @@ async function importRyOrders(logEl,onDone){
     seq.forEach(k=>{
       const d=byMail[k];
       const key=ryStoreKey(d.store);
-      if(key&&key!=='(미상)'&&!findSite(key)&&!newSites[key])
+      if(key&&key!=='(미상)'&&isRyStore(d.store)&&!findSite(key)&&!newSites[key])
         newSites[key]={name:key,addr:d.addr||'',store:d.store};
       (d.items||[]).forEach(it=>{
         if(!it.name||matchItem(it.name))return;
@@ -4181,7 +4223,7 @@ async function ryVerifyRows(){
   const from=dates[0]||'';
   const out=[]; const usedKeys={};
   orders.forEach(o=>{
-    const store=o.storeKey||ryStoreKey(o.store);
+    const store=o.store?ryStoreKey(o.store):(o.storeKey||'');
     const key=store+'|'+o.date;
     usedKeys[key]=1;
     const s=ship[key];
@@ -4210,10 +4252,13 @@ async function ryVerifyRows(){
   return out;
 }
 
+/* 일치한 줄은 볼 일이 없어 접어 둡니다 (브라우저마다 따로) */
+let ryShowOk=false;
 function buildRyVerify(){
   const saved=lib.ryVerify||null;
   const rows=saved&&saved.rows||[];
   const bad=rows.filter(r=>r.st!=='ok').length;
+  const okN=rows.length-bad;
   const sum=!saved ? '<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
     : (bad ? '<span style="color:var(--warn);">확인 필요 '+bad+'건</span>'
            : '<span style="color:var(--good);">✓ 전부 일치</span>');
@@ -4240,7 +4285,14 @@ function buildRyVerify(){
     }catch(e){ lg.textContent='✕ '+e.message; }
     b.textContent='🔍 대조하기';b.disabled=false;
   });
-  bar.appendChild(b);wrap.append(bar,lg);
+  bar.appendChild(b);
+  if(okN){
+    const tg=document.createElement('button');tg.className='icon-btn';
+    tg.textContent=ryShowOk?'일치 숨기기':'✅ 일치한 건도 보기 ('+okN+')';
+    tg.addEventListener('click',()=>{ryShowOk=!ryShowOk;refreshCurrentView();});
+    bar.appendChild(tg);
+  }
+  wrap.append(bar,lg);
 
   if(!rows.length){
     const e=document.createElement('div');e.className='empty-box';
@@ -4251,10 +4303,24 @@ function buildRyVerify(){
 
   const when=document.createElement('div');when.className='hint';when.style.marginBottom='8px';
   const froms=rows.map(r=>r.date).filter(Boolean).sort()[0]||'';
-  when.textContent='마지막 대조 '+String(saved.at||'').replace('T',' ').slice(0,16)+
-    (froms?'  ·  대조 범위 '+froms+' 이후 (발주 메일이 들어온 기간)':'');
+  when.innerHTML='마지막 대조 '+String(saved.at||'').replace('T',' ').slice(0,16)+
+    (froms?'  ·  대조 범위 '+froms+' 이후 (발주 메일이 들어온 기간)':'')+
+    (okN&&!ryShowOk?'<br><span style="color:var(--good);">✅ 발주서와 맞는 '+okN+'줄은 감췄습니다. 남은 줄이 확인할 건입니다.</span>':'');
   wrap.appendChild(when);
 
+  const shown=rows.filter(r=>ryShowOk||r.st!=='ok');
+  if(!shown.length){
+    const e2=document.createElement('div');e2.className='empty-box';
+    e2.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
+    e2.textContent='✅ 발주서와 배송요청시트가 '+rows.length+'줄 모두 일치합니다.';
+    wrap.appendChild(e2);
+    const cnt0={};rows.forEach(r=>{cnt0[r.st]=(cnt0[r.st]||0)+1;});
+    const tot0=document.createElement('div');tot0.className='agg-total';
+    tot0.innerHTML=Object.keys(RV_LABEL).filter(k=>cnt0[k])
+      .map(k=>'<span>'+RV_ICON[k]+' '+RV_LABEL[k]+' <span class="num-mono">'+cnt0[k]+'</span></span>').join('');
+    wrap.appendChild(tot0);
+    return fp.panel;
+  }
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='760px';
   t.innerHTML='<thead><tr><th style="width:110px;">판정</th><th style="width:96px;">발주일</th>'+
@@ -4264,7 +4330,7 @@ function buildRyVerify(){
   const tb=document.createElement('tbody');
   /* 문제 있는 것부터 */
   const order={miss:0,diff:1,extra:2,ok:3};
-  rows.slice().sort((a,b)=>(order[a.st]-order[b.st])||String(b.date).localeCompare(String(a.date)))
+  shown.slice().sort((a,b)=>(order[a.st]-order[b.st])||String(b.date).localeCompare(String(a.date)))
     .forEach(r=>{
       const tr=document.createElement('tr');
       if(r.st==='miss')tr.style.background='#FBEDE6';
@@ -8110,7 +8176,7 @@ function renderHome(){
     const need={};
     (ordersOf('ready')||[]).forEach(o=>{
       if(o.src!=='발주메일') return;
-      const key=o.storeKey||ryStoreKey(o.store);
+      const key=o.store?ryStoreKey(o.store):(o.storeKey||'');
       const site=findSite(key);
       if(site&&!String(site.ecount||'').trim()) need[site.name]=1;
       else if(!site) need[(o.store||key)+' (지점 미등록)']=1;
