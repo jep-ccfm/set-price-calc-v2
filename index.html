@@ -1789,7 +1789,7 @@ function renderCompany(k){
     const todoN=ords.filter(function(o){ return !handed[o.id]; }).length;
     let shipN=0; try{ shipN=ryShipRows().length; }catch(e){}
     const rv=(lib.ryVerify&&lib.ryVerify.rows)||[];
-    const badN=rv.filter(function(r){ return RV_TODO[r.st]; }).length;
+    const badN=(typeof ryTodoRows==='function')?ryTodoRows(rv).length:0;
     const waitN=rv.filter(function(r){ return r.st==='wait'; }).length;
 
     /* 지점별 취급 품목은 쓰던 대로 맨 위에 둡니다 (사용자 요청 2026-09-18) */
@@ -4955,13 +4955,19 @@ async function ryVerifyRows(){
   /* 발주 메일로 들어온 건만 견줍니다 (배송요청시트에서 만든 발주는 제외).
      온라인몰 직배송만 뺍니다 — 개인 이름으로 나가 견줄 짝이 없습니다.
      창고는 창고 이름 그대로 찍히니 견줍니다. */
+  /* 담당자 이름을 이어 뒀으면 직배송도 견줄 수 있습니다 */
+  const aliasTo={};
+  const _al=rdAliasOf(); Object.keys(_al).forEach(function(k){ aliasTo[_al[k]]=1; });
+  const keepIt=function(o){ return !isRyDropship(o.store)||aliasTo[ryStoreKey(o.store)]; };
   const orders=(ordersOf('ready')||[])
-    .filter(o=>o.src==='발주메일')
-    .filter(o=>!isRyDropship(o.store));
-  const skipped=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일'&&isRyDropship(o.store)).length;
+    .filter(o=>o.src==='발주메일').filter(keepIt);
+  const skipped=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일'&&!keepIt(o)).length;
   /* 지점 목록에 없어도 발주가 들어온 수취처는 견줄 대상입니다 (창고 등) */
   const ordStore={};
   orders.forEach(function(o){ ordStore[ryStoreKey(o.store)]=1; });
+  /* 짝을 못 찾은 수취처 이름 — 담당자 이름으로 나간 건입니다.
+     누가 어느 발주처인지는 사람만 아니까 화면에서 한 번 이어 두게 합니다. */
+  const offNames={};
   /* 발주 메일이 있는 기간만 견줍니다 (그 전 출고는 견줄 발주서가 없습니다) */
   const dates=orders.map(o=>String(o.date||'')).filter(Boolean).sort();
   const from=dates[0]||'';
@@ -5060,14 +5066,26 @@ async function ryVerifyRows(){
     if(g.used) return;
     if(from && String(g.d1||'') < from) return;        /* 수집 시작 전 출고는 건너뜁니다 */
     if(earlyTill && String(g.d1||'') <= earlyTill){ early++; return; }
-    /* 지점도 아니고 발주에 나온 적도 없는 수취처 — 온라인몰 직배송 같은 건입니다 */
-    if(!findSite(g.store)&&!ordStore[g.store]){ offBook++; return; }
+    /* 지점도 아니고 발주에 나온 적도 없는 수취처 — 담당자 이름으로 나간 건입니다 */
+    if(!findSite(g.store)&&!ordStore[g.store]){
+      offBook++;
+      const nm=offNames[g.store]=offNames[g.store]||{store:g.store,dates:[],items:[],qty:0};
+      if(nm.dates.indexOf(g.d1)<0) nm.dates.push(g.d1);
+      Object.keys(g.items).forEach(function(ik){
+        const t=(g.name[ik]||ik)+' ×'+g.items[ik];
+        if(nm.items.indexOf(t)<0) nm.items.push(t);
+        nm.qty+=g.items[ik];
+      });
+      return;
+    }
     Object.keys(g.items).forEach(ik=>{
       out.push({store:g.store, date:g.d1, item:g.name[ik]||ik,
         want:0, got:g.items[ik], inv:Object.keys(g.inv).join(', '), st:'extra'});
     });
   });
   out.skipped=skipped; out.offBook=offBook; out.early=early; out.from=from;
+  out.offNames=Object.keys(offNames).map(function(k){ return offNames[k]; });
+  out.ordStores=Object.keys(ordStore);
   out.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||
     String(a.store).localeCompare(String(b.store),'ko'));
   return out;
@@ -5085,6 +5103,19 @@ let ryShowOk=false;
      시트에 줄이 있으면 → 출고
      아예 없으면        → 접수 (아직 우리 차례)
    사람이 「완료(정산)」로 바꿔둔 것은 건드리지 않습니다. */
+/* ---------- 확인을 끝낸 어긋남 ----------
+   미출고분을 빼고 세금계산서를 끊기로 협의하는 식으로, 숫자가 안 맞아도
+   마무리되는 건이 있습니다. 그대로 두면 경고가 영영 남습니다.
+   지금 숫자를 열쇠에 넣어 두어, 나중에 수량이 바뀌면 다시 올라옵니다. */
+function ryOkOf(){ lib.ryVerifyOk=lib.ryVerifyOk||{}; return lib.ryVerifyOk; }
+function ryOkKey(r){
+  return [ryStoreKey(r.store),r.date||'',itemKey(r.item),r.want||0,r.got||0].join('|');
+}
+function ryOkNote(r){ return ryOkOf()[ryOkKey(r)]||null; }
+/* 아직 확인하지 않은 어긋남 */
+function ryTodoRows(rows){
+  return (rows||[]).filter(function(r){ return RV_TODO[r.st]&&!ryOkNote(r); });
+}
 function applyVerifyToOrders(rows){
   const by={};
   (rows||[]).forEach(function(r){
@@ -5107,7 +5138,8 @@ function applyVerifyToOrders(rows){
 function buildRyVerify(){
   const saved=lib.ryVerify||null;
   const rows=saved&&saved.rows||[];
-  const bad=rows.filter(r=>RV_TODO[r.st]).length;
+  const bad=ryTodoRows(rows).length;
+  const closedN=rows.filter(r=>RV_TODO[r.st]&&ryOkNote(r)).length;
   const waitN=rows.filter(r=>r.st==='wait').length;
   const okN=rows.filter(r=>r.st==='ok').length;
   const sum=!saved ? '<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
@@ -5137,7 +5169,7 @@ function buildRyVerify(){
         skipped:r.skipped||0,offBook:r.offBook||0,early:r.early||0,from:r.from||''};
       const st=applyVerifyToOrders(r);
       persistLib();
-      const n=r.filter(x=>RV_TODO[x.st]).length;
+      const n=ryTodoRows(r).length;
       const w=r.filter(x=>x.st==='wait').length;
       const fz2=r.filter(x=>x.free>0).length;
       const sh=r.filter(function(x){ return x.shift; }).length;
@@ -5193,7 +5225,7 @@ function buildRyVerify(){
   t.innerHTML='<thead><tr><th style="width:110px;">판정</th><th style="width:96px;">발주일</th>'+
     '<th style="width:130px;">지점</th><th>품목</th>'+
     '<th style="text-align:right;width:70px;">발주</th><th style="text-align:right;width:70px;">출고</th>'+
-    '<th style="width:130px;">송장</th></tr></thead>';
+    '<th style="width:130px;">송장</th><th style="width:110px;"></th></tr></thead>';
   const tb=document.createElement('tbody');
   /* 문제 있는 것부터 */
   /* wait 를 빼먹으면 NaN 이 되어 정렬이 무너집니다 — 확인할 것부터 올립니다 */
@@ -5225,15 +5257,87 @@ function buildRyVerify(){
           (r.free?'<div style="font-size:11px;color:var(--ink-mute);font-weight:600;">덤 '+r.free+' 포함</div>':'')+
           '</td>'+
         '<td style="font-size:11.5px;color:var(--ink-mute);">'+(r.inv||'-')+'</td>';
+      /* 협의가 끝난 건은 닫아 둘 수 있게 — 안 그러면 경고가 영영 남습니다 */
+      if(RV_TODO[r.st]){
+        const note=ryOkNote(r);
+        const td=document.createElement('td');td.style.whiteSpace='nowrap';
+        if(note){
+          tr.style.background='#F3F0EA';tr.style.opacity='.75';
+          const s2=document.createElement('div');s2.className='hint';
+          s2.style.cssText='color:var(--good);font-weight:700;';
+          s2.textContent='✔ 확인함'+(note.note?' · '+note.note:'');
+          const un=document.createElement('button');un.className='icon-btn';un.textContent='되돌리기';
+          un.addEventListener('click',function(){
+            if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+            delete ryOkOf()[ryOkKey(r)]; persistLib(); refreshCurrentView();
+          });
+          td.append(s2,un);
+        }else{
+          const ok2=document.createElement('button');ok2.className='icon-btn';ok2.textContent='✔ 확인 완료';
+          ok2.title='협의가 끝난 건은 닫아 둡니다. 수량이 바뀌면 다시 올라옵니다.';
+          ok2.addEventListener('click',function(){
+            if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+            openModal({title:'확인 완료로 닫기',
+              desc:r.date+' '+r.store+' · '+r.item+' (발주 '+r.want+' / 출고 '+r.got+')'+
+                String.fromCharCode(10)+'어떻게 마무리했는지 한 줄 적어 두세요. 수량이 바뀌면 다시 올라옵니다.',
+              value:'',confirmText:'닫기',onConfirm:function(v){
+                ryOkOf()[ryOkKey(r)]={at:new Date().toISOString().slice(0,10),note:String(v||'').trim()};
+                persistLib(); refreshCurrentView(); showToast('확인 완료로 닫았습니다');
+              }});
+          });
+          td.appendChild(ok2);
+        }
+        tr.appendChild(td);
+      }else{ tr.appendChild(document.createElement('td')); }
       tb.appendChild(tr);
     });
   t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
 
+  /* 담당자 이름으로 나간 건 — 누가 어느 발주처인지 이어 둡니다 */
+  if((saved.offNames||[]).length){
+    const ob=document.createElement('div');
+    ob.style.cssText='border:1.5px dashed var(--line);border-radius:10px;padding:11px 13px;margin:10px 0 0;';
+    const ot=document.createElement('div');ot.style.cssText='font-weight:800;margin-bottom:4px;';
+    ot.textContent='🔗 지점으로 못 알아본 수취인 '+saved.offNames.length+'곳';
+    ob.appendChild(ot);
+    const od=document.createElement('div');od.className='hint';od.style.marginBottom='8px';
+    od.innerHTML='배송요청시트에 <b>담당자 이름</b>으로 찍힌 건입니다 (창고·온라인몰 담당자 등). '+
+      '어느 발주처인지 이어 두면 그때부터 대조에 들어옵니다.';
+    ob.appendChild(od);
+    const opts=(saved.ordStores||[]).slice().sort();
+    saved.offNames.forEach(function(x){
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:7px 0;border-top:1px dashed var(--line);';
+      const tx=document.createElement('span');tx.className='hint';tx.style.flex='1 1 300px';
+      tx.innerHTML='<b>'+x.store+'</b> — '+(x.dates||[]).join(', ')+'<br>'+
+        '<span style="color:var(--ink-soft);">'+(x.items||[]).join(', ')+'</span>';
+      const sel=document.createElement('select');
+      sel.style.cssText='max-width:220px;padding:5px 8px;font-family:inherit;font-size:13px;';
+      const o0=document.createElement('option');o0.value='';o0.textContent='— 발주처 고르기 —';sel.appendChild(o0);
+      opts.forEach(function(v){ const o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o); });
+      const bt=document.createElement('button');bt.className='icon-btn';bt.textContent='이어두기';
+      bt.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        if(!sel.value){ showToast('발주처를 골라주세요'); return; }
+        rdAliasOf()[x.store]=sel.value;
+        persistLib(); showToast('「'+x.store+'」 → 「'+sel.value+'」 로 이어 뒀습니다 — 다시 대조해주세요');
+        refreshCurrentView();
+      });
+      row.append(tx,sel,bt);ob.appendChild(row);
+    });
+    wrap.appendChild(ob);
+  }
   const cnt={};rows.forEach(r=>{cnt[r.st]=(cnt[r.st]||0)+1;});
   const tot=document.createElement('div');tot.className='agg-total';
   tot.innerHTML=Object.keys(RV_LABEL).filter(k=>cnt[k])
     .map(k=>'<span>'+RV_ICON[k]+' '+RV_LABEL[k]+' <span class="num-mono">'+cnt[k]+'</span></span>').join('');
   wrap.appendChild(tot);
+  if(closedN){
+    const cz=document.createElement('div');cz.className='hint';cz.style.marginTop='6px';
+    cz.innerHTML='✔ <b>확인 완료로 닫은 건 '+closedN+'건</b> — 확인 필요에서 뺐습니다. '+
+      '<span style="color:var(--ink-mute);">수량이 바뀌면 다시 올라옵니다.</span>';
+    wrap.appendChild(cz);
+  }
   const freeN=rows.filter(r=>r.free>0).length;
   if(freeN){
     const fz=document.createElement('div');fz.className='hint';fz.style.marginTop='6px';
