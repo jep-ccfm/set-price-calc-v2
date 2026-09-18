@@ -2466,27 +2466,15 @@ function orderStore_(o){
 function ordersHandedOff(list){
   const out={};
   if(!list.some(o=>o.src==='발주메일')) return out;
-  const qty=o=>(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
-  const day=(d,n2)=>{ const t=new Date(String(d||'')+'T00:00:00Z');
-    if(isNaN(t)) return ''; t.setUTCDate(t.getUTCDate()+n2); return t.toISOString().slice(0,10); };
-  const ship={};
-  list.forEach(o=>{
-    if(o.src!=='배송요청시트') return;
-    out[o.id]=1;
-    const k=ryStoreKey(orderStore_(o))+'|'+(o.date||'');
-    (ship[k]=ship[k]||[]).push(qty(o));
-  });
+  /* 배송요청시트에서 만든 발주는 그 자체가 시트에 있는 것이니 목록에서 내립니다 */
+  list.forEach(o=>{ if(o.src==='배송요청시트') out[o.id]=1; });
+  /* 발주 메일 건은 대조가 정한 상태만 믿습니다.
+     예전에는 지점·날짜(±1일)·수량으로 어림잡았는데, 9/17 배송요청분과
+     9/18 재발주분이 수량이 같아 짝지어져 멀쩡한 발주가 사라졌습니다.
+     시트를 직접 읽는 「🚚 배송요청 반영 확인」 이 있으니 어림짐작은 걷어냅니다. */
   list.forEach(o=>{
     if(o.src!=='발주메일') return;
-    /* 대조에서 배송요청시트에 올라간 것으로 확인된 건 */
-    if(o.status==='출고'||o.status==='완료'){ out[o.id]=1; return; }
-    const st=ryStoreKey(orderStore_(o)), q=qty(o);
-    if(ship[st+'|'+(o.date||'')]){ out[o.id]=1; return; }
-    /* 배송요청은 발주 다음 날 적히기도 합니다 — 수량까지 같을 때만 같은 건으로 봅니다 */
-    for(const n2 of [1,-1]){
-      const a=ship[st+'|'+day(o.date,n2)];
-      if(a&&a.indexOf(q)>=0){ out[o.id]=1; return; }
-    }
+    if(o.status==='출고'||o.status==='완료') out[o.id]=1;
   });
   return out;
 }
@@ -2495,12 +2483,56 @@ function ordersHandedOff(list){
    남은 줄이 아직 출고 요청을 안 넣은 발주입니다. 한 품목이 한 줄입니다. */
 const RY_SHIP_COLS=[['date','발주일',95],['store','지점',130],['addr','주소',280],
   ['tel','전화번호',120],['item','품목',230],['qty','수량',60]];
+/* ---------- 취소하고 다시 보낸 발주 ----------
+   공급가를 고치면 앞 발주서를 취소하고 새로 보냅니다. 앞 건은 무효인데
+   메일이 남아 있어 계속 끌려옵니다.
+   같은 지점·같은 품목·같은 수량인 발주가 사흘 안에 또 오고, 앞 건이 아직
+   배송요청시트에 안 올라갔으면 대체된 것으로 봅니다.
+   사흘과 수량 일치를 둘 다 걸어 둡니다 — 같은 품목을 되풀이 발주하는 지점이
+   많아서, 날짜만 보면 멀쩡한 발주까지 지워집니다. */
+function supersededOrders(list){
+  const out={};
+  const key=function(o){ return ryStoreKey(orderStore_(o))+'|'+
+    (o.items||[]).map(function(i){ return itemKey(i.name)+'×'+i.qty; }).sort().join(','); };
+  const gap=function(a,b){
+    const x=new Date(String(a)+'T00:00:00Z'), y=new Date(String(b)+'T00:00:00Z');
+    if(isNaN(x)||isNaN(y)) return 999;
+    return Math.round((y-x)/86400000);
+  };
+  const by={};
+  (list||[]).forEach(function(o){
+    if(o.src!=='발주메일') return;
+    (by[key(o)]=by[key(o)]||[]).push(o);
+  });
+  Object.keys(by).forEach(function(k){
+    const a=by[k].slice().sort(function(x,y){ return String(x.date).localeCompare(String(y.date)); });
+    if(a.length<2) return;
+    const done=a.filter(function(o){ return o.status==='출고'||o.status==='완료'; });
+    const last=a[a.length-1];
+    a.forEach(function(o){
+      if(o.status==='출고'||o.status==='완료') return;   /* 이미 나간 건은 대체가 아닙니다 */
+      if(o.keepAnyway) return;                           /* 사람이 「아니다」 한 건 */
+      /* ① 같은 내용이 이미 나갔습니다 — 메일이 두 번 온 것입니다 (같은 날도 포함).
+         나중에 온 건은 대체로 보지 않습니다 — 고쳐 보낸 쪽이 나중 것이라,
+         뒤집어 보면 방금 받은 새 발주를 지워 버립니다. */
+      const d=done.filter(function(x){ const g=gap(o.date,x.date); return g>=0&&g<=3; })[0];
+      if(d){ out[o.id]={by:d.date,byId:d.id,why:'같은 발주가 이미 나갔습니다'}; return; }
+      /* ② 사흘 안에 같은 내용이 다시 왔습니다 — 고쳐 보낸 것입니다 */
+      if(o!==last){
+        const g=gap(o.date,last.date);
+        if(g>0&&g<=3) out[o.id]={by:last.date,byId:last.id,why:'같은 발주가 다시 왔습니다'};
+      }
+    });
+  });
+  return out;
+}
 function ryShipRows(){
   const list=ordersOf('ready')||[];
   const handed=ordersHandedOff(list);
+  const sup=supersededOrders(list);
   const out=[];
   list.forEach(function(o){
-    if(o.src!=='발주메일'||handed[o.id]) return;
+    if(o.src!=='발주메일'||handed[o.id]||sup[o.id]) return;
     (o.items||[]).forEach(function(it){
       const m=matchItem(it.name);
       out.push({date:o.date||'', store:orderStore_(o)||'', addr:o.addr||'',
@@ -2573,6 +2605,52 @@ function buildRyShipList(){
     '올린 뒤 <b>「🚚 배송요청 반영 확인」</b>을 누르면 시트를 읽어 상태를 「출고」로 바꾸고 여기서 내립니다.<br>'+
     '순서는 자사몰 「출고할 주문」과 같습니다. 주소·전화는 발주 메일의 배송지 정보입니다.';
   wrap.appendChild(nt);
+
+  /* 취소·재발송으로 보이는 건은 위 목록에서 뺐습니다. 말없이 빼면 발주를 잃으므로 밝혀 둡니다. */
+  const olist=ordersOf('ready')||[];
+  const sup2=supersededOrders(olist);
+  const supOrds=olist.filter(function(o){ return sup2[o.id]; });
+  if(supOrds.length){
+    const sb=document.createElement('div');
+    sb.style.cssText='border:1.5px solid var(--warn);border-radius:10px;padding:11px 13px;margin-bottom:14px;background:#FFF8F3;';
+    const st1=document.createElement('div');
+    st1.style.cssText='font-weight:800;color:var(--warn);margin-bottom:4px;';
+    st1.textContent='⚠ 취소하고 다시 보낸 것으로 보이는 발주 '+supOrds.length+'건 — 위 목록에서 뺐습니다';
+    sb.appendChild(st1);
+    const sd=document.createElement('div');sd.className='hint';sd.style.marginBottom='8px';
+    sd.innerHTML='같은 지점에 <b>같은 품목·수량</b>이 사흘 안에 또 들어왔고, 앞 건은 아직 배송요청시트에 안 올라갔습니다. '+
+      '공급가를 고쳐 다시 보낸 경우입니다.';
+    sb.appendChild(sd);
+    supOrds.forEach(function(o){
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:7px 0;border-top:1px dashed var(--line);';
+      const tx=document.createElement('span');tx.className='hint';tx.style.flex='1 1 320px';
+      tx.innerHTML='<b>'+(o.date||'')+' '+(orderStore_(o)||'')+'</b> — '+
+        ((o.items||[]).map(function(i){ return i.name+' ×'+i.qty; }).join(', '))+
+        '<br><span style="color:var(--ink-soft);">→ '+sup2[o.id].by+' — '+(sup2[o.id].why||'대체된 듯')+'</span>';
+      const ok=document.createElement('button');ok.className='icon-btn';
+      ok.style.cssText='border-color:var(--accent);color:var(--accent);font-weight:800;';
+      ok.textContent='🚫 정리 (다시 안 가져오기)';
+      ok.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        const tq=(o.items||[]).reduce(function(a,b){ return a+(parseFloat(b.qty)||0); },0);
+        orderDropOf('ready')[orderDropKey(o)]={at:new Date().toISOString(),
+          date:o.date||'',store:orderStore_(o)||'',src:o.src||'',qty:tq,
+          items:(o.items||[]).map(function(x){ return x.name+' ×'+x.qty; })};
+        const i=olist.indexOf(o); if(i>=0) olist.splice(i,1);
+        persistLib(); refreshCurrentView(); showToast('정리했습니다 — 다시 가져오지 않습니다');
+      });
+      const no=document.createElement('button');no.className='icon-btn';no.textContent='아니다, 살리기';
+      no.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        o.keepAnyway=true; persistLib(); refreshCurrentView();
+        showToast('출고할 발주에 다시 넣었습니다');
+      });
+      row.append(tx,ok,no);sb.appendChild(row);
+    });
+    wrap.appendChild(sb);
+  }
+
   if(!rows.length){
     const e=document.createElement('div');e.className='empty-box';
     e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
@@ -2670,6 +2748,7 @@ function buildOrders(pid,view){
     (o.items||[]).map(i=>itemKey(i.name)+'×'+i.qty).sort().join(',')].join('|');
   const fpCnt={};
   list.forEach(o=>{ const f=fpOf(o); fpCnt[f]=(fpCnt[f]||0)+1; });
+  let supMap={}; try{ supMap=supersededOrders(list); }catch(e){}
   const tb=document.createElement('tbody');
   shown.forEach(o=>{
     const tr=document.createElement('tr');
@@ -2680,7 +2759,8 @@ function buildOrders(pid,view){
       (hasStore?'<td style="font-size:12.5px;"><b>'+(orderStore_(o)||'-')+'</b>'+
         (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+o.src+'</div>':'')+
         (handed[o.id]?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 배송요청 완료</div>':'')+
-        (dupN>1?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ 똑같은 발주 '+dupN+'건</div>':'')+'</td>':'')+
+        (dupN>1?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ 똑같은 발주 '+dupN+'건</div>':'')+
+        (supMap[o.id]?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ '+supMap[o.id].by+' 발주로 대체된 듯</div>':'')+'</td>':'')+
       '<td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
       '<td style="font-size:12.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
       '<td class="num-cell">'+fmt(tq)+'</td>';
@@ -4219,6 +4299,15 @@ const ENTRY_RULES=[
 const ENTRY_LOOKS_PHARM=/약국|바로팜|자사몰|아쿠아|레디영/;
 /* 테스터·샘플·무상은 발주가 아닙니다 */
 const ENTRY_FREE=/테스터|샘플|무상|증정|체험단|이벤트|당첨|협업|지급건/;
+/* 관리메모1 에 「약국공급+테스터1」 처럼 적기도 합니다. 이건 무상건이 아니라
+   유상 발주에 테스터를 하나 얹은 것입니다. 통째로 걸러내면 그 지점의 배송요청이
+   통째로 사라져 「배송요청 전」 으로 잘못 잡힙니다 (명동플래그쉽 9/02·9/07·9/18).
+   공급·판매가 적혀 있으면 유상 발주로 봅니다. */
+function entryFreeOnly_(memo){
+  const m=entryKey_(memo);
+  if(!ENTRY_FREE.test(m)) return false;
+  return !/공급|판매/.test(m);
+}
 /* 발주 수량에 덤을 얹어 보낼 때 비고에 적어 둡니다.
      「30개 발주 + 테스터 1개」  「약국 발주건 30개 + 디피1개」
    덤은 발주가 아니므로 대조에서 빼야 합니다. 안 빼면 30↔31 이 전부 오류로 뜹니다.
@@ -4834,7 +4923,7 @@ async function ryVerifyRows(){
     const memo=entryKey_(r[c.memo]||'');
     const rule=ENTRY_RULES.find(x=>x.re.test(memo));
     if(!rule||rule.pid!=='ready') return;
-    if(ENTRY_FREE.test(memo)) return;                 /* 테스터·샘플은 발주가 아닙니다 */
+    if(entryFreeOnly_(memo)) return;                  /* 순수 테스터·샘플 건만 뺍니다 */
     const store=ryStoreKey(r[c.recv]);
     const d1=entryDate_(r[c.date]);
     const d2=c.odate>=0?entryDate_(r[c.odate]):'';
@@ -4849,9 +4938,9 @@ async function ryVerifyRows(){
     const ik=itemKey(m?m.name:name);
     g.items[ik]=(g.items[ik]||0)+(parseInt(String(r[c.qty]).replace(/[^0-9-]/g,''),10)||0);
     g.name[ik]=m?m.name:name;
-    /* 비고·배송메시지에 적힌 덤 */
-    const bg=[c.bigo>=0?r[c.bigo]:'',c.msg>=0?r[c.msg]:''].join(' ');
-    const fq=freeQty_(bg);
+    /* 덤은 비고에 적히기도 하고 관리메모1 에 「+테스터1」 로 붙기도 합니다.
+       한 곳에서 찾으면 거기서 멈춥니다 — 두 곳을 더하면 두 배로 빼게 됩니다. */
+    const fq=freeQty_(c.bigo>=0?r[c.bigo]:'')||freeQty_(c.msg>=0?r[c.msg]:'')||freeQty_(r[c.memo]);
     if(fq){ g.free[ik]=(g.free[ik]||0)+fq;
             g.memo[ik]=String(c.bigo>=0?(r[c.bigo]||''):'').trim()||g.memo[ik]||''; }
     const inv=String(c.inv>=0?(r[c.inv]||''):'').trim();
@@ -4894,31 +4983,35 @@ async function ryVerifyRows(){
       return q===want[k]||q-fr===want[k];
     });
   };
-  const pick=function(store,date,o){
-    let hit=groups.filter(g=>!g.used&&g.store===store&&g.d1===date), shift=0;
-    if(!hit.length){
-      /* 「날짜」로는 못 찾았습니다. 「발주일자」가 이 날인 묶음을 봅니다 —
-         단, 그 묶음의 「날짜」에 따로 발주가 있으면 그쪽 것입니다. */
-      hit=groups.filter(g=>!g.used&&g.store===store&&g.d2===date&&!ordered[store+'|'+g.d1]);
-    }
-    if(!hit.length){
-      /* 두 날짜 칸이 모두 출고일로 덮인 행이 있습니다 (발주일자를 안 적고 넘어간 경우).
-         지점·품목·수량이 그대로이고 하루 차이면 같은 건으로 봅니다.
-         수량이 하나라도 다르면 붙이지 않습니다 — 진짜 미출고를 덮으면 안 됩니다. */
-      const ks=[1,-1];
-      for(let i=0;i<ks.length;i++){
-        const d2=dayShift(date,ks[i]);
-        const c=groups.filter(function(g){
-          return !g.used&&g.store===store&&g.d1===d2&&!ordered[store+'|'+d2]&&fits(g,o); });
-        if(c.length){ hit=[c[0]]; shift=ks[i]; break; }
-      }
-    }
-    hit.forEach(function(g){ g.used=true; });
-    return {hit:hit,shift:shift};
-  };
-  orders.forEach(o=>{
+  /* 또렷한 짝부터 차례로 집습니다. 한 번에 훑으면 앞 발주가 뒤 발주의 묶음을
+     가로챕니다 — 명동플래그쉽 9/17(취소분)이 9/16 발주의 배송요청을 채 갔습니다.
+       1차 두 날짜 칸이 모두 발주일  2차 발주일자가 발주일
+       3차 날짜가 발주일            4차 하루 차이 + 품목·수량 일치 */
+  const picked=[];
+  const grab=function(i,o,test,shift){
+    if(picked[i]&&picked[i].hit.length) return;
     const store=ryStoreKey(o.store);
-    const pk=pick(store,o.date,o);
+    const hit=groups.filter(function(g){ return !g.used&&g.store===store&&test(g,store); });
+    if(!hit.length) return;
+    hit.forEach(function(g){ g.used=true; });
+    picked[i]={hit:hit,shift:shift||0};
+  };
+  orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date&&g.d2===o.date; }); });
+  orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d2===o.date; }); });
+  orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date; }); });
+  orders.forEach(function(o,i){
+    if(picked[i]&&picked[i].hit.length) return;
+    const store=ryStoreKey(o.store), ks=[1,-1];
+    for(let j=0;j<ks.length;j++){
+      const d2=dayShift(o.date,ks[j]);
+      const c=groups.filter(function(g){
+        return !g.used&&g.store===store&&g.d1===d2&&!ordered[store+'|'+d2]&&fits(g,o); });
+      if(c.length){ c[0].used=true; picked[i]={hit:[c[0]],shift:ks[j]}; return; }
+    }
+  });
+  orders.forEach((o,i)=>{
+    const store=ryStoreKey(o.store);
+    const pk=picked[i]||{hit:[],shift:0};
     const hit=pk.hit;
     const items={}, inv={}, frees={}, memos={};
     hit.forEach(g=>{
@@ -4976,8 +5069,11 @@ let ryShowOk=false;
    배송요청시트에 올리면 그 발주는 우리 손을 떠난 것입니다. 그런데 대시보드는
    시트를 다시 읽기 전까지 모르고 있어서, 올려도 「출고할 발주」에 그대로
    남아 있었습니다. 대조를 돌릴 때 상태까지 같이 맞춥니다.
-     품목이 전부 시트에 있으면 → 출고
-     일부만 있거나 없으면      → 접수 (아직 우리 차례)
+   그 지점·그 날 배송요청시트에 줄이 있으면 요청은 넣은 것입니다 —
+   품목이 어긋난 건 ② 점검에서 따로 보면 되고, 여기서는 「우리 차례가
+   끝났는가」만 봅니다.
+     시트에 줄이 있으면 → 출고
+     아예 없으면        → 접수 (아직 우리 차례)
    사람이 「완료(정산)」로 바꿔둔 것은 건드리지 않습니다. */
 function applyVerifyToOrders(rows){
   const by={};
