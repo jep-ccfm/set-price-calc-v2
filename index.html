@@ -5049,7 +5049,10 @@ async function ryVerifyRows(){
     if(!store||(!d1&&!d2)) return;
     const name=String(r[c.item]||'').trim();
     if(!name) return;
-    const k=store+'|'+(d1||'')+'|'+(d2||'');
+    /* 같은 지점에 같은 날 두 번 넣기도 합니다 (비타터닝 재발주분 + 루비알엔 정기분).
+       한 묶음으로 뭉치면 앞 발주가 뒤 발주 몫까지 가져가 뒤 발주가 「배송요청 전」 이 됩니다.
+       관리메모1 이 다르면 다른 묶음으로 봅니다. */
+    const k=store+'|'+(d1||'')+'|'+(d2||'')+'|'+entryKey_(r[c.memo]);
     let g=gmap[k];
     if(!g){ g=gmap[k]={store:store,d1:d1||d2,d2:d2||d1,items:{},name:{},inv:{},
                        free:{},memo:{},used:false}; groups.push(g); }
@@ -5120,11 +5123,19 @@ async function ryVerifyRows(){
   const grab=function(i,o,test,shift){
     if(picked[i]&&picked[i].hit.length) return;
     const store=ryStoreKey(o.store);
-    const hit=groups.filter(function(g){ return !g.used&&g.store===store&&test(g,store); });
+    let hit=groups.filter(function(g){ return !g.used&&g.store===store&&test(g,store); });
     if(!hit.length) return;
+    /* 품목이 딱 맞는 묶음이 하나 있으면 그것만 집습니다 — 나머지는 다른 발주 몫입니다 */
+    const exact=hit.filter(function(g){ return fits(g,o); });
+    if(exact.length) hit=[exact[0]];
     hit.forEach(function(g){ g.used=true; });
     picked[i]={hit:hit,shift:shift||0};
   };
+  /* 품목·수량이 딱 맞는 묶음을 먼저 집습니다. 날짜만 보고 집으면 같은 날 발주가
+     둘일 때 앞 발주가 뒤 발주 몫까지 가져갑니다. */
+  orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date&&g.d2===o.date&&fits(g,o); }); });
+  orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d2===o.date&&fits(g,o); }); });
+  orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date&&fits(g,o); }); });
   orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date&&g.d2===o.date; }); });
   orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d2===o.date; }); });
   orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date; }); });
