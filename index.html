@@ -2589,8 +2589,7 @@ function buildRyShipList(){
       rb.disabled=true;rb.textContent='확인 중…';
       try{
         const r=await ryVerifyRows();
-        lib.ryVerify={at:new Date().toISOString(),rows:r,skipped:r.skipped||0,
-          offBook:r.offBook||0,early:r.early||0,from:r.from||''};
+        saveRyVerify(r);
         const c=applyVerifyToOrders(r);
         persistLib();
         showToast(c?('발주 '+c+'건을 「출고」로 바꿨습니다'):'새로 올라간 발주가 없습니다');
@@ -2615,7 +2614,18 @@ function buildRyShipList(){
     dz.style.cssText='margin:-4px 0 12px;padding:8px 10px;border-left:3px solid var(--warn);background:#FFF8F3;';
     dz.innerHTML='⚠ <b>온라인몰 직배송 발주 '+dropN+'건</b>이 남아 있습니다. 배송요청시트에 '+
       '<b>담당자 이름</b>으로 찍혀 대조가 안 되니 상태가 정해지지 않습니다.<br>'+
-      '아래 <b>「🔍 발주서 ↔ 배송요청 대조」 → 「🔗 지점으로 못 알아본 수취인」</b>에서 담당자를 한 번 이어 두세요.';
+      '<b>「🔗 수취인 이어두기」</b>에서 담당자를 한 번 이어 두면 그때부터 대조에 들어옵니다.';
+    const go=document.createElement('button');go.className='icon-btn';
+    go.style.cssText='margin-top:7px;border-color:var(--warn);color:var(--warn);font-weight:800;';
+    go.textContent='🔗 수취인 이어두기';
+    go.addEventListener('click',function(){
+      const pn=[...document.querySelectorAll('.ch-panel')].filter(function(x){
+        return x.querySelector('.ch-head')&&x.querySelector('.ch-head').textContent.indexOf('↔')>=0; })[0];
+      if(!pn){ showToast('대조 화면을 찾지 못했습니다'); return; }
+      if(!pn.classList.contains('open')) pn.querySelector('.ch-head').click();
+      setTimeout(function(){ pn.scrollIntoView({block:'start',behavior:'smooth'}); },150);
+    });
+    dz.appendChild(go);
     wrap.appendChild(dz);
   }
 
@@ -5107,7 +5117,13 @@ async function ryVerifyRows(){
   });
   out.skipped=skipped; out.offBook=offBook; out.early=early; out.from=from;
   out.offNames=Object.keys(offNames).map(function(k){ return offNames[k]; });
-  out.ordStores=Object.keys(ordStore);
+  /* 고를 목록에는 직배송 발주처도 넣습니다 — 이어두려는 상대가 바로 그것입니다 */
+  const allStores={};
+  (ordersOf('ready')||[]).forEach(function(o){
+    if(o.src!=='발주메일') return;
+    const k=ryStoreKey(o.store); if(k&&k!=='(미상)') allStores[k]=1;
+  });
+  out.ordStores=Object.keys(allStores);
   out.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||
     String(a.store).localeCompare(String(b.store),'ko'));
   return out;
@@ -5129,6 +5145,15 @@ let ryShowOk=false;
    미출고분을 빼고 세금계산서를 끊기로 협의하는 식으로, 숫자가 안 맞아도
    마무리되는 건이 있습니다. 그대로 두면 경고가 영영 남습니다.
    지금 숫자를 열쇠에 넣어 두어, 나중에 수량이 바뀌면 다시 올라옵니다. */
+/* 대조 결과를 담아 둡니다. 저장하는 자리가 두 군데(대조하기·배송요청 반영 확인)라
+   따로 적어 두면 한쪽에만 값이 들어갑니다 — 실제로 offNames 가 그렇게 새서
+   「수취인 잇기」 가 아예 안 떴습니다. 한 함수로 모읍니다. */
+function saveRyVerify(r){
+  lib.ryVerify={at:new Date().toISOString(), rows:r,
+    skipped:r.skipped||0, offBook:r.offBook||0, early:r.early||0, from:r.from||'',
+    offNames:r.offNames||[], ordStores:r.ordStores||[]};
+  return lib.ryVerify;
+}
 function ryOkOf(){ lib.ryVerifyOk=lib.ryVerifyOk||{}; return lib.ryVerifyOk; }
 function ryOkKey(r){
   return [ryStoreKey(r.store),r.date||'',itemKey(r.item),r.want||0,r.got||0].join('|');
@@ -5188,8 +5213,7 @@ function buildRyVerify(){
     b.textContent='대조 중…';b.disabled=true;lg.classList.add('show');lg.textContent='배송요청시트를 읽는 중…';
     try{
       const r=await ryVerifyRows();
-      lib.ryVerify={at:new Date().toISOString(),rows:r,
-        skipped:r.skipped||0,offBook:r.offBook||0,early:r.early||0,from:r.from||''};
+      saveRyVerify(r);
       const st=applyVerifyToOrders(r);
       persistLib();
       const n=ryTodoRows(r).length;
