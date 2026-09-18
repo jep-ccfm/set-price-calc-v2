@@ -2493,7 +2493,7 @@ const BRANCH_STOCK=[
   ['루비알엔','루비알엔 토닝샷 앰플',            [1,1,1,1,1,1,1,1,0,1]],
   ['루비알엔','루비알엔 피코샷 크림',            [1,1,1,1,1,1,1,1,0,1]],
   ['유쎄라블','유쎄라블 2X 볼륨필인 앰플',        [1,1,1,1,1,1,1,0,0,0]],
-  ['유쎄라블','유쎄라블 4D 실프팅 크림',          [1,1,1,1,1,1,1,0,0,0]],
+  ['유쎄라블','유쎄라블 실프팅 4D 크림',          [1,1,1,1,1,1,1,0,0,0]],   /* 가격표 표기에 맞춤 */
   ['유쎄라블','유쎄라블 리프팅샷 900 아이크림',   [1,1,1,1,1,1,1,1,1,1]],
   ['유쎄라블','유쎄라블 타이트닝샷 600 아이크림', [1,1,1,1,1,1,1,1,1,1]],
   ['포어시그널','포어시그널 셀텐자 크림',         [1,1,1,1,1,1,1,1,0,0]],
@@ -2532,42 +2532,167 @@ function buildPriceTable(channelKey,openDefault){
   return p;
 }
 
+/* ---------- 지점별 취급 품목 ----------
+   입점표(BRANCH_STOCK)는 사람이 손으로 채운 2026-08-28 기준입니다.
+   레디영은 지점을 계속 열고 품목도 늘어나는데, 표를 손으로만 고치면 곧 낡습니다.
+   그래서 실제 발주 실적을 겹쳐 그립니다 —
+     ● 입점표에 있는 품목
+     ◍ 입점표엔 없는데 발주가 들어온 것 (표가 낡았다는 뜻입니다)
+   새 지점·새 품목은 줄과 칸을 스스로 늘립니다. */
+function branchStockLive(){
+  /* 발주 실적 — 지점 × 품목 */
+  const hits={};
+  (ordersOf('ready')||[]).forEach(function(o){
+    const st=ryStoreKey(orderStore_(o));
+    if(!st||st==='(미상)'||!isRyStore(st)) return;
+    /* 배송요청시트에는 온라인몰 직배송이 개인 이름으로 찍힙니다 (윤현모·임행하…).
+       지점 목록에 있는 곳이거나, 레디영이 직접 보낸 발주서에 적힌 곳만 지점으로 봅니다. */
+    if(!findSite(st) && o.src!=='발주메일') return;
+    (o.items||[]).forEach(function(it){
+      const m=matchItem(it.name);
+      const nm=m?m.name:String(it.name||'').trim();
+      if(!nm) return;
+      const k=st+'|'+itemKey(nm);
+      const hh=hits[k]=hits[k]||{store:st,item:nm,n:0,last:''};
+      hh.n++;
+      if(String(o.date||'')>hh.last) hh.last=String(o.date||'');
+    });
+  });
+
+  /* 열 — 입점표 순서를 지키고, 표에 없는 지점은 뒤에 붙입니다 */
+  const cols=BRANCH_LIST.slice(), colKey={};
+  cols.forEach(function(c){ colKey[c]=siteKeys(c); });
+  const findCol=function(st){
+    const k=siteKeys(st);
+    for(let i=0;i<cols.length;i++){
+      if(colKey[cols[i]].some(function(x){ return k.indexOf(x)>=0; })) return cols[i];
+    }
+    return null;
+  };
+  const newCols=[];
+  Object.keys(hits).forEach(function(k){
+    const st=hits[k].store;
+    if(findCol(st)) return;
+    /* 지점 목록에 등록된 이름으로 적습니다 (긴 애칭은 짧게) */
+    const site=findSite(st);
+    const label=site?site.name:st;
+    if(newCols.indexOf(label)>=0) return;
+    newCols.push(label); cols.push(label); colKey[label]=siteKeys(label);
+  });
+
+  /* 줄 */
+  const rows=BRANCH_STOCK.map(function(r){
+    return {line:r[0],name:r[1],base:r[2].slice(),isNew:false};
+  });
+  const seen={};
+  rows.forEach(function(r){ seen[itemKey(r.name)]=r; });
+  const newRows=[];
+  Object.keys(hits).forEach(function(k){
+    const nm=hits[k].item, ik=itemKey(nm);
+    if(seen[ik]) return;
+    const pr=(typeof PRICE_LIST!=='undefined')
+      ? PRICE_LIST.filter(function(x){ return itemKey(x[1])===ik; })[0] : null;
+    const r={line:pr?pr[0]:String(nm).split(' ')[0],name:pr?pr[1]:nm,base:[],isNew:true};
+    seen[ik]=r; rows.push(r); newRows.push(r.name);
+  });
+
+  rows.forEach(function(r){
+    r.cells=cols.map(function(c,i){ return {ent:r.base[i]?1:0,n:0,last:''}; });
+  });
+  Object.keys(hits).forEach(function(k){
+    const hh=hits[k];
+    const c=findCol(hh.store);
+    const ci=cols.indexOf(c||hh.store);
+    if(ci<0) return;
+    const r=seen[itemKey(hh.item)];
+    if(!r) return;
+    r.cells[ci].n+=hh.n;
+    if(hh.last>r.cells[ci].last) r.cells[ci].last=hh.last;
+  });
+  return {cols:cols,rows:rows,newCols:newCols,newRows:newRows};
+}
 function buildBranchStock(){
   const lsKey='setPriceCalc:branchOpen';
   const open=localStorage.getItem(lsKey)==='1';   /* 기본 접힘 — 세로로 길어 월별 화면을 밀어낸다 */
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
+  let L;
+  try{ L=branchStockLive(); }
+  catch(e){ L={cols:BRANCH_LIST.slice(),newCols:[],newRows:[],
+    rows:BRANCH_STOCK.map(function(r){ return {line:r[0],name:r[1],base:r[2].slice(),isNew:false,
+      cells:r[2].map(function(v){ return {ent:v?1:0,n:0,last:''}; })}; })}; }
+  let gap=0;
+  L.rows.forEach(function(r){ r.cells.forEach(function(x){ if(!x.ent&&x.n) gap++; }); });
+
   const h=document.createElement('div');h.className='ch-head';
-  h.innerHTML='<span><span class="chev">▶</span> 🏪 지점별 취급 품목</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+BRANCH_UPDATED+'</span>';
-  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  h.innerHTML='<span><span class="chev">▶</span> 🏪 지점별 취급 품목 ('+L.cols.length+'곳 · '+L.rows.length+'품목)</span>'+
+    '<span style="font-size:12px;font-weight:700;">'+
+    (gap?'<span style="color:var(--warn);">입점표 미반영 '+gap+'칸</span>'
+        :'<span style="color:var(--ink-soft);">입점표 '+BRANCH_UPDATED+'</span>')+'</span>';
+  h.addEventListener('click',function(){p.classList.toggle('open');
+    localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const note=document.createElement('div');note.className='hint';note.style.marginBottom='9px';
-  note.innerHTML='레디영은 세트 제안 없이 <b>지점별로 개별 발주</b>하며, 지점마다 입점 품목이 다릅니다. ● = 입점 / 빈칸 = 미입점';
+  note.innerHTML='레디영은 세트 제안 없이 <b>지점별로 개별 발주</b>하며, 지점마다 입점 품목이 다릅니다.<br>'+
+    '<b style="color:#2E7D57;">●</b> 입점표('+BRANCH_UPDATED+' 기준) &nbsp; '+
+    '<b style="color:var(--warn);">◍</b> 입점표엔 없는데 <b>발주가 들어온 것</b> &nbsp; '+
+    '<span style="color:#D8D4CC;">·</span> 발주 없음<br>'+
+    '<span style="color:var(--ink-soft);">칸에 마우스를 올리면 발주 횟수와 마지막 발주일이 나옵니다. '+
+    '새 지점과 새 품목은 발주가 들어오면 줄·칸이 스스로 늘어납니다.</span>';
   b.appendChild(note);
+  if(L.newCols.length||L.newRows.length){
+    const nw=document.createElement('div');nw.className='hint';
+    nw.style.cssText='margin:-2px 0 9px;padding:7px 9px;border-left:3px solid var(--accent);background:#FBF6F8;';
+    nw.innerHTML=[L.newCols.length?'입점표에 없는 <b>지점</b> — '+L.newCols.join(', '):'',
+                  L.newRows.length?'입점표에 없는 <b>품목</b> — '+L.newRows.join(', '):''].filter(String).join('<br>');
+    b.appendChild(nw);
+  }
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
-  const t=document.createElement('table');t.className='led-table';t.style.minWidth='760px';
+  const t=document.createElement('table');t.className='led-table';
+  t.style.minWidth=(320+L.cols.length*54)+'px';
   let th='<thead><tr><th style="width:70px;">브랜드</th><th style="min-width:170px;">품목</th>';
-  BRANCH_LIST.forEach(bn=>{th+='<th style="text-align:center;width:52px;font-size:12px;">'+bn+'</th>';});
+  L.cols.forEach(function(bn,i){
+    const isNew=L.newCols.indexOf(bn)>=0;
+    th+='<th style="text-align:center;width:52px;font-size:12px;'+
+        (isNew?'color:var(--accent);':'')+'">'+bn+(isNew?'<br><span style="font-size:10px;">신규</span>':'')+'</th>';
+  });
   th+='<th style="text-align:center;width:52px;">취급</th></tr></thead>';
   t.innerHTML=th;
   const tb=document.createElement('tbody');
-  const colCnt=BRANCH_LIST.map(()=>0);
-  BRANCH_STOCK.forEach(r=>{
+  const colCnt=L.cols.map(function(){ return 0; });
+  L.rows.forEach(function(r){
     const tr=document.createElement('tr');
-    let html='<td style="color:var(--ink-soft);font-size:12.5px;">'+r[0]+'</td><td style="font-size:12px;">'+r[1]+'</td>';
+    let html='<td style="color:var(--ink-soft);font-size:12.5px;">'+r.line+'</td>'+
+      '<td style="font-size:12px;'+(r.isNew?'color:var(--accent);font-weight:700;':'')+'">'+r.name+
+      (r.isNew?' <span style="font-size:10px;">신규</span>':'')+'</td>';
     let cnt=0;
-    r[2].forEach((v,i)=>{
-      if(v){cnt++;colCnt[i]++;}
-      html+='<td style="text-align:center;'+(v?'background:#EDF6F0;color:#2E7D57;font-weight:800;':'color:#D8D4CC;')+'">'+(v?'●':'·')+'</td>';
+    r.cells.forEach(function(x,i){
+      const live=!!x.n, ent=!!x.ent;
+      if(ent||live){ cnt++; colCnt[i]++; }
+      const tip=live?('발주 '+x.n+'회 · 마지막 '+x.last):(ent?'입점 — 발주 실적 없음':'');
+      const mark=ent?'●':(live?'◍':'·');
+      const sty=ent?'background:#EDF6F0;color:#2E7D57;font-weight:800;'
+        :(live?'background:#FDF3EA;color:var(--warn);font-weight:800;':'color:#D8D4CC;');
+      html+='<td style="text-align:center;'+sty+'" title="'+tip+'">'+mark+'</td>';
     });
     html+='<td class="num-cell" style="font-weight:800;">'+cnt+'</td>';
     tr.innerHTML=html;tb.appendChild(tr);
   });
   const tot=document.createElement('tr');
   let th2='<td colspan="2" style="text-align:right;font-weight:800;font-size:12.5px;">지점별 취급 품목 수</td>';
-  colCnt.forEach(c=>{th2+='<td style="text-align:center;font-weight:800;'+(c?'':'color:var(--warn);')+'">'+c+'</td>';});
+  colCnt.forEach(function(c){
+    th2+='<td style="text-align:center;font-weight:800;'+(c?'':'color:var(--warn);')+'">'+c+'</td>';
+  });
   th2+='<td></td>';tot.innerHTML=th2;tot.style.background='#F3F0EA';tb.appendChild(tot);
-  t.appendChild(tb);box.appendChild(t);b.appendChild(box);p.appendChild(b);
+  t.appendChild(tb);box.appendChild(t);b.appendChild(box);
+  if(gap){
+    const g=document.createElement('div');g.className='hint';g.style.marginTop='8px';
+    g.innerHTML='<b style="color:var(--warn);">◍ '+gap+'칸</b> — 입점표에는 없는데 발주가 들어온 자리입니다. '+
+      '실제로 입점했다면 코드의 <b>BRANCH_STOCK</b> 을 갱신해주세요. '+
+      '<span style="color:var(--ink-mute);">(표를 안 고쳐도 이 화면은 발주 실적으로 계속 맞춰 보여줍니다)</span>';
+    b.appendChild(g);
+  }
+  p.appendChild(b);
   return p;
 }
 
@@ -3310,10 +3435,13 @@ function siteKeys(s){
   parts.push(raw);
   const out=[];
   parts.forEach(function(x){
-    const t=String(x||'').replace(/레디영/g,'').replace(/[()（）]/g,'');
-    if(!t) return;
-    [t, t.replace(/점$/,''), /점$/.test(t)?'':t+'점'].forEach(function(v){
-      if(v&&out.indexOf(v)<0) out.push(v);
+    const t0=String(x||'').replace(/레디영/g,'').replace(/[()（）]/g,'');
+    /* 배송요청시트는 「명동 레디영약국」 이라고 적습니다 — 레디영만 떼면 '명동약국' 이 남습니다 */
+    [t0, t0.replace(/약국$/,'')].forEach(function(t){
+      if(!t) return;
+      [t, t.replace(/점$/,''), /점$/.test(t)?'':t+'점'].forEach(function(v){
+        if(v&&out.indexOf(v)<0) out.push(v);
+      });
     });
   });
   return out;
@@ -3332,12 +3460,18 @@ function findSite(key){
 }
 /* 품목 표기가 흔들립니다 (타이트샷 ↔ 타이트닝샷).
    글자 두 개씩 묶어 겹치는 비율로 같은 품목인지 봅니다. */
-function itemKey(s){ return String(s||'').replace(/\s+/g,'').replace(/[()（）]/g,''); }
+/* 대소문자는 품목을 가르지 않습니다 — 「2x볼륨필인」 과 「2X볼륨필인」 은 같은 것입니다.
+   맞춰 두지 않으면 유사도 82% 어림짐작으로 넘어가고, 어림짐작은 언젠가 틀립니다. */
+function itemKey(s){
+  return String(s||'').replace(/\s+/g,'').replace(/[()（）]/g,'').toUpperCase();
+}
 /* 거래처가 늘 다르게 쓰는 품목 이름 (왼쪽 = 상대 표기, 오른쪽 = 우리 품목표 이름).
    레디영은 발주서에 항상 '타이트샷' 으로 보냅니다 — 사용자 확인(2026-09-17).
    유사도로도 걸리지만 매번 어림으로 맞추면 언젠가 틀리므로 못 박아 둡니다. */
 const ITEM_ALIAS={
-  '유쎄라블타이트샷600아이크림':'유쎄라블 타이트닝샷 600 아이크림'
+  '유쎄라블타이트샷600아이크림':'유쎄라블 타이트닝샷 600 아이크림',
+  /* 어순만 뒤집혀 옵니다 — 가격표는 「실프팅 4D」, 발주서는 「4D 실프팅」 */
+  '유쎄라블4D실프팅크림':'유쎄라블 실프팅 4D 크림'
 };
 /* 쓰다가 새로 만나는 표기는 확인 창에서 여기에 쌓입니다 */
 function itemAlias(){ lib.itemAlias=lib.itemAlias||{}; return lib.itemAlias; }
@@ -3689,6 +3823,25 @@ const ENTRY_RULES=[
 const ENTRY_LOOKS_PHARM=/약국|바로팜|자사몰|아쿠아|레디영/;
 /* 테스터·샘플·무상은 발주가 아닙니다 */
 const ENTRY_FREE=/테스터|샘플|무상|증정|체험단|이벤트|당첨|협업|지급건/;
+/* 발주 수량에 덤을 얹어 보낼 때 비고에 적어 둡니다.
+     「30개 발주 + 테스터 1개」  「약국 발주건 30개 + 디피1개」
+   덤은 발주가 아니므로 대조에서 빼야 합니다. 안 빼면 30↔31 이 전부 오류로 뜹니다.
+   개수를 안 적었으면 1개로 봅니다 (적게 빼는 쪽이 안전합니다 — 차이가 남으면 표에 뜹니다). */
+const FREE_WORD='테스터|테스타|디피|디스플레이|샘플|증정|데모|서비스|tester|sample|d\\/?p';
+function freeQty_(txt){
+  const t=String(txt||'').replace(/\s+/g,'');
+  if(!t) return 0;
+  let sum=0, hit=false, m;
+  const re=new RegExp('(?:'+FREE_WORD+')(\\d+)?개?','gi');
+  while((m=re.exec(t))){ hit=true; if(m[1]) sum+=parseInt(m[1],10); }
+  if(!hit) return 0;
+  if(!sum){
+    /* 「1개 테스터」처럼 숫자가 앞에 붙기도 합니다 */
+    const re2=new RegExp('(\\d+)개?(?:'+FREE_WORD+')','gi');
+    while((m=re2.exec(t))){ sum+=parseInt(m[1],10); }
+  }
+  return sum||1;
+}
 
 function entryKey_(s){ return String(s||'').replace(/[\s()（）]/g,''); }
 
@@ -3710,7 +3863,9 @@ async function fetchEntryRows(){
   const ix=n=>head.indexOf(n);
   const c={date:ix('날짜'),recv:ix('수취인명'),addr:ix('수취인 주소'),tel:ix('수취인 전화번호'),
            odate:ix('발주일자'),memo:ix('관리메모1'),item:ix('출고상품명'),qty:ix('수량'),
-           inv:ix('송장번호')};
+           inv:ix('송장번호'),
+           /* 덤(테스터·디피)은 여기 적혀 있습니다 — 「30개 발주 + 테스터 1개」 */
+           bigo:ix('비고'),msg:ix('배송메시지')};
   if(c.recv<0||c.memo<0||c.item<0)
     throw new Error('시트 양식이 다릅니다 (수취인명·관리메모1·출고상품명 없음)');
   return {rows:rows.slice(1),c:c};
@@ -4284,11 +4439,17 @@ async function ryVerifyRows(){
     if(!name) return;
     const k=store+'|'+(d1||'')+'|'+(d2||'');
     let g=gmap[k];
-    if(!g){ g=gmap[k]={store:store,d1:d1||d2,d2:d2||d1,items:{},name:{},inv:{},used:false}; groups.push(g); }
+    if(!g){ g=gmap[k]={store:store,d1:d1||d2,d2:d2||d1,items:{},name:{},inv:{},
+                       free:{},memo:{},used:false}; groups.push(g); }
     const m=matchItem(name);
     const ik=itemKey(m?m.name:name);
     g.items[ik]=(g.items[ik]||0)+(parseInt(String(r[c.qty]).replace(/[^0-9-]/g,''),10)||0);
     g.name[ik]=m?m.name:name;
+    /* 비고·배송메시지에 적힌 덤 */
+    const bg=[c.bigo>=0?r[c.bigo]:'',c.msg>=0?r[c.msg]:''].join(' ');
+    const fq=freeQty_(bg);
+    if(fq){ g.free[ik]=(g.free[ik]||0)+fq;
+            g.memo[ik]=String(c.bigo>=0?(r[c.bigo]||''):'').trim()||g.memo[ik]||''; }
     const inv=String(c.inv>=0?(r[c.inv]||''):'').trim();
     if(inv) g.inv[inv]=1;
   });
@@ -4321,9 +4482,11 @@ async function ryVerifyRows(){
   orders.forEach(o=>{
     const store=ryStoreKey(o.store);
     const hit=pick(store,o.date);
-    const items={}, inv={};
+    const items={}, inv={}, frees={}, memos={};
     hit.forEach(g=>{
       Object.keys(g.items).forEach(ik=>{ items[ik]=(items[ik]||0)+g.items[ik]; });
+      Object.keys(g.free).forEach(ik=>{ frees[ik]=(frees[ik]||0)+g.free[ik]; });
+      Object.keys(g.memo).forEach(ik=>{ if(g.memo[ik]) memos[ik]=g.memo[ik]; });
       Object.keys(g.inv).forEach(x=>{ inv[x]=1; });
     });
     const invs=Object.keys(inv).join(', ');
@@ -4331,11 +4494,19 @@ async function ryVerifyRows(){
       const m=matchItem(it.name);
       const ik=itemKey(m?m.name:it.name);
       const want=it.qty||0, mine=items[ik]||0;
+      const free=frees[ik]||0;
       /* 그 지점·그 날 배송요청이 아예 없으면 아직 안 올린 것입니다 —
          일부 품목만 빠진 「출고 누락」 과 섞으면 안 됩니다. */
-      const st=!hit.length ? 'wait' : (!mine ? 'miss' : (want===mine?'ok':'diff'));
+      let st;
+      if(!hit.length) st='wait';
+      else if(!mine) st='miss';
+      else if(want===mine) st='ok';
+      /* 덤을 빼면 딱 맞을 때만 일치로 봅니다. 안 맞으면 그대로 보여줍니다. */
+      else if(free && mine-free===want) st='ok';
+      else st='diff';
       out.push({store:o.store||store, date:o.date, item:(m?m.name:it.name),
-        want:want, got:mine, inv:invs, st:st});
+        want:want, got:mine, inv:invs, st:st,
+        free:(free&&mine-free===want)?free:0, memo:memos[ik]||''});
     });
   });
 
@@ -4393,8 +4564,10 @@ function buildRyVerify(){
       persistLib();
       const n=r.filter(x=>RV_TODO[x.st]).length;
       const w=r.filter(x=>x.st==='wait').length;
+      const fz2=r.filter(x=>x.free>0).length;
       lg.textContent='대조 완료 — '+r.length+'행 중 확인 필요 '+n+'건'+
         (w?' · 배송요청 전 '+w+'건':'')+
+        (fz2?NLC_()+'비고의 덤(테스터·디피) '+fz2+'건은 빼고 맞췄습니다.':'')+
         (r.skipped?NLC_()+'창고·온라인몰 발주 '+r.skipped+'건은 매장이 아니라 제외했습니다.':'')+
         (r.offBook?NLC_()+'지점으로 못 알아본 수취인 출고 '+r.offBook+'묶음은 제외했습니다 (온라인몰 직배송 등).':'');
       refreshCurrentView();
@@ -4468,7 +4641,9 @@ function buildRyVerify(){
         '<td style="font-size:12.5px;">'+r.item+'</td>'+
         '<td class="num-cell">'+(r.want||'-')+'</td>'+
         '<td class="num-cell"'+(r.st==='diff'?' style="color:var(--warn);font-weight:800;"':'')+'>'+
-          (r.got||'-')+'</td>'+
+          (r.got||'-')+
+          (r.free?'<div style="font-size:11px;color:var(--ink-mute);font-weight:600;">덤 '+r.free+' 포함</div>':'')+
+          '</td>'+
         '<td style="font-size:11.5px;color:var(--ink-mute);">'+(r.inv||'-')+'</td>';
       tb.appendChild(tr);
     });
@@ -4479,6 +4654,13 @@ function buildRyVerify(){
   tot.innerHTML=Object.keys(RV_LABEL).filter(k=>cnt[k])
     .map(k=>'<span>'+RV_ICON[k]+' '+RV_LABEL[k]+' <span class="num-mono">'+cnt[k]+'</span></span>').join('');
   wrap.appendChild(tot);
+  const freeN=rows.filter(r=>r.free>0).length;
+  if(freeN){
+    const fz=document.createElement('div');fz.className='hint';fz.style.marginTop='6px';
+    fz.innerHTML='🎁 비고에 적힌 <b>덤(테스터·디피)</b>을 빼고 맞춘 건 '+freeN+'건 — 일치로 셌습니다. '+
+      '<span style="color:var(--ink-mute);">덤을 빼도 수량이 안 맞으면 그대로 ⚠ 로 남깁니다.</span>';
+    wrap.appendChild(fz);
+  }
   if(saved.skipped||saved.offBook){
     const ex=document.createElement('div');ex.className='hint';ex.style.marginTop='6px';
     ex.innerHTML='대조에서 제외 — '+
