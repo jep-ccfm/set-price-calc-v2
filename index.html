@@ -2606,6 +2606,19 @@ function buildRyShipList(){
     '순서는 자사몰 「출고할 주문」과 같습니다. 주소·전화는 발주 메일의 배송지 정보입니다.';
   wrap.appendChild(nt);
 
+  /* 온라인몰 직배송은 배송요청시트에 담당자 이름으로 찍혀 대조가 안 됩니다.
+     그러면 상태도 못 정해 목록에 영영 남습니다 — 어디서 이어야 하는지 알려 줍니다. */
+  const dropN=(ordersOf('ready')||[]).filter(function(o){
+    return o.src==='발주메일'&&isRyDropship(o.store)&&(o.status||'접수')==='접수'; }).length;
+  if(dropN){
+    const dz=document.createElement('div');dz.className='hint';
+    dz.style.cssText='margin:-4px 0 12px;padding:8px 10px;border-left:3px solid var(--warn);background:#FFF8F3;';
+    dz.innerHTML='⚠ <b>온라인몰 직배송 발주 '+dropN+'건</b>이 남아 있습니다. 배송요청시트에 '+
+      '<b>담당자 이름</b>으로 찍혀 대조가 안 되니 상태가 정해지지 않습니다.<br>'+
+      '아래 <b>「🔍 발주서 ↔ 배송요청 대조」 → 「🔗 지점으로 못 알아본 수취인」</b>에서 담당자를 한 번 이어 두세요.';
+    wrap.appendChild(dz);
+  }
+
   /* 취소·재발송으로 보이는 건은 위 목록에서 뺐습니다. 말없이 빼면 발주를 잃으므로 밝혀 둡니다. */
   const olist=ordersOf('ready')||[];
   const sup2=supersededOrders(olist);
@@ -5016,12 +5029,19 @@ async function ryVerifyRows(){
   orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date; }); });
   orders.forEach(function(o,i){
     if(picked[i]&&picked[i].hit.length) return;
-    const store=ryStoreKey(o.store), ks=[1,-1];
-    for(let j=0;j<ks.length;j++){
-      const d2=dayShift(o.date,ks[j]);
-      const c=groups.filter(function(g){
-        return !g.used&&g.store===store&&g.d1===d2&&!ordered[store+'|'+d2]&&fits(g,o); });
-      if(c.length){ c[0].used=true; picked[i]={hit:[c[0]],shift:ks[j]}; return; }
+    const store=ryStoreKey(o.store);
+    /* 지점 건은 하루 차이까지만 봅니다. 담당자 이름으로 이어 둔 수취처(창고·온라인몰)는
+       발주일과 출고일이 며칠씩 벌어지므로(7/10 G마켓 발주 → 7/14 출고) 2주까지 봅니다.
+       어느 쪽이든 품목·수량이 똑같을 때만 잇습니다. */
+    const span=aliasTo[store]?14:1;
+    for(let k=1;k<=span;k++){
+      const ks=[k,-k];
+      for(let j=0;j<ks.length;j++){
+        const d2=dayShift(o.date,ks[j]);
+        const c=groups.filter(function(g){
+          return !g.used&&g.store===store&&g.d1===d2&&!ordered[store+'|'+d2]&&fits(g,o); });
+        if(c.length){ c[0].used=true; picked[i]={hit:[c[0]],shift:ks[j]}; return; }
+      }
     }
   });
   orders.forEach((o,i)=>{
@@ -5052,6 +5072,8 @@ async function ryVerifyRows(){
       else st='diff';
       out.push({store:o.store||store, date:o.date, item:(m?m.name:it.name),
         want:want, got:mine, inv:invs, st:st, shift:(st==='ok'||st==='diff')?pk.shift:0,
+        /* 어느 발주에서 나온 줄인지 — 같은 지점·같은 날 발주가 두 건일 때 필요합니다 */
+        oid:o.id,
         free:(free&&mine-free===want)?free:0, memo:memos[ik]||''});
     });
   });
@@ -5117,18 +5139,19 @@ function ryTodoRows(rows){
   return (rows||[]).filter(function(r){ return RV_TODO[r.st]&&!ryOkNote(r); });
 }
 function applyVerifyToOrders(rows){
+  /* 발주 하나씩 봅니다. 지점·날짜로 뭉쳐 세면, 같은 날 발주가 두 건일 때
+     하나만 나갔어도 둘 다 「접수」 로 남습니다 (6/11 홍대·6/04 강남 등). */
   const by={};
   (rows||[]).forEach(function(r){
-    if(r.st==='extra') return;
-    const k=ryStoreKey(r.store)+'|'+(r.date||'');
-    const b=by[k]=by[k]||{tot:0,on:0};
+    if(r.st==='extra'||!r.oid) return;
+    const b=by[r.oid]=by[r.oid]||{tot:0,on:0};
     b.tot++; if(r.st!=='wait') b.on++;
   });
   let changed=0;
   (ordersOf('ready')||[]).forEach(function(o){
     if(o.src!=='발주메일') return;
     if(o.status==='완료') return;
-    const b=by[ryStoreKey(orderStore_(o))+'|'+(o.date||'')];
+    const b=by[o.id];
     if(!b||!b.tot) return;
     const want=(b.on===b.tot)?'출고':'접수';
     if((o.status||'접수')!==want){ o.status=want; changed++; }
@@ -5248,7 +5271,8 @@ function buildRyVerify(){
           RV_ICON[r.st]+' '+RV_LABEL[r.st]+extra2+'</td>'+
         '<td style="font-size:12.5px;">'+(r.date||'-')+
           (r.shift?'<div style="font-size:11px;color:var(--ink-mute);font-weight:600;">'+
-            (r.shift>0?'다음 날 출고':'전날 출고')+'</div>':'')+'</td>'+
+            (Math.abs(r.shift)===1?(r.shift>0?'다음 날 출고':'전날 출고')
+              :(r.shift>0?r.shift+'일 뒤 출고':Math.abs(r.shift)+'일 전 출고'))+'</div>':'')+'</td>'+
         '<td style="font-size:12.5px;font-weight:700;">'+(r.store||'-')+'</td>'+
         '<td style="font-size:12.5px;">'+r.item+'</td>'+
         '<td class="num-cell">'+(r.want||'-')+'</td>'+
