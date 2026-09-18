@@ -4108,9 +4108,14 @@ const RY_TAB='레디영발주';
 /* '성수레디영' → '성수' 처럼 꼬리를 떼어 지점 이름만 남깁니다 */
 /* 지점 목록에 없을 때 쓸 이름 — 괄호 안이 대개 정식 지점명입니다
    ('성수연무장길레디영(성수2호점)' → '성수2호점') */
-/* 발주처로 찍히지만 매장이 아닌 곳 — 2km 규약도 지점 집계도 해당 없습니다 */
+/* 발주처로 찍히지만 매장이 아닌 곳 — 2km 규약도 지점별 취급 품목도 해당 없습니다 */
 const RY_NOT_STORE=/창고|물류|온라인몰|G마켓|지마켓|쿠팡|네이버|본사|사무실|무상|샘플/i;
 function isRyStore(s){ return !RY_NOT_STORE.test(String(s||'')); }
+/* 그중에서도 물건이 개인에게 곧장 가는 곳. 배송요청시트에 수취인명이 사람 이름으로
+   찍히므로 발주와 견줄 짝이 없습니다 (7/10 G마켓 발주 → 7/14 임행하 출고).
+   창고는 다릅니다 — 「레디영창고1」 그대로 찍히니 견줄 수 있습니다. */
+const RY_DROPSHIP=/온라인몰|G마켓|지마켓|쿠팡|네이버/i;
+function isRyDropship(s){ return RY_DROPSHIP.test(String(s||'')); }
 function ryStoreName(s){
   const raw=String(s||'').replace(/\s+/g,'');
   const m=raw.match(/[(（]([^)）]+)[)）]/);
@@ -4948,11 +4953,15 @@ async function ryVerifyRows(){
   });
 
   /* 발주 메일로 들어온 건만 견줍니다 (배송요청시트에서 만든 발주는 제외).
-     창고·온라인몰은 매장이 아니라 지점 발주와 견줄 것이 아닙니다. */
+     온라인몰 직배송만 뺍니다 — 개인 이름으로 나가 견줄 짝이 없습니다.
+     창고는 창고 이름 그대로 찍히니 견줍니다. */
   const orders=(ordersOf('ready')||[])
     .filter(o=>o.src==='발주메일')
-    .filter(o=>isRyStore(o.store));
-  const skipped=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일'&&!isRyStore(o.store)).length;
+    .filter(o=>!isRyDropship(o.store));
+  const skipped=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일'&&isRyDropship(o.store)).length;
+  /* 지점 목록에 없어도 발주가 들어온 수취처는 견줄 대상입니다 (창고 등) */
+  const ordStore={};
+  orders.forEach(function(o){ ordStore[ryStoreKey(o.store)]=1; });
   /* 발주 메일이 있는 기간만 견줍니다 (그 전 출고는 견줄 발주서가 없습니다) */
   const dates=orders.map(o=>String(o.date||'')).filter(Boolean).sort();
   const from=dates[0]||'';
@@ -5051,7 +5060,8 @@ async function ryVerifyRows(){
     if(g.used) return;
     if(from && String(g.d1||'') < from) return;        /* 수집 시작 전 출고는 건너뜁니다 */
     if(earlyTill && String(g.d1||'') <= earlyTill){ early++; return; }
-    if(!findSite(g.store)){ offBook++; return; }
+    /* 지점도 아니고 발주에 나온 적도 없는 수취처 — 온라인몰 직배송 같은 건입니다 */
+    if(!findSite(g.store)&&!ordStore[g.store]){ offBook++; return; }
     Object.keys(g.items).forEach(ik=>{
       out.push({store:g.store, date:g.d1, item:g.name[ik]||ik,
         want:0, got:g.items[ik], inv:Object.keys(g.inv).join(', '), st:'extra'});
@@ -5136,7 +5146,7 @@ function buildRyVerify(){
         (st?NLC_()+'발주 '+st+'건의 상태를 「출고」로 맞췄습니다.':'')+
         (sh?NLC_()+'배송요청이 하루 밀려 적힌 '+sh+'건은 품목·수량이 같아 같은 건으로 봤습니다.':'')+
         (fz2?NLC_()+'비고의 덤(테스터·디피) '+fz2+'건은 빼고 맞췄습니다.':'')+
-        (r.skipped?NLC_()+'창고·온라인몰 발주 '+r.skipped+'건은 매장이 아니라 제외했습니다.':'')+
+        (r.skipped?NLC_()+'온라인몰 직배송 발주 '+r.skipped+'건은 개인에게 나가 견줄 짝이 없어 제외했습니다.':'')+
         (r.offBook?NLC_()+'지점으로 못 알아본 수취인 출고 '+r.offBook+'묶음은 제외했습니다 (온라인몰 직배송 등).':'');
       refreshCurrentView();
     }catch(e){ lg.textContent='✕ '+e.message; }
@@ -5234,7 +5244,7 @@ function buildRyVerify(){
   if(saved.skipped||saved.offBook||saved.early){
     const ex=document.createElement('div');ex.className='hint';ex.style.marginTop='6px';
     ex.innerHTML='대조에서 제외 — '+
-      [saved.skipped?'창고·온라인몰 발주 '+saved.skipped+'건':'',
+      [saved.skipped?'온라인몰 직배송 발주 '+saved.skipped+'건':'',
        saved.offBook?'지점 아닌 수취인 출고 '+saved.offBook+'묶음':'',
        saved.early?'수집 시작('+(saved.from||'')+') 직후 출고 '+saved.early+'묶음':''
       ].filter(String).join(' · ')+
