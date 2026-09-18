@@ -2349,31 +2349,93 @@ document.getElementById('odSave').addEventListener('click',()=>{
   document.getElementById('orderModal').hidden=true;showToast('발주가 저장되었습니다');
   if(currentView&&currentView.indexOf('ph_')===0)renderPharm(currentView);
 });
+/* 지점 칸이 비어 있는 옛 발주는 비고 앞머리에 수취인명이 적혀 있습니다 */
+function orderStore_(o){
+  if(o&&o.store) return o.store;
+  const t=String((o&&o.note)||'').split('·')[0].trim();
+  return t;
+}
+/* 발주 메일로 받은 건을 우리가 배송요청시트에 적으면, 시트 수집이 같은 건을
+   한 번 더 들고 옵니다. 한 발주가 두 줄이면 헷갈립니다.
+   배송요청시트에 올라간 건은 손을 떠난 것이라 접어 둡니다 —
+   목록에 남는 것은 「아직 출고 요청을 안 넣은 발주」 입니다.
+   발주 메일이 없는 채널(바로팜·자사몰·아쿠아메디)은 배송요청시트가 유일한
+   출처라 접지 않습니다. 접으면 목록이 통째로 비어 버립니다. */
+function ordersHandedOff(list){
+  const out={};
+  if(!list.some(o=>o.src==='발주메일')) return out;
+  const qty=o=>(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
+  const day=(d,n2)=>{ const t=new Date(String(d||'')+'T00:00:00Z');
+    if(isNaN(t)) return ''; t.setUTCDate(t.getUTCDate()+n2); return t.toISOString().slice(0,10); };
+  const ship={};
+  list.forEach(o=>{
+    if(o.src!=='배송요청시트') return;
+    out[o.id]=1;
+    const k=ryStoreKey(orderStore_(o))+'|'+(o.date||'');
+    (ship[k]=ship[k]||[]).push(qty(o));
+  });
+  list.forEach(o=>{
+    if(o.src!=='발주메일') return;
+    const st=ryStoreKey(orderStore_(o)), q=qty(o);
+    if(ship[st+'|'+(o.date||'')]){ out[o.id]=1; return; }
+    /* 배송요청은 발주 다음 날 적히기도 합니다 — 수량까지 같을 때만 같은 건으로 봅니다 */
+    for(const n2 of [1,-1]){
+      const a=ship[st+'|'+day(o.date,n2)];
+      if(a&&a.indexOf(q)>=0){ out[o.id]=1; return; }
+    }
+  });
+  return out;
+}
+let ordShowDone=false;
 function buildOrders(pid,view){
   const list=ordersOf(pid);const wrap=document.createElement('div');
+  const handed=ordersHandedOff(list);
+  const hidN=list.filter(o=>handed[o.id]).length;
+  const shown=ordShowDone?list:list.filter(o=>!handed[o.id]);
   const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');hs.textContent='발주 관리 ('+list.length+')';h.appendChild(hs);
+  const hs=document.createElement('span');
+  hs.textContent='발주 관리 ('+shown.length+(hidN?' / 전체 '+list.length:'')+')';h.appendChild(hs);
+  const tools=document.createElement('div');tools.className='sh-tools';
+  if(hidN){
+    const tg=document.createElement('button');tg.className='icon-btn';
+    tg.textContent=ordShowDone?'배송요청 완료 숨기기':'✅ 배송요청 완료도 보기 ('+hidN+')';
+    tg.addEventListener('click',()=>{ordShowDone=!ordShowDone;refreshCurrentView();});
+    tools.appendChild(tg);
+  }
   const add=document.createElement('button');add.className='icon-btn';add.textContent='＋ 발주 등록';
   add.addEventListener('click',()=>openOrderModal(pid,null));
-  h.appendChild(add);wrap.appendChild(h);
+  tools.appendChild(add);h.appendChild(tools);wrap.appendChild(h);
+  if(hidN){
+    const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+    nt.innerHTML='<b>배송요청시트에 올린 발주는 목록에서 사라집니다.</b> 남은 줄이 아직 출고 요청을 안 넣은 발주입니다.'+
+      (ordShowDone?'':'<br><span style="color:var(--good);">✅ 배송요청 완료 '+hidN+'건은 감췄습니다.</span>');
+    wrap.appendChild(nt);
+  }
   if(!list.length){
     const e=document.createElement('div');e.className='empty-box';e.innerHTML='등록된 발주가 없습니다.<br>카톡으로 접수된 발주를 <b>「＋ 발주 등록」</b>으로 기록해두면 출고·정산까지 추적할 수 있습니다.';
     wrap.appendChild(e);return wrap;
   }
+  if(!shown.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
+    e.textContent='✅ 받은 발주를 모두 배송요청시트에 올렸습니다 — 처리할 발주가 없습니다.';
+    wrap.appendChild(e);return wrap;
+  }
   const t=document.createElement('table');t.className='ord-table';
-  const hasStore=list.some(o=>o.store);
+  const hasStore=list.some(o=>orderStore_(o));
   t.innerHTML='<thead><tr><th style="width:96px;">발주일</th>'+
     (hasStore?'<th style="width:120px;">지점</th>':'')+
     '<th style="width:70px;">상태</th><th>품목</th>'+
     '<th style="text-align:right;width:60px;">총수량</th><th style="width:58px;"></th></tr></thead>';
   const tb=document.createElement('tbody');
-  list.forEach(o=>{
+  shown.forEach(o=>{
     const tr=document.createElement('tr');
     const tq=(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
     const names=(o.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
     tr.innerHTML='<td>'+(o.date||'-')+(o.isNew?'<span class="new-badge">NEW</span>':'')+'</td>'+
-      (hasStore?'<td style="font-size:12.5px;"><b>'+(o.store||'-')+'</b>'+
-        (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+o.src+'</div>':'')+'</td>':'')+
+      (hasStore?'<td style="font-size:12.5px;"><b>'+(orderStore_(o)||'-')+'</b>'+
+        (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+o.src+'</div>':'')+
+        (handed[o.id]?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 배송요청 완료</div>':'')+'</td>':'')+
       '<td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
       '<td style="font-size:12.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
       '<td class="num-cell">'+fmt(tq)+'</td>';
@@ -3740,7 +3802,9 @@ async function importEntryOrders(logEl,onDone){
     const key=pid+'|'+date+'|'+entryKey_(canonStore(recv));
     groups[key]=groups[key]||{pid:pid,ch:hit.ch,date:date,recv:recv,
       /* 자사몰만 약국별로 나뉘므로 그때만 채웁니다 */
-      store:(pid==='pharmmall')?mallStoreName_(recv):'',
+      /* 자사몰은 이미 아는 약국명으로 맞추고, 나머지는 수취인명을 그대로 씁니다
+         (지점 칸이 비어 있으면 어느 지점 건인지 표에서 알 수 없습니다) */
+      store:(pid==='pharmmall')?mallStoreName_(recv):recv,
       addr:String(r[c.addr]||'').trim(),tel:String(r[c.tel]||'').trim(),items:[]};
     groups[key].items.push({name:String(r[c.item]||'').trim(),
       qty:parseInt(String(r[c.qty]||'').replace(/[^0-9]/g,''),10)||0});
