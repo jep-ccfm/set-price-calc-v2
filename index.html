@@ -1792,6 +1792,8 @@ function renderCompany(k){
     const badN=rv.filter(function(r){ return RV_TODO[r.st]; }).length;
     const waitN=rv.filter(function(r){ return r.st==='wait'; }).length;
 
+    /* 지점별 취급 품목은 쓰던 대로 맨 위에 둡니다 (사용자 요청 2026-09-18) */
+    box.appendChild(buildBranchStock());
     const g1=groupBox(1,'📦 발주 받고 내보내기',
       (shipN?'<span style="color:var(--accent);">출고할 '+shipN+'줄</span>':'<span style="color:var(--good);">출고할 것 없음</span>')+
       ' · 처리할 발주 '+todoN+'건',
@@ -1800,7 +1802,6 @@ function renderCompany(k){
     g1.body.appendChild(entrySyncLink());
     g1.body.appendChild(buildRyShipList());
     g1.body.appendChild(buildOrders('ready','ready'));
-    g1.body.appendChild(buildBranchStock());
     box.appendChild(g1.group);
 
     const g2=groupBox(2,'🔍 맞는지 점검',
