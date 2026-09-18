@@ -8251,7 +8251,11 @@ function buildApplicants(){
   const list=applicantsOf();const g=geoStore();
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');hs.textContent='약사 전용관 가입 심사 ('+list.length+')';h.appendChild(hs);
+  const hs=document.createElement('span');
+  const waitN=list.filter(a=>['대기','보류'].indexOf(a.status||'대기')>=0).length;
+  hs.textContent='약사 전용관 가입 심사'+(waitN?' — 심사 대기 '+waitN+'건':'')+
+    (list.length!==waitN?' (전체 '+list.length+')':'');
+  h.appendChild(hs);
 
   const tools=document.createElement('div');tools.className='sh-tools';
   const chk=document.createElement('button');chk.className='icon-btn';chk.textContent='📍 주소 일괄 판정';
@@ -8296,12 +8300,14 @@ function buildApplicants(){
     e.innerHTML='등록된 가입 신청이 없습니다.<br><b>「＋ 신청 등록」</b>으로 약국명·사업자등록증 주소·서류를 넣으면 2km 판정과 승인/거절을 관리할 수 있습니다.';
     wrap.appendChild(e);return wrap;
   }
+  /* 심사 표 — 대기 건과 처리한 건에 같은 표를 두 번 씁니다 */
+  const apTable=function(subset){
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='800px';
   t.innerHTML='<thead><tr><th style="width:82px;">신청일</th><th style="width:120px;">약국</th><th>사업자등록증 주소</th>'+
     '<th style="width:150px;">2km 판정</th><th style="width:96px;">서류</th><th style="width:150px;">승인 상태</th><th style="width:30px;"></th></tr></thead>';
   const tb=document.createElement('tbody');
-  list.forEach(a=>{
+  subset.forEach(a=>{
     const c=a.addr?g.checks[a.addr]:null;
     const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
     const tr=document.createElement('tr');
@@ -8414,7 +8420,33 @@ function buildApplicants(){
     tdA.append(ed,dl);tr.appendChild(tdA);
     tb.appendChild(tr);
   });
-  t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
+  t.appendChild(tb);box.appendChild(t);return box;
+  };
+
+  /* 끝난 건이 쌓여 대기 건이 묻힙니다 — 승인·거절은 접어 둡니다.
+     「보류」는 아직 끝난 게 아니라 대기와 같이 둡니다. */
+  const AP_OPEN=['대기','보류'];
+  const pend=list.filter(a=>AP_OPEN.indexOf(a.status||'대기')>=0);
+  const done=list.filter(a=>AP_OPEN.indexOf(a.status||'대기')<0);
+  if(pend.length) wrap.appendChild(apTable(pend));
+  else{
+    const e2=document.createElement('div');e2.className='empty-box';
+    e2.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
+    e2.textContent='✅ 심사할 신청이 없습니다 — '+done.length+'건 모두 처리했습니다.';
+    wrap.appendChild(e2);
+  }
+  if(done.length){
+    const okN=done.filter(a=>a.status==='승인').length;
+    const noN=done.filter(a=>a.status==='거절').length;
+    const fpD=foldPanel('✅ 처리한 신청',
+      '<span style="color:var(--good);">승인 '+okN+'</span> · <span style="color:var(--warn);">거절 '+noN+'</span>',
+      'setPriceCalc:apDoneOpen',false);
+    const nt2=document.createElement('div');nt2.className='hint';nt2.style.marginBottom='8px';
+    nt2.textContent='승인·거절을 끝낸 신청입니다. 상태를 「대기」로 되돌리면 위 심사 목록으로 올라옵니다.';
+    fpD.body.appendChild(nt2);
+    fpD.body.appendChild(apTable(done));
+    wrap.appendChild(fpD.panel);
+  }
   // 요약
   const cnt={대기:0,승인:0,거절:0,보류:0};list.forEach(a=>cnt[a.status||'대기']++);
   const sm=document.createElement('div');sm.className='agg-total';
