@@ -2508,12 +2508,26 @@ function ryShipRows(){
     String(a.store).localeCompare(String(b.store),'ko'); });
   return out;
 }
+/* 한 곳으로 나가는 줄은 배송요청시트에 한 번에 넣습니다.
+   날짜·수취처·주소·전화가 줄마다 되풀이되면 어디까지가 한 건인지 흐려집니다.
+   품목만 아래로 늘리고 앞 칸은 한 번만 적습니다 (복사는 그대로 한 줄씩 나갑니다). */
+function shipGroups(rows){
+  const out=[],map={};
+  rows.forEach(function(r){
+    const k=[r.date||'',r.store||'',r.addr||'',r.tel||''].join('|');
+    let g=map[k];
+    if(!g){ g=map[k]={date:r.date,store:r.store,addr:r.addr,tel:r.tel,items:[]}; out.push(g); }
+    g.items.push(r);
+  });
+  return out;
+}
 function buildRyShipList(){
   const rows=ryShipRows();
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
   const hs=document.createElement('span');
-  hs.textContent='📋 출고할 발주'+(rows.length?' ('+rows.length+'줄)':'');
+  const gN=rows.length?shipGroups(rows).length:0;
+  hs.textContent='📋 출고할 발주'+(rows.length?' ('+gN+'곳 · '+rows.length+'줄)':'');
   h.appendChild(hs);
   if(rows.length){
     const tools=document.createElement('div');tools.className='sh-tools';
@@ -2545,18 +2559,26 @@ function buildRyShipList(){
   t.innerHTML='<thead><tr>'+RY_SHIP_COLS.map(function(c){
     return '<th style="width:'+c[2]+'px;'+(c[0]==='qty'?'text-align:right;':'')+'">'+c[1]+'</th>'; }).join('')+'</tr></thead>';
   const tb=document.createElement('tbody');
-  rows.forEach(function(r){
-    const tr=document.createElement('tr');
-    RY_SHIP_COLS.forEach(function(c){
-      const td=document.createElement('td');
-      td.textContent=r[c[0]];
-      td.style.fontSize='12.5px';
-      if(c[0]==='qty') td.className='num-cell';
-      if(c[0]==='store') td.style.fontWeight='700';
-      if(c[0]==='addr'||c[0]==='tel') td.style.color='var(--ink-soft)';
-      tr.appendChild(td);
+  shipGroups(rows).forEach(function(g){
+    g.items.forEach(function(r,i){
+      const tr=document.createElement('tr');
+      if(i===0&&tb.children.length) tr.style.borderTop='2px solid var(--line)';
+      if(i===0){
+        [['date',g.date],['store',g.store],['addr',g.addr],['tel',g.tel]].forEach(function(pr){
+          const td=document.createElement('td');
+          td.rowSpan=g.items.length;
+          td.textContent=pr[1]||'-';
+          td.style.cssText='font-size:12.5px;vertical-align:top;'+
+            (pr[0]==='store'?'font-weight:700;':'')+
+            (pr[0]==='addr'||pr[0]==='tel'?'color:var(--ink-soft);':'');
+          tr.appendChild(td);
+        });
+      }
+      const ti=document.createElement('td');ti.textContent=r.item;ti.style.fontSize='12.5px';
+      const tq=document.createElement('td');tq.className='num-cell';tq.textContent=r.qty;
+      tr.append(ti,tq);
+      tb.appendChild(tr);
     });
-    tb.appendChild(tr);
   });
   t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
   return wrap;
@@ -4430,7 +4452,8 @@ function buildMallOrderList(storeName){
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
   const hs=document.createElement('span');
-  hs.textContent='📋 출고할 주문'+(rows.length?' ('+rows.length+'줄)':'');
+  const gN2=rows.length?shipGroups(rows).length:0;
+  hs.textContent='📋 출고할 주문'+(rows.length?' ('+gN2+'곳 · '+rows.length+'줄)':'');
   h.appendChild(hs);
   if(rows.length){
     const tools=document.createElement('div');tools.className='sh-tools';
@@ -4483,16 +4506,21 @@ function buildMallOrderList(storeName){
   t.innerHTML='<thead><tr>'+MALL_COLS.map(c=>
     '<th style="min-width:'+c[2]+'px;'+(c[0]==='qty'?'text-align:right;':'')+'">'+c[1]+'</th>').join('')+'</tr></thead>';
   const tb=document.createElement('tbody');
-  rows.forEach(r=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=
-      '<td style="white-space:nowrap;">'+(r.date||'-')+'</td>'+
-      '<td><b>'+r.store+'</b></td>'+
-      '<td style="font-size:12px;color:var(--ink-soft);">'+(r.addr||'-')+'</td>'+
-      '<td style="white-space:nowrap;">'+(r.tel||'-')+'</td>'+
-      '<td>'+(r.item||'-')+'</td>'+
-      '<td style="text-align:right;">'+fmt(r.qty)+'</td>';
-    tb.appendChild(tr);
+  shipGroups(rows).forEach(function(g){
+    g.items.forEach(function(r,i){
+      const tr=document.createElement('tr');
+      if(i===0&&tb.children.length) tr.style.borderTop='2px solid var(--line)';
+      if(i===0){
+        tr.innerHTML=
+          '<td rowspan="'+g.items.length+'" style="white-space:nowrap;vertical-align:top;">'+(g.date||'-')+'</td>'+
+          '<td rowspan="'+g.items.length+'" style="vertical-align:top;"><b>'+g.store+'</b></td>'+
+          '<td rowspan="'+g.items.length+'" style="font-size:12px;color:var(--ink-soft);vertical-align:top;">'+(g.addr||'-')+'</td>'+
+          '<td rowspan="'+g.items.length+'" style="white-space:nowrap;vertical-align:top;">'+(g.tel||'-')+'</td>';
+      }
+      tr.innerHTML+='<td>'+(r.item||'-')+'</td>'+
+        '<td style="text-align:right;">'+fmt(r.qty)+'</td>';
+      tb.appendChild(tr);
+    });
   });
   t.appendChild(tb);
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
