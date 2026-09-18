@@ -2536,7 +2536,8 @@ function ryShipRows(){
     (o.items||[]).forEach(function(it){
       const m=matchItem(it.name);
       out.push({date:o.date||'', store:orderStore_(o)||'', addr:o.addr||'',
-        tel:o.tel||'', item:(m?m.name:String(it.name||'').trim()), qty:Number(it.qty)||0});
+        tel:o.tel||'', item:(m?m.name:String(it.name||'').trim()), qty:Number(it.qty)||0,
+        oid:o.id});
     });
   });
   out.sort(function(a,b){ return String(b.date).localeCompare(String(a.date))||
@@ -2551,19 +2552,54 @@ function shipGroups(rows){
   rows.forEach(function(r){
     const k=[r.date||'',r.store||'',r.addr||'',r.tel||''].join('|');
     let g=map[k];
-    if(!g){ g=map[k]={date:r.date,store:r.store,addr:r.addr,tel:r.tel,items:[]}; out.push(g); }
+    if(!g){ g=map[k]={date:r.date,store:r.store,addr:r.addr,tel:r.tel,items:[],oids:[]}; out.push(g); }
     g.items.push(r);
+    if(r.oid&&g.oids.indexOf(r.oid)<0) g.oids.push(r.oid);
   });
   return out;
 }
+/* 몇 월 것을 보고 있는지 (브라우저마다 따로) */
+let ryShipMonth=null;
 function buildRyShipList(){
-  const rows=ryShipRows();
+  const all=ryShipRows();
+  /* 발주가 있는 달만 오갑니다 — 빈 달을 지나며 화살표를 여러 번 누를 일이 없습니다 */
+  const months=[];
+  all.forEach(function(r){
+    const mk=String(r.date||'').slice(0,7);
+    if(mk&&months.indexOf(mk)<0) months.push(mk);
+  });
+  months.sort();
+  if(!months.length) ryShipMonth=null;
+  else if(!ryShipMonth||months.indexOf(ryShipMonth)<0) ryShipMonth=months[months.length-1];
+  const rows=all.filter(function(r){ return !ryShipMonth||String(r.date||'').slice(0,7)===ryShipMonth; });
+  const older=all.length-rows.length;
+
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
   const hs=document.createElement('span');
   const gN=rows.length?shipGroups(rows).length:0;
   hs.textContent='📋 출고할 발주'+(rows.length?' ('+gN+'곳 · '+rows.length+'줄)':'');
   h.appendChild(hs);
+  if(months.length){
+    const nav=document.createElement('span');
+    nav.style.cssText='display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:13px;font-weight:800;';
+    const i=months.indexOf(ryShipMonth);
+    const mk=function(lbl,to,title){
+      const b=document.createElement('button');b.className='icon-btn';b.textContent=lbl;
+      b.disabled=!to; b.title=title||''; if(!to) b.style.opacity='.35';
+      b.addEventListener('click',function(){ ryShipMonth=to; refreshCurrentView(); });
+      return b;
+    };
+    const lab=document.createElement('span');
+    lab.textContent=ryShipMonth?mkLabel(ryShipMonth):'-';
+    nav.append(mk('◀',i>0?months[i-1]:null,'전 달'),lab,mk('▶',i<months.length-1?months[i+1]:null,'다음 달'));
+    if(older){
+      const o=document.createElement('span');o.className='hint';o.style.marginLeft='4px';
+      o.textContent='다른 달에 '+older+'줄 더';
+      nav.appendChild(o);
+    }
+    hs.appendChild(nav);
+  }
   if(rows.length){
     const tools=document.createElement('div');tools.className='sh-tools';
     const cb=document.createElement('button');cb.className='icon-btn';
@@ -2677,13 +2713,16 @@ function buildRyShipList(){
   if(!rows.length){
     const e=document.createElement('div');e.className='empty-box';
     e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
-    e.textContent='✅ 받은 발주를 모두 배송요청시트에 올렸습니다.';
+    e.textContent=older
+      ? '✅ '+(ryShipMonth?mkLabel(ryShipMonth):'')+' 것은 모두 올렸습니다 — 다른 달에 '+older+'줄 남아 있습니다.'
+      : '✅ 받은 발주를 모두 배송요청시트에 올렸습니다.';
     wrap.appendChild(e);return wrap;
   }
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='900px';
   t.innerHTML='<thead><tr>'+RY_SHIP_COLS.map(function(c){
-    return '<th style="width:'+c[2]+'px;'+(c[0]==='qty'?'text-align:right;':'')+'">'+c[1]+'</th>'; }).join('')+'</tr></thead>';
+    return '<th style="width:'+c[2]+'px;'+(c[0]==='qty'?'text-align:right;':'')+'">'+c[1]+'</th>'; }).join('')+
+    '<th style="width:34px;"></th></tr></thead>';
   const tb=document.createElement('tbody');
   shipGroups(rows).forEach(function(g){
     g.items.forEach(function(r,i){
@@ -2703,6 +2742,47 @@ function buildRyShipList(){
       const ti=document.createElement('td');ti.textContent=r.item;ti.style.fontSize='12.5px';
       const tq=document.createElement('td');tq.className='num-cell';tq.textContent=r.qty;
       tr.append(ti,tq);
+      /* 여기서 바로 지울 수 있어야 합니다 — 발주 관리까지 내려가 찾게 하면 안 됩니다 */
+      if(i===0){
+        const tx=document.createElement('td');tx.rowSpan=g.items.length;tx.style.verticalAlign='top';
+        const dl=document.createElement('button');dl.className='del-btn';dl.textContent='✕';
+        dl.title='이 발주 지우기';
+        dl.addEventListener('click',function(){
+          if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+          const list=ordersOf('ready');
+          const os=(g.oids||[]).map(function(id){ return list.filter(function(o){ return o.id===id; })[0]; })
+            .filter(Boolean);
+          if(!os.length){ showToast('발주를 찾지 못했습니다'); return; }
+          const tq2=os.reduce(function(a,o){
+            return a+(o.items||[]).reduce(function(x,y){ return x+(parseFloat(y.qty)||0); },0); },0);
+          askChoice('이 발주를 어떻게 지울까요?',
+            '<b>'+(g.date||'')+' · '+(g.store||'')+'</b> — 품목 '+g.items.length+'개 · '+fmt(tq2)+'개',
+            [{label:'🚫 중복·취소 건입니다 — 다시 안 가져오기',
+              desc:'수집할 때 이 건을 거릅니다. 발주서를 취소하고 고쳐 다시 보낸 경우에 쓰세요.',
+              primary:true,
+              run:function(){
+                os.forEach(function(o){
+                  const q=(o.items||[]).reduce(function(x,y){ return x+(parseFloat(y.qty)||0); },0);
+                  orderDropOf('ready')[orderDropKey(o)]={at:new Date().toISOString(),
+                    date:o.date||'',store:orderStore_(o)||'',src:o.src||'',qty:q,
+                    items:(o.items||[]).map(function(z){ return z.name+' ×'+z.qty; })};
+                  const k=list.indexOf(o); if(k>=0) list.splice(k,1);
+                });
+                persistLib(); refreshCurrentView(); showToast('다시 가져오지 않습니다');
+              }},
+             {label:'🗑 휴지통으로',
+              desc:'되돌릴 수 있습니다. 다만 원본 메일이 그대로면 다음 수집에서 다시 올라옵니다.',
+              run:function(){
+                os.forEach(function(o){
+                  trashPush('order','레디영 · '+(o.date||'')+' 발주',
+                    '품목 '+((o.items||[]).length)+'개 · '+fmt(o.total||0)+'원',{pid:'ready'},o);
+                  const k=list.indexOf(o); if(k>=0) list.splice(k,1);
+                });
+                persistLib(); refreshCurrentView(); showToast('휴지통으로 옮겼습니다');
+              }}]);
+        });
+        tx.appendChild(dl);tr.appendChild(tx);
+      }
       tb.appendChild(tr);
     });
   });
@@ -4944,6 +5024,12 @@ async function ryVerifyRows(){
   const got=await fetchEntryRows();
   const {rows,c}=got;
 
+  /* 발주 메일에 나온 수취처 이름들 — 관리메모1 과 맞춰보는 데 씁니다 */
+  const allStores={};
+  (ordersOf('ready')||[]).forEach(function(o){
+    if(o.src!=='발주메일') return;
+    const k=ryStoreKey(o.store); if(k&&k!=='(미상)') allStores[k]=1;
+  });
   /* 배송요청시트에서 레디영 건만 묶습니다 (한 행 = 한 품목) */
   const gmap={}, groups=[];
   rows.forEach(r=>{
@@ -4952,7 +5038,12 @@ async function ryVerifyRows(){
     const rule=ENTRY_RULES.find(x=>x.re.test(memo));
     if(!rule||rule.pid!=='ready') return;
     if(entryFreeOnly_(memo)) return;                  /* 순수 테스터·샘플 건만 뺍니다 */
-    const store=ryStoreKey(r[c.recv]);
+    let store=ryStoreKey(r[c.recv]);
+    /* 온라인몰·창고 물량은 수취인이 담당자 이름입니다. 그런데 관리메모1 에
+       발주처가 그대로 적혀 있습니다 — 「레디영 G마켓 온라인몰」.
+       발주에 나온 이름과 맞으면 그쪽이 임자입니다. */
+    const mstore=ryStoreKey(r[c.memo]);
+    if(mstore&&mstore!=='(미상)'&&allStores[mstore]) store=mstore;
     const d1=entryDate_(r[c.date]);
     const d2=c.odate>=0?entryDate_(r[c.odate]):'';
     if(!store||(!d1&&!d2)) return;
@@ -5117,12 +5208,7 @@ async function ryVerifyRows(){
   });
   out.skipped=skipped; out.offBook=offBook; out.early=early; out.from=from;
   out.offNames=Object.keys(offNames).map(function(k){ return offNames[k]; });
-  /* 고를 목록에는 직배송 발주처도 넣습니다 — 이어두려는 상대가 바로 그것입니다 */
-  const allStores={};
-  (ordersOf('ready')||[]).forEach(function(o){
-    if(o.src!=='발주메일') return;
-    const k=ryStoreKey(o.store); if(k&&k!=='(미상)') allStores[k]=1;
-  });
+  /* 고를 목록에는 직배송 발주처도 넣습니다 — 위에서 만들어 둔 allStores 그대로입니다 */
   out.ordStores=Object.keys(allStores);
   out.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||
     String(a.store).localeCompare(String(b.store),'ko'));
@@ -5159,9 +5245,15 @@ function ryOkKey(r){
   return [ryStoreKey(r.store),r.date||'',itemKey(r.item),r.want||0,r.got||0].join('|');
 }
 function ryOkNote(r){ return ryOkOf()[ryOkKey(r)]||null; }
-/* 아직 확인하지 않은 어긋남 */
+/* 아직 확인하지 않은 어긋남.
+   배송요청시트에 송장번호가 찍혀 있으면 물건은 나간 것입니다 — 수량이 어긋나도
+   그건 이미 끝난 일이라 확인 목록에 올리지 않습니다. 표에는 그대로 두어 보입니다.
+   다만 한 개도 안 나간 건(출고 0)은 송장과 무관하게 남깁니다. */
+function ryShipped_(r){ return !!(r&&r.inv&&(r.got||0)>0); }
 function ryTodoRows(rows){
-  return (rows||[]).filter(function(r){ return RV_TODO[r.st]&&!ryOkNote(r); });
+  return (rows||[]).filter(function(r){
+    return RV_TODO[r.st]&&!ryOkNote(r)&&!ryShipped_(r);
+  });
 }
 function applyVerifyToOrders(rows){
   /* 발주 하나씩 봅니다. 지점·날짜로 뭉쳐 세면, 같은 날 발주가 두 건일 때
@@ -5187,7 +5279,7 @@ function buildRyVerify(){
   const saved=lib.ryVerify||null;
   const rows=saved&&saved.rows||[];
   const bad=ryTodoRows(rows).length;
-  const closedN=rows.filter(r=>RV_TODO[r.st]&&ryOkNote(r)).length;
+  const closedN=rows.filter(r=>RV_TODO[r.st]&&ryOkNote(r)&&!ryShipped_(r)).length;
   const waitN=rows.filter(r=>r.st==='wait').length;
   const okN=rows.filter(r=>r.st==='ok').length;
   const sum=!saved ? '<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
@@ -5306,7 +5398,14 @@ function buildRyVerify(){
           '</td>'+
         '<td style="font-size:11.5px;color:var(--ink-mute);">'+(r.inv||'-')+'</td>';
       /* 협의가 끝난 건은 닫아 둘 수 있게 — 안 그러면 경고가 영영 남습니다 */
-      if(RV_TODO[r.st]){
+      if(RV_TODO[r.st]&&ryShipped_(r)){
+        const td=document.createElement('td');
+        const s3=document.createElement('div');s3.className='hint';
+        s3.style.cssText='color:var(--good);font-weight:700;';
+        s3.textContent='✅ 송장 있음 — 출고 완료';
+        td.appendChild(s3);tr.appendChild(td);
+        tr.style.opacity='.8';
+      }else if(RV_TODO[r.st]){
         const note=ryOkNote(r);
         const td=document.createElement('td');td.style.whiteSpace='nowrap';
         if(note){
@@ -5340,6 +5439,30 @@ function buildRyVerify(){
       tb.appendChild(tr);
     });
   t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
+
+  /* 이미 이어 둔 것 — 잘못 이었을 때 풀 수 있어야 합니다 */
+  const AL=rdAliasOf(); const alKeys=Object.keys(AL);
+  if(alKeys.length){
+    const ab=document.createElement('div');
+    ab.style.cssText='border:1.5px dashed var(--line);border-radius:10px;padding:11px 13px;margin:10px 0 0;';
+    const at=document.createElement('div');at.style.cssText='font-weight:800;margin-bottom:6px;';
+    at.textContent='🔗 이어둔 수취인 '+alKeys.length+'곳';
+    ab.appendChild(at);
+    alKeys.sort().forEach(function(k){
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px dashed var(--line);';
+      const tx=document.createElement('span');tx.className='hint';tx.style.flex='1 1 auto';
+      tx.innerHTML='<b>'+k+'</b> → <b>'+AL[k]+'</b>';
+      const bt=document.createElement('button');bt.className='icon-btn';bt.textContent='풀기';
+      bt.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        delete rdAliasOf()[k];
+        persistLib(); showToast('풀었습니다 — 다시 대조해주세요'); refreshCurrentView();
+      });
+      row.append(tx,bt);ab.appendChild(row);
+    });
+    wrap.appendChild(ab);
+  }
 
   /* 담당자 이름으로 나간 건 — 누가 어느 발주처인지 이어 둡니다 */
   if((saved.offNames||[]).length){
@@ -5385,6 +5508,13 @@ function buildRyVerify(){
     cz.innerHTML='✔ <b>확인 완료로 닫은 건 '+closedN+'건</b> — 확인 필요에서 뺐습니다. '+
       '<span style="color:var(--ink-mute);">수량이 바뀌면 다시 올라옵니다.</span>';
     wrap.appendChild(cz);
+  }
+  const shipN=rows.filter(r=>RV_TODO[r.st]&&ryShipped_(r)).length;
+  if(shipN){
+    const sz=document.createElement('div');sz.className='hint';sz.style.marginTop='6px';
+    sz.innerHTML='✅ <b>송장이 찍힌 '+shipN+'건</b>은 물건이 나간 것이라 확인 필요에서 뺐습니다. '+
+      '<span style="color:var(--ink-mute);">표에는 그대로 둡니다.</span>';
+    wrap.appendChild(sz);
   }
   const freeN=rows.filter(r=>r.free>0).length;
   if(freeN){
