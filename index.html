@@ -2478,6 +2478,8 @@ function ordersHandedOff(list){
   });
   list.forEach(o=>{
     if(o.src!=='발주메일') return;
+    /* 대조에서 배송요청시트에 올라간 것으로 확인된 건 */
+    if(o.status==='출고'||o.status==='완료'){ out[o.id]=1; return; }
     const st=ryStoreKey(orderStore_(o)), q=qty(o);
     if(ship[st+'|'+(o.date||'')]){ out[o.id]=1; return; }
     /* 배송요청은 발주 다음 날 적히기도 합니다 — 수량까지 같을 때만 같은 건으로 봅니다 */
@@ -2544,9 +2546,31 @@ function buildRyShipList(){
     });
     tools.appendChild(cb);h.appendChild(tools);
   }
+  {
+    const tools=h.querySelector('.sh-tools')||document.createElement('div');
+    if(!tools.className){ tools.className='sh-tools'; h.appendChild(tools); }
+    const rb=document.createElement('button');rb.className='icon-btn';
+    rb.textContent='🚚 배송요청 반영 확인';
+    rb.title='배송요청시트를 읽어 올라간 발주를 「출고」로 바꾸고 목록에서 내립니다';
+    rb.addEventListener('click',async function(){
+      if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+      rb.disabled=true;rb.textContent='확인 중…';
+      try{
+        const r=await ryVerifyRows();
+        lib.ryVerify={at:new Date().toISOString(),rows:r,skipped:r.skipped||0,
+          offBook:r.offBook||0,early:r.early||0,from:r.from||''};
+        const c=applyVerifyToOrders(r);
+        persistLib();
+        showToast(c?('발주 '+c+'건을 「출고」로 바꿨습니다'):'새로 올라간 발주가 없습니다');
+        refreshCurrentView();
+      }catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 배송요청 반영 확인'; }
+    });
+    tools.appendChild(rb);
+  }
   wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
   nt.innerHTML='<b>배송요청시트에 올리면 목록에서 사라집니다.</b> 남은 줄이 아직 출고 요청을 안 넣은 발주입니다.<br>'+
+    '올린 뒤 <b>「🚚 배송요청 반영 확인」</b>을 누르면 시트를 읽어 상태를 「출고」로 바꾸고 여기서 내립니다.<br>'+
     '순서는 자사몰 「출고할 주문」과 같습니다. 주소·전화는 발주 메일의 배송지 정보입니다.';
   wrap.appendChild(nt);
   if(!rows.length){
@@ -4849,19 +4873,53 @@ async function ryVerifyRows(){
 
   const out=[];
   /* 날짜가 딱 맞는 것부터 집어야 합니다. 먼저 집은 묶음은 다시 쓰지 않습니다. */
-  const pick=(store,date)=>{
-    let hit=groups.filter(g=>!g.used&&g.store===store&&g.d1===date);
+  const dayShift=function(d,k){
+    const t=new Date(String(d||'')+'T00:00:00Z');
+    if(isNaN(t)) return '';
+    t.setUTCDate(t.getUTCDate()+k); return t.toISOString().slice(0,10);
+  };
+  /* 발주 품목·수량이 이 묶음과 정확히 같은지 (비고에 적힌 덤은 빼고 봅니다) */
+  const fits=function(g,o){
+    const want={};
+    (o.items||[]).forEach(function(it){
+      const m=matchItem(it.name);
+      const k=itemKey(m?m.name:it.name);
+      want[k]=(want[k]||0)+(it.qty||0);
+    });
+    const wk=Object.keys(want), gk=Object.keys(g.items);
+    if(!wk.length||wk.length!==gk.length) return false;
+    return wk.every(function(k){
+      const q=g.items[k]; if(q==null) return false;
+      const fr=g.free[k]||0;
+      return q===want[k]||q-fr===want[k];
+    });
+  };
+  const pick=function(store,date,o){
+    let hit=groups.filter(g=>!g.used&&g.store===store&&g.d1===date), shift=0;
     if(!hit.length){
       /* 「날짜」로는 못 찾았습니다. 「발주일자」가 이 날인 묶음을 봅니다 —
          단, 그 묶음의 「날짜」에 따로 발주가 있으면 그쪽 것입니다. */
       hit=groups.filter(g=>!g.used&&g.store===store&&g.d2===date&&!ordered[store+'|'+g.d1]);
     }
-    hit.forEach(g=>{ g.used=true; });
-    return hit;
+    if(!hit.length){
+      /* 두 날짜 칸이 모두 출고일로 덮인 행이 있습니다 (발주일자를 안 적고 넘어간 경우).
+         지점·품목·수량이 그대로이고 하루 차이면 같은 건으로 봅니다.
+         수량이 하나라도 다르면 붙이지 않습니다 — 진짜 미출고를 덮으면 안 됩니다. */
+      const ks=[1,-1];
+      for(let i=0;i<ks.length;i++){
+        const d2=dayShift(date,ks[i]);
+        const c=groups.filter(function(g){
+          return !g.used&&g.store===store&&g.d1===d2&&!ordered[store+'|'+d2]&&fits(g,o); });
+        if(c.length){ hit=[c[0]]; shift=ks[i]; break; }
+      }
+    }
+    hit.forEach(function(g){ g.used=true; });
+    return {hit:hit,shift:shift};
   };
   orders.forEach(o=>{
     const store=ryStoreKey(o.store);
-    const hit=pick(store,o.date);
+    const pk=pick(store,o.date,o);
+    const hit=pk.hit;
     const items={}, inv={}, frees={}, memos={};
     hit.forEach(g=>{
       Object.keys(g.items).forEach(ik=>{ items[ik]=(items[ik]||0)+g.items[ik]; });
@@ -4885,24 +4943,28 @@ async function ryVerifyRows(){
       else if(free && mine-free===want) st='ok';
       else st='diff';
       out.push({store:o.store||store, date:o.date, item:(m?m.name:it.name),
-        want:want, got:mine, inv:invs, st:st,
+        want:want, got:mine, inv:invs, st:st, shift:(st==='ok'||st==='diff')?pk.shift:0,
         free:(free&&mine-free===want)?free:0, memo:memos[ik]||''});
     });
   });
 
   /* 발주서 없이 나간 건. 지점으로 못 알아본 수취인(온라인몰 직배송 등)은
      지점 발주와 견줄 것이 아니라 세지 않습니다. */
-  let offBook=0;
+  let offBook=0, early=0;
+  /* 수집 첫날 전후 출고는 그 앞에 온 발주서를 우리가 못 받았습니다 —
+     견줄 것이 없는데 「발주서에 없음」이라 부르면 영영 사라지지 않는 경고가 됩니다. */
+  const earlyTill=from?dayShift(from,2):'';
   groups.forEach(g=>{
     if(g.used) return;
     if(from && String(g.d1||'') < from) return;        /* 수집 시작 전 출고는 건너뜁니다 */
+    if(earlyTill && String(g.d1||'') <= earlyTill){ early++; return; }
     if(!findSite(g.store)){ offBook++; return; }
     Object.keys(g.items).forEach(ik=>{
       out.push({store:g.store, date:g.d1, item:g.name[ik]||ik,
         want:0, got:g.items[ik], inv:Object.keys(g.inv).join(', '), st:'extra'});
     });
   });
-  out.skipped=skipped; out.offBook=offBook;
+  out.skipped=skipped; out.offBook=offBook; out.early=early; out.from=from;
   out.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||
     String(a.store).localeCompare(String(b.store),'ko'));
   return out;
@@ -4910,6 +4972,32 @@ async function ryVerifyRows(){
 
 /* 일치한 줄은 볼 일이 없어 접어 둡니다 (브라우저마다 따로) */
 let ryShowOk=false;
+/* ---------- 대조 결과를 발주 상태로 ----------
+   배송요청시트에 올리면 그 발주는 우리 손을 떠난 것입니다. 그런데 대시보드는
+   시트를 다시 읽기 전까지 모르고 있어서, 올려도 「출고할 발주」에 그대로
+   남아 있었습니다. 대조를 돌릴 때 상태까지 같이 맞춥니다.
+     품목이 전부 시트에 있으면 → 출고
+     일부만 있거나 없으면      → 접수 (아직 우리 차례)
+   사람이 「완료(정산)」로 바꿔둔 것은 건드리지 않습니다. */
+function applyVerifyToOrders(rows){
+  const by={};
+  (rows||[]).forEach(function(r){
+    if(r.st==='extra') return;
+    const k=ryStoreKey(r.store)+'|'+(r.date||'');
+    const b=by[k]=by[k]||{tot:0,on:0};
+    b.tot++; if(r.st!=='wait') b.on++;
+  });
+  let changed=0;
+  (ordersOf('ready')||[]).forEach(function(o){
+    if(o.src!=='발주메일') return;
+    if(o.status==='완료') return;
+    const b=by[ryStoreKey(orderStore_(o))+'|'+(o.date||'')];
+    if(!b||!b.tot) return;
+    const want=(b.on===b.tot)?'출고':'접수';
+    if((o.status||'접수')!==want){ o.status=want; changed++; }
+  });
+  return changed;
+}
 function buildRyVerify(){
   const saved=lib.ryVerify||null;
   const rows=saved&&saved.rows||[];
@@ -4940,13 +5028,17 @@ function buildRyVerify(){
     try{
       const r=await ryVerifyRows();
       lib.ryVerify={at:new Date().toISOString(),rows:r,
-        skipped:r.skipped||0,offBook:r.offBook||0};
+        skipped:r.skipped||0,offBook:r.offBook||0,early:r.early||0,from:r.from||''};
+      const st=applyVerifyToOrders(r);
       persistLib();
       const n=r.filter(x=>RV_TODO[x.st]).length;
       const w=r.filter(x=>x.st==='wait').length;
       const fz2=r.filter(x=>x.free>0).length;
+      const sh=r.filter(function(x){ return x.shift; }).length;
       lg.textContent='대조 완료 — '+r.length+'행 중 확인 필요 '+n+'건'+
         (w?' · 배송요청 전 '+w+'건':'')+
+        (st?NLC_()+'발주 '+st+'건의 상태를 「출고」로 맞췄습니다.':'')+
+        (sh?NLC_()+'배송요청이 하루 밀려 적힌 '+sh+'건은 품목·수량이 같아 같은 건으로 봤습니다.':'')+
         (fz2?NLC_()+'비고의 덤(테스터·디피) '+fz2+'건은 빼고 맞췄습니다.':'')+
         (r.skipped?NLC_()+'창고·온라인몰 발주 '+r.skipped+'건은 매장이 아니라 제외했습니다.':'')+
         (r.offBook?NLC_()+'지점으로 못 알아본 수취인 출고 '+r.offBook+'묶음은 제외했습니다 (온라인몰 직배송 등).':'');
@@ -5016,7 +5108,9 @@ function buildRyVerify(){
       if(old) tr.style.background='#FFF7E6';
       tr.innerHTML='<td style="white-space:nowrap;color:'+col+';font-weight:800;">'+
           RV_ICON[r.st]+' '+RV_LABEL[r.st]+extra2+'</td>'+
-        '<td style="font-size:12.5px;">'+(r.date||'-')+'</td>'+
+        '<td style="font-size:12.5px;">'+(r.date||'-')+
+          (r.shift?'<div style="font-size:11px;color:var(--ink-mute);font-weight:600;">'+
+            (r.shift>0?'다음 날 출고':'전날 출고')+'</div>':'')+'</td>'+
         '<td style="font-size:12.5px;font-weight:700;">'+(r.store||'-')+'</td>'+
         '<td style="font-size:12.5px;">'+r.item+'</td>'+
         '<td class="num-cell">'+(r.want||'-')+'</td>'+
@@ -5041,12 +5135,14 @@ function buildRyVerify(){
       '<span style="color:var(--ink-mute);">덤을 빼도 수량이 안 맞으면 그대로 ⚠ 로 남깁니다.</span>';
     wrap.appendChild(fz);
   }
-  if(saved.skipped||saved.offBook){
+  if(saved.skipped||saved.offBook||saved.early){
     const ex=document.createElement('div');ex.className='hint';ex.style.marginTop='6px';
     ex.innerHTML='대조에서 제외 — '+
       [saved.skipped?'창고·온라인몰 발주 '+saved.skipped+'건':'',
-       saved.offBook?'지점 아닌 수취인 출고 '+saved.offBook+'묶음':''].filter(String).join(' · ')+
-      ' <span style="color:var(--ink-mute);">(지점 발주와 견줄 대상이 아닙니다)</span>';
+       saved.offBook?'지점 아닌 수취인 출고 '+saved.offBook+'묶음':'',
+       saved.early?'수집 시작('+(saved.from||'')+') 직후 출고 '+saved.early+'묶음':''
+      ].filter(String).join(' · ')+
+      ' <span style="color:var(--ink-mute);">(견줄 발주서가 없거나 지점 발주가 아닙니다)</span>';
     wrap.appendChild(ex);
   }
   return fp.panel;
