@@ -3631,6 +3631,7 @@ async function importRyOrders(logEl,onDone){
   }
   if(onDone) onDone();
 }
+function NLC_(){ return String.fromCharCode(10); }
 function ryNum(v){
   const n=String(v==null?'':v).replace(/[^0-9-]/g,'');
   return n?parseInt(n,10):0;
@@ -4250,14 +4251,25 @@ const won_=v=>{const n=Number(String(v==null?'':v).replace(/[,\s₩]/g,''));retu
    둘을 맞춰 「발주는 왔는데 안 나갔거나 수량이 다른 건」 을 찾습니다.
    맞추는 키: 지점 + 발주일자 (배송요청시트는 발주 다음 날 적히기도 해서
    '날짜' 가 아니라 '발주일자' 를 씁니다) */
-const RV_ICON={ok:'✅',diff:'⚠',miss:'❌',extra:'➕'};
-const RV_LABEL={ok:'일치',diff:'수량 다름',miss:'출고 누락',extra:'발주서에 없음'};
+const RV_ICON={miss:'❌',diff:'⚠',extra:'➕',wait:'⏳',ok:'✅'};
+const RV_LABEL={miss:'출고 누락',diff:'수량 다름',extra:'발주서에 없음',
+  wait:'배송요청 전',ok:'일치'};
+/* 「배송요청 전」 은 아직 우리가 시트에 안 올린 것이라 오류가 아닙니다 */
+const RV_TODO={miss:1,diff:1,extra:1};
 
+/* ---------- 발주서 ↔ 배송요청시트 대조 ----------
+   배송요청시트에는 「날짜」와 「발주일자」 두 칸이 있고, 서로 다른 행이 많습니다.
+     · 강남 9/01 발주 → 날짜 9/01 · 발주일자 9/02
+     · 명동 9/08 출고 → 날짜 9/08 · 발주일자 9/07  (앞 발주일이 그대로 적힘)
+   한 칸만 보면 어긋납니다. 발주일자만 봤더니 명동 9/07·9/08 두 묶음이 한 바구니로
+   들어가 9/07 은 출고가 두 배로, 9/08 은 통째로 누락으로 잡혔습니다.
+   그래서 두 칸을 다 열쇠로 잡아 두고, 「날짜」가 맞는 것을 먼저 씁니다. */
 async function ryVerifyRows(){
   const got=await fetchEntryRows();
   const {rows,c}=got;
-  /* 배송요청시트에서 레디영 건만 — 관리메모1 규칙을 그대로 씁니다 */
-  const ship={};
+
+  /* 배송요청시트에서 레디영 건만 묶습니다 (한 행 = 한 품목) */
+  const gmap={}, groups=[];
   rows.forEach(r=>{
     if(!r) return;
     const memo=entryKey_(r[c.memo]||'');
@@ -4265,52 +4277,81 @@ async function ryVerifyRows(){
     if(!rule||rule.pid!=='ready') return;
     if(ENTRY_FREE.test(memo)) return;                 /* 테스터·샘플은 발주가 아닙니다 */
     const store=ryStoreKey(r[c.recv]);
-    const d=entryDate_(c.odate>=0?r[c.odate]:'')||entryDate_(r[c.date]);
-    if(!store||!d) return;
+    const d1=entryDate_(r[c.date]);
+    const d2=c.odate>=0?entryDate_(r[c.odate]):'';
+    if(!store||(!d1&&!d2)) return;
     const name=String(r[c.item]||'').trim();
     if(!name) return;
+    const k=store+'|'+(d1||'')+'|'+(d2||'');
+    let g=gmap[k];
+    if(!g){ g=gmap[k]={store:store,d1:d1||d2,d2:d2||d1,items:{},name:{},inv:{},used:false}; groups.push(g); }
     const m=matchItem(name);
-    const key=store+'|'+d;
-    ship[key]=ship[key]||{store,date:d,items:{},inv:{}};
     const ik=itemKey(m?m.name:name);
-    ship[key].items[ik]=(ship[key].items[ik]||0)+(parseInt(String(r[c.qty]).replace(/[^0-9-]/g,''),10)||0);
-    ship[key].name=ship[key].name||{};
-    ship[key].name[ik]=m?m.name:name;
+    g.items[ik]=(g.items[ik]||0)+(parseInt(String(r[c.qty]).replace(/[^0-9-]/g,''),10)||0);
+    g.name[ik]=m?m.name:name;
     const inv=String(c.inv>=0?(r[c.inv]||''):'').trim();
-    if(inv) ship[key].inv[inv]=1;
+    if(inv) g.inv[inv]=1;
   });
 
-  /* 발주 메일로 들어온 건만 견줍니다 (배송요청시트에서 만든 발주는 제외) */
-  const orders=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일');
+  /* 발주 메일로 들어온 건만 견줍니다 (배송요청시트에서 만든 발주는 제외).
+     창고·온라인몰은 매장이 아니라 지점 발주와 견줄 것이 아닙니다. */
+  const orders=(ordersOf('ready')||[])
+    .filter(o=>o.src==='발주메일')
+    .filter(o=>isRyStore(o.store));
+  const skipped=(ordersOf('ready')||[]).filter(o=>o.src==='발주메일'&&!isRyStore(o.store)).length;
   /* 발주 메일이 있는 기간만 견줍니다 (그 전 출고는 견줄 발주서가 없습니다) */
   const dates=orders.map(o=>String(o.date||'')).filter(Boolean).sort();
   const from=dates[0]||'';
-  const out=[]; const usedKeys={};
+  /* 어느 지점이 어느 날 발주를 냈는지 — 「발주일자」 로 끌어올 때 쓰는 잣대입니다 */
+  const ordered={};
+  orders.forEach(o=>{ ordered[ryStoreKey(o.store)+'|'+o.date]=1; });
+
+  const out=[];
+  /* 날짜가 딱 맞는 것부터 집어야 합니다. 먼저 집은 묶음은 다시 쓰지 않습니다. */
+  const pick=(store,date)=>{
+    let hit=groups.filter(g=>!g.used&&g.store===store&&g.d1===date);
+    if(!hit.length){
+      /* 「날짜」로는 못 찾았습니다. 「발주일자」가 이 날인 묶음을 봅니다 —
+         단, 그 묶음의 「날짜」에 따로 발주가 있으면 그쪽 것입니다. */
+      hit=groups.filter(g=>!g.used&&g.store===store&&g.d2===date&&!ordered[store+'|'+g.d1]);
+    }
+    hit.forEach(g=>{ g.used=true; });
+    return hit;
+  };
   orders.forEach(o=>{
-    const store=o.store?ryStoreKey(o.store):(o.storeKey||'');
-    const key=store+'|'+o.date;
-    usedKeys[key]=1;
-    const s=ship[key];
+    const store=ryStoreKey(o.store);
+    const hit=pick(store,o.date);
+    const items={}, inv={};
+    hit.forEach(g=>{
+      Object.keys(g.items).forEach(ik=>{ items[ik]=(items[ik]||0)+g.items[ik]; });
+      Object.keys(g.inv).forEach(x=>{ inv[x]=1; });
+    });
+    const invs=Object.keys(inv).join(', ');
     (o.items||[]).forEach(it=>{
       const m=matchItem(it.name);
       const ik=itemKey(m?m.name:it.name);
-      const want=it.qty||0;
-      const got2=s?(s.items[ik]||0):0;
+      const want=it.qty||0, mine=items[ik]||0;
+      /* 그 지점·그 날 배송요청이 아예 없으면 아직 안 올린 것입니다 —
+         일부 품목만 빠진 「출고 누락」 과 섞으면 안 됩니다. */
+      const st=!hit.length ? 'wait' : (!mine ? 'miss' : (want===mine?'ok':'diff'));
       out.push({store:o.store||store, date:o.date, item:(m?m.name:it.name),
-        want, got:got2, inv:s?Object.keys(s.inv).join(', '):'',
-        st: !s||!got2 ? 'miss' : (want===got2?'ok':'diff')});
+        want:want, got:mine, inv:invs, st:st});
     });
   });
-  /* 발주서에 없는데 나간 건 (지점·발주일이 발주서와 안 맞는 출고) */
-  Object.keys(ship).forEach(k=>{
-    if(usedKeys[k]) return;
-    const s=ship[k];
-    if(from && String(s.date||'') < from) return;      /* 수집 시작 전 출고는 건너뜁니다 */
-    Object.keys(s.items).forEach(ik=>{
-      out.push({store:s.store, date:s.date, item:s.name[ik]||ik,
-        want:0, got:s.items[ik], inv:Object.keys(s.inv).join(', '), st:'extra'});
+
+  /* 발주서 없이 나간 건. 지점으로 못 알아본 수취인(온라인몰 직배송 등)은
+     지점 발주와 견줄 것이 아니라 세지 않습니다. */
+  let offBook=0;
+  groups.forEach(g=>{
+    if(g.used) return;
+    if(from && String(g.d1||'') < from) return;        /* 수집 시작 전 출고는 건너뜁니다 */
+    if(!findSite(g.store)){ offBook++; return; }
+    Object.keys(g.items).forEach(ik=>{
+      out.push({store:g.store, date:g.d1, item:g.name[ik]||ik,
+        want:0, got:g.items[ik], inv:Object.keys(g.inv).join(', '), st:'extra'});
     });
   });
+  out.skipped=skipped; out.offBook=offBook;
   out.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||
     String(a.store).localeCompare(String(b.store),'ko'));
   return out;
@@ -4321,17 +4362,23 @@ let ryShowOk=false;
 function buildRyVerify(){
   const saved=lib.ryVerify||null;
   const rows=saved&&saved.rows||[];
-  const bad=rows.filter(r=>r.st!=='ok').length;
-  const okN=rows.length-bad;
+  const bad=rows.filter(r=>RV_TODO[r.st]).length;
+  const waitN=rows.filter(r=>r.st==='wait').length;
+  const okN=rows.filter(r=>r.st==='ok').length;
   const sum=!saved ? '<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
-    : (bad ? '<span style="color:var(--warn);">확인 필요 '+bad+'건</span>'
-           : '<span style="color:var(--good);">✓ 전부 일치</span>');
+    : (bad ? '<span style="color:var(--warn);">확인 필요 '+bad+'건</span>'+
+             (waitN?'<span style="color:var(--ink-soft);"> · 배송요청 전 '+waitN+'건</span>':'')
+       : (waitN ? '<span style="color:var(--ink-soft);">배송요청 전 '+waitN+'건</span>'
+                : '<span style="color:var(--good);">✓ 전부 일치</span>'));
   const fp=foldPanel('🔍 발주서 ↔ 배송요청 대조',sum,'setPriceCalc:ryVerifyOpen',false);
   const wrap=fp.body;
 
   const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
   nt.innerHTML='레디영 <b>발주 메일</b>을 기준으로 <b>배송요청시트</b>에 빠진 건이나 수량이 다른 건을 찾습니다.<br>'+
-    '지점과 <b>발주일자</b>로 맞춥니다 (배송요청은 발주 다음 날 적히기도 해서 「날짜」가 아니라 「발주일자」를 봅니다).';
+    '지점과 날짜로 맞추는데, 배송요청시트의 <b>「날짜」를 먼저 보고 안 맞으면 「발주일자」</b>를 봅니다. '+
+    '두 칸이 어긋난 행이 많아서입니다.<br>'+
+    '<span style="color:var(--ink-soft);">⏳ <b>배송요청 전</b> 은 그 지점·그 날 배송요청이 아직 하나도 없는 것입니다 — '+
+    '오류가 아니라 우리가 올릴 차례입니다. <b>일주일이 넘은 건은 색을 넣어 표시</b>합니다.</span>';
   wrap.appendChild(nt);
 
   const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;';
@@ -4341,10 +4388,15 @@ function buildRyVerify(){
     b.textContent='대조 중…';b.disabled=true;lg.classList.add('show');lg.textContent='배송요청시트를 읽는 중…';
     try{
       const r=await ryVerifyRows();
-      lib.ryVerify={at:new Date().toISOString(),rows:r};
+      lib.ryVerify={at:new Date().toISOString(),rows:r,
+        skipped:r.skipped||0,offBook:r.offBook||0};
       persistLib();
-      const n=r.filter(x=>x.st!=='ok').length;
-      lg.textContent='대조 완료 — '+r.length+'행 중 확인 필요 '+n+'건';
+      const n=r.filter(x=>RV_TODO[x.st]).length;
+      const w=r.filter(x=>x.st==='wait').length;
+      lg.textContent='대조 완료 — '+r.length+'행 중 확인 필요 '+n+'건'+
+        (w?' · 배송요청 전 '+w+'건':'')+
+        (r.skipped?NLC_()+'창고·온라인몰 발주 '+r.skipped+'건은 매장이 아니라 제외했습니다.':'')+
+        (r.offBook?NLC_()+'지점으로 못 알아본 수취인 출고 '+r.offBook+'묶음은 제외했습니다 (온라인몰 직배송 등).':'');
       refreshCurrentView();
     }catch(e){ lg.textContent='✕ '+e.message; }
     b.textContent='🔍 대조하기';b.disabled=false;
@@ -4393,15 +4445,24 @@ function buildRyVerify(){
     '<th style="width:130px;">송장</th></tr></thead>';
   const tb=document.createElement('tbody');
   /* 문제 있는 것부터 */
-  const order={miss:0,diff:1,extra:2,ok:3};
+  /* wait 를 빼먹으면 NaN 이 되어 정렬이 무너집니다 — 확인할 것부터 올립니다 */
+  const order={miss:0,diff:1,extra:2,wait:3,ok:4};
   shown.slice().sort((a,b)=>(order[a.st]-order[b.st])||String(b.date).localeCompare(String(a.date)))
     .forEach(r=>{
       const tr=document.createElement('tr');
       if(r.st==='miss')tr.style.background='#FBEDE6';
       else if(r.st==='diff')tr.style.background='#FFF7E6';
-      const col=r.st==='ok'?'var(--good)':(r.st==='extra'?'var(--ink-soft)':'var(--warn)');
+      /* 배송요청 전이 며칠째인지 — 오래 묵은 건은 회색에 묻히면 안 됩니다 */
+      let extra2='', old=false;
+      if(r.st==='wait'&&r.date){
+        const dd=Math.round((Date.now()-new Date(r.date+'T00:00:00').getTime())/86400000);
+        if(dd>=1){ extra2=' ('+dd+'일)'; old=dd>7; }
+      }
+      const col=r.st==='ok'?'var(--good)'
+        :(old?'var(--warn)':((r.st==='extra'||r.st==='wait')?'var(--ink-soft)':'var(--warn)'));
+      if(old) tr.style.background='#FFF7E6';
       tr.innerHTML='<td style="white-space:nowrap;color:'+col+';font-weight:800;">'+
-          RV_ICON[r.st]+' '+RV_LABEL[r.st]+'</td>'+
+          RV_ICON[r.st]+' '+RV_LABEL[r.st]+extra2+'</td>'+
         '<td style="font-size:12.5px;">'+(r.date||'-')+'</td>'+
         '<td style="font-size:12.5px;font-weight:700;">'+(r.store||'-')+'</td>'+
         '<td style="font-size:12.5px;">'+r.item+'</td>'+
@@ -4418,6 +4479,14 @@ function buildRyVerify(){
   tot.innerHTML=Object.keys(RV_LABEL).filter(k=>cnt[k])
     .map(k=>'<span>'+RV_ICON[k]+' '+RV_LABEL[k]+' <span class="num-mono">'+cnt[k]+'</span></span>').join('');
   wrap.appendChild(tot);
+  if(saved.skipped||saved.offBook){
+    const ex=document.createElement('div');ex.className='hint';ex.style.marginTop='6px';
+    ex.innerHTML='대조에서 제외 — '+
+      [saved.skipped?'창고·온라인몰 발주 '+saved.skipped+'건':'',
+       saved.offBook?'지점 아닌 수취인 출고 '+saved.offBook+'묶음':''].filter(String).join(' · ')+
+      ' <span style="color:var(--ink-mute);">(지점 발주와 견줄 대상이 아닙니다)</span>';
+    wrap.appendChild(ex);
+  }
   return fp.panel;
 }
 
