@@ -1663,7 +1663,8 @@ function renderRows(){
     const mg=uPrice!==null?(uPrice-cost)/uPrice:null;
     const sel=document.createElement('select');
     const e0=document.createElement('option');e0.value='';e0.textContent='품목 선택';sel.appendChild(e0);
-    names.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;if(n===row.name)o.selected=true;sel.appendChild(o);});
+    /* 끊은 품목은 새로 제안하지 않습니다 — 이미 골라둔 줄에만 남겨둡니다 */
+    names.filter(n=>n===row.name||!droppedItem(n)).forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;if(n===row.name)o.selected=true;sel.appendChild(o);});
     sel.addEventListener('change',e=>{row.name=e.target.value;renderRows();renderResults();persist();});
     const mk=(t,c,x)=>{const el=document.createElement(t);if(c)el.className=c;if(x!==undefined)el.textContent=x;return el;};
     const tdNo=mk('td');tdNo.textContent=idx+1;tdNo.style.cssText='color:var(--ink-soft);font-size:12px;';
@@ -2774,7 +2775,7 @@ function buildRyShipList(){
               desc:'되돌릴 수 있습니다. 다만 원본 메일이 그대로면 다음 수집에서 다시 올라옵니다.',
               run:function(){
                 os.forEach(function(o){
-                  trashPush('order','레디영 · '+(o.date||'')+' 발주',
+                  trashPush('order','레디영 '+(ryStoreName(orderStore_(o))||orderStore_(o)||'(지점 미상)')+ ' · '+(o.date||'')+' 발주',
                     '품목 '+((o.items||[]).length)+'개 · '+fmt(o.total||0)+'원',{pid:'ready'},o);
                   const k=list.indexOf(o); if(k>=0) list.splice(k,1);
                 });
@@ -2822,8 +2823,8 @@ function buildOrders(pid,view){
   tools.appendChild(add);h.appendChild(tools);wrap.appendChild(h);
   if(hidN){
     const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
-    nt.innerHTML='<b>배송요청시트에 올린 발주는 목록에서 사라집니다.</b> 남은 줄이 아직 출고 요청을 안 넣은 발주입니다.'+
-      (ordShowDone?'':'<br><span style="color:var(--good);">✅ 배송요청 완료 '+hidN+'건은 감췄습니다.</span>');
+    nt.innerHTML=ordShowDone?'배송요청까지 끝난 발주도 함께 보고 있습니다.'
+      :'<span style="color:var(--good);">✅ 배송요청 완료 '+hidN+'건은 감췄습니다.</span>';
     wrap.appendChild(nt);
   }
   if(!list.length){
@@ -2833,7 +2834,7 @@ function buildOrders(pid,view){
   if(!shown.length){
     const e=document.createElement('div');e.className='empty-box';
     e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
-    e.textContent='✅ 받은 발주를 모두 배송요청시트에 올렸습니다 — 처리할 발주가 없습니다.';
+    e.textContent='✅ 남은 발주가 없습니다.';
     wrap.appendChild(e);return wrap;
   }
   const t=document.createElement('table');t.className='ord-table';
@@ -2891,7 +2892,7 @@ function buildOrders(pid,view){
          {label:'🗑 휴지통으로',
           desc:'되돌릴 수 있습니다. 다만 원본 메일·시트가 그대로면 다음 수집에서 다시 올라옵니다.',
           run:function(){
-            trashPush('order',(CH_LABEL[pid]||pid)+' · '+(o.date||'')+' 발주',
+            trashPush('order',(CH_LABEL[pid]||pid)+' '+(orderStore_(o)||'')+' · '+(o.date||'')+' 발주',
               '품목 '+((o.items||[]).length)+'개 · '+fmt(o.total||0)+'원',{pid},o);
             cut(); persistLib(); refreshCurrentView();
             showToast('발주를 휴지통으로 옮겼습니다');
@@ -3417,18 +3418,33 @@ function groupBox(no,title,sub,lsKey,openDefault){
 }
 /* 배송요청시트 수집은 채널을 가리지 않고 한 번에 처리합니다.
    채널마다 같은 창을 둘 이유가 없어 홈으로 보내고, 여기엔 한 줄만 남깁니다. */
+/* 미수금 한 줄 요약 — 채널 화면·아쿠아메디·입금 칸이 같은 값을 쓰게 합니다.
+   바로팜은 주간 정산이라 미수 개념이 없고(홈 마감 체크와 같은 규칙),
+   결제 기한 전인 이번 달 돈까지 빨갛게 세우면 홈 알림과 어긋나 보입니다. */
+function arOf(pid,store){
+  let over=0,soon=0;
+  if(pid==='barofarm') return {over:0,soon:0,weekly:true};
+  try{
+    depMonths(pid,store||'').forEach(function(m){
+      const sv=salesOf(pid,m,store||''); const d=sv-depSum(pid,m,store||'');
+      if(!sv||d<=0) return;
+      let due=null; try{ due=b2bDue(m).pay; }catch(e){}
+      if(due&&new Date()<=due) soon+=d; else over+=d;
+    });
+  }catch(e){}
+  return {over:over,soon:soon,weekly:false};
+}
+function arBadge(pid,store){
+  const a=arOf(pid,store);
+  if(a.weekly) return '<span style="color:var(--ink-soft);">— 주간 정산</span>';
+  const soonTxt=a.soon?'<span style="color:var(--ink-soft);">기한 전 '+fmt(a.soon)+'원</span>':'';
+  if(a.over) return '<span style="color:#C62828;">미수금 '+fmt(a.over)+'원</span>'+(soonTxt?' · '+soonTxt:'');
+  if(a.soon) return soonTxt;
+  return '<span style="color:var(--good);">✓ 미수 없음</span>';
+}
 /* 세금계산서·입금·명세서는 채널마다 같은 차례로 붙습니다 — 한 군데로 모읍니다 */
 function moneyGroup(no,pid,ledgerOpts,ledgerLabel,lsKey){
-  let arTxt='';
-  try{
-    let ar=0;
-    depMonths(pid,'').forEach(function(m){
-      const sv=salesOf(pid,m,''); const d=sv-depSum(pid,m,'');
-      if(sv&&d>0) ar+=d;
-    });
-    arTxt=ar>0?'<span style="color:#C62828;">미수금 '+fmt(ar)+'원</span>'
-              :'<span style="color:var(--good);">✓ 미수 없음</span>';
-  }catch(e){ arTxt=''; }
+  const arTxt=arBadge(pid,'');
   const g=groupBox(no,'💰 계산서 · 입금 · 명세서',arTxt,lsKey,false);
   g.body.appendChild(buildTaxDocs(pid));
   g.body.appendChild(buildDeposits(pid));
@@ -3464,13 +3480,8 @@ function foldPanel(titleHtml,rightHtml,lsKey,openDefault){
 function buildDeposits(id, opts){
   opts=opts||{};
   const store=opts.store||'';
-  /* 미수금 합계를 먼저 구해 헤더에 붙인다 */
-  let arSum=0;
-  depMonths(id,store).forEach(m=>{const sv=salesOf(id,m,store);
-    const ar=sv-depSum(id,m,store); if(sv&&ar>0)arSum+=ar;});
-  const arTxt=arSum>0
-    ? '<span style="color:#C62828;">미수금 '+fmt(arSum)+'원</span>'
-    : '<span style="color:var(--good);">✓ 미수 없음</span>';
+  /* 미수금 합계를 먼저 구해 헤더에 붙인다 — 채널 머리글과 같은 규칙 */
+  const arTxt=arBadge(id,store);
   const fpD=foldPanel('💰 입금 · 미수금',arTxt,'setPriceCalc:depOpen:'+id+(store?':'+store:''),false);
   const wrap=fpD.body;
 
@@ -4025,6 +4036,7 @@ function itemKey(s){
    레디영은 발주서에 항상 '타이트샷' 으로 보냅니다 — 사용자 확인(2026-09-17).
    유사도로도 걸리지만 매번 어림으로 맞추면 언젠가 틀리므로 못 박아 둡니다. */
 const ITEM_ALIAS={
+  '유쎄라블타이트닝600샷아이크림':'유쎄라블 타이트닝샷 600 아이크림',   /* 원가 DB 옛 표기 */
   '유쎄라블타이트샷600아이크림':'유쎄라블 타이트닝샷 600 아이크림',
   /* 어순만 뒤집혀 옵니다 — 가격표는 「실프팅 4D」, 발주서는 「4D 실프팅」 */
   '유쎄라블4D실프팅크림':'유쎄라블 실프팅 4D 크림',
@@ -4713,7 +4725,7 @@ function buildMallOrderList(storeName){
   const S=shippedOf();
   nt.innerHTML='<b>배송요청시트에 송장번호가 찍히면 목록에서 사라집니다.</b> 남은 줄이 아직 못 보낸 주문입니다.<br>'+
     '순서는 배송요청시트와 같아 그대로 복사해 붙여넣을 수 있습니다. 사업자 정보·서류는 <b>약국 이름</b>을 누르세요.'+
-    (hid?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
+    (hid&&!mallShowShipped?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
     (S.at?'<br><span style="color:var(--ink-mute);">출고 확인 '+String(S.at).slice(0,16).replace('T',' ')+'</span>'
         :'<br><span style="color:var(--warn);">아직 출고 상태를 안 읽었습니다 — 「🚚 출고 상태 새로고침」을 눌러주세요.</span>');
   wrap.appendChild(nt);
@@ -4898,7 +4910,7 @@ function buildMallStoreButtons(){
   g.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:18px;';
   list.forEach(name=>{
     const info=storeInfoOf(name);
-    const rows=mallOrderRows(name);
+    const rows=mallOrderRows(name,true);   /* 카드는 지나간 주문까지 다 셉니다 */
     const ap=(lib.applicants||[]).filter(a=>storeKey_(a.name)===storeKey_(name))[0];
     const nFile=ap?((ap.files||[]).length):0;
     const addr=(rows[0]&&rows[0].addr)||(ap&&ap.addr)||'';
@@ -5839,16 +5851,7 @@ function renderChannel(view){
     g2.body.appendChild(buildLedger(meta.id,{}));
     box.appendChild(g2.group);
 
-    let arT='';
-    try{
-      let ar=0;
-      depMonths('aquamedi','').forEach(function(m){
-        const sv=salesOf('aquamedi',m,''); const d=sv-depSum('aquamedi',m,'');
-        if(sv&&d>0) ar+=d;
-      });
-      arT=ar>0?'<span style="color:#C62828;">미수금 '+fmt(ar)+'원</span>'
-              :'<span style="color:var(--good);">✓ 미수 없음</span>';
-    }catch(e){}
+    const arT=arBadge('aquamedi','');
     const g3=groupBox(3,'💰 계산서 · 입금',arT,'setPriceCalc:grpAq3',false);
     g3.body.appendChild(buildTaxDocs(meta.id));
     g3.body.appendChild(buildDeposits(meta.id));
