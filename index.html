@@ -1775,6 +1775,7 @@ function renderCompany(k){
     box.appendChild(buildTaxDocs('ready'));
     box.appendChild(buildRySync());
     box.appendChild(buildEntrySync());
+    box.appendChild(buildRyShipList());
     box.appendChild(buildOrders('ready','ready'));
     box.appendChild(buildRyVerify());
     box.appendChild(buildReadyBranch());
@@ -2349,6 +2350,47 @@ document.getElementById('odSave').addEventListener('click',()=>{
   document.getElementById('orderModal').hidden=true;showToast('발주가 저장되었습니다');
   if(currentView&&currentView.indexOf('ph_')===0)renderPharm(currentView);
 });
+/* ---------- 다시 가져오지 않을 발주 ----------
+   레디영이 발주서를 취소하고 금액을 고쳐 다시 보내면 앞 건은 무효입니다.
+   그런데 그냥 지우면 다음 수집 때 원본 메일을 또 읽어 되살아납니다.
+   그래서 「중복·취소」로 지운 건은 열쇠를 적어 두고 수집에서 거릅니다.
+   메일이 있으면 메일ID, 시트에서 온 것이면 srcKey, 둘 다 없으면
+   날짜·지점·총수량으로 열쇠를 만듭니다. */
+function orderDropOf(pid){
+  lib.orderDrop=lib.orderDrop||{};
+  lib.orderDrop[pid]=lib.orderDrop[pid]||{};
+  return lib.orderDrop[pid];
+}
+function orderDropKey(o){
+  if(o&&o.mailId) return 'mail:'+o.mailId;
+  if(o&&o.srcKey) return 'src:'+o.srcKey;
+  const q=((o&&o.items)||[]).reduce(function(a,b){ return a+(parseFloat(b.qty)||0); },0);
+  return 'k:'+[(o&&o.date)||'', orderStore_(o), q].join('|');
+}
+function orderDropped(pid,o){ return !!orderDropOf(pid)[orderDropKey(o)]; }
+
+/* 두 갈래 중 고르게 하는 작은 창. confirm 을 두 번 띄우면 무엇을 고르는지 헷갈립니다. */
+function askChoice(title,bodyHtml,choices){
+  const m=document.getElementById('docModal');
+  document.getElementById('docModalTitle').textContent=title;
+  const b=document.getElementById('docModalBody');
+  b.innerHTML='';
+  const t=document.createElement('div');t.className='hint';
+  t.style.cssText='margin-bottom:13px;line-height:1.7;';
+  t.innerHTML=bodyHtml; b.appendChild(t);
+  const box=document.createElement('div');box.style.cssText='display:flex;flex-direction:column;gap:8px;';
+  choices.forEach(function(c){
+    const btn=document.createElement('button');
+    btn.className='btn '+(c.primary?'btn-primary':'btn-ghost');
+    btn.style.cssText='text-align:left;padding:11px 13px;width:100%;';
+    btn.innerHTML='<div style="font-weight:800;">'+c.label+'</div>'+
+      (c.desc?'<div style="font-size:12px;font-weight:600;opacity:.82;margin-top:3px;line-height:1.55;">'+c.desc+'</div>':'');
+    btn.addEventListener('click',function(){ m.hidden=true; if(c.run) c.run(); });
+    box.appendChild(btn);
+  });
+  b.appendChild(box);
+  m.hidden=false;
+}
 /* 지점 칸이 비어 있는 옛 발주는 비고 앞머리에 수취인명이 적혀 있습니다 */
 function orderStore_(o){
   if(o&&o.store) return o.store;
@@ -2386,6 +2428,80 @@ function ordersHandedOff(list){
   });
   return out;
 }
+/* ---------- 출고할 발주 (레디영) ----------
+   자사몰과 같은 방식입니다. 배송요청시트에 올리면 목록에서 사라지므로,
+   남은 줄이 아직 출고 요청을 안 넣은 발주입니다. 한 품목이 한 줄입니다. */
+const RY_SHIP_COLS=[['date','발주일',95],['store','지점',130],['addr','주소',280],
+  ['tel','전화번호',120],['item','품목',230],['qty','수량',60]];
+function ryShipRows(){
+  const list=ordersOf('ready')||[];
+  const handed=ordersHandedOff(list);
+  const out=[];
+  list.forEach(function(o){
+    if(o.src!=='발주메일'||handed[o.id]) return;
+    (o.items||[]).forEach(function(it){
+      const m=matchItem(it.name);
+      out.push({date:o.date||'', store:orderStore_(o)||'', addr:o.addr||'',
+        tel:o.tel||'', item:(m?m.name:String(it.name||'').trim()), qty:Number(it.qty)||0});
+    });
+  });
+  out.sort(function(a,b){ return String(b.date).localeCompare(String(a.date))||
+    String(a.store).localeCompare(String(b.store),'ko'); });
+  return out;
+}
+function buildRyShipList(){
+  const rows=ryShipRows();
+  const wrap=document.createElement('div');
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');
+  hs.textContent='📋 출고할 발주'+(rows.length?' ('+rows.length+'줄)':'');
+  h.appendChild(hs);
+  if(rows.length){
+    const tools=document.createElement('div');tools.className='sh-tools';
+    const cb=document.createElement('button');cb.className='icon-btn';
+    cb.textContent='📋 배송요청시트용으로 복사';
+    cb.addEventListener('click',function(){
+      const tsv=rows.map(function(r){ return RY_SHIP_COLS.map(function(c){ return r[c[0]]; })
+        .join(String.fromCharCode(9)); }).join(String.fromCharCode(10));
+      (navigator.clipboard&&navigator.clipboard.writeText(tsv)
+        ? navigator.clipboard.writeText(tsv) : Promise.reject())
+        .then(function(){ showToast(rows.length+'줄을 복사했습니다 — 배송요청시트에 붙여넣으세요'); })
+        .catch(function(){ showToast('복사가 안 됩니다 — 표를 직접 끌어서 복사해주세요'); });
+    });
+    tools.appendChild(cb);h.appendChild(tools);
+  }
+  wrap.appendChild(h);
+  const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+  nt.innerHTML='<b>배송요청시트에 올리면 목록에서 사라집니다.</b> 남은 줄이 아직 출고 요청을 안 넣은 발주입니다.<br>'+
+    '순서는 자사몰 「출고할 주문」과 같습니다. 주소·전화는 발주 메일의 배송지 정보입니다.';
+  wrap.appendChild(nt);
+  if(!rows.length){
+    const e=document.createElement('div');e.className='empty-box';
+    e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
+    e.textContent='✅ 받은 발주를 모두 배송요청시트에 올렸습니다.';
+    wrap.appendChild(e);return wrap;
+  }
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  const t=document.createElement('table');t.className='led-table';t.style.minWidth='900px';
+  t.innerHTML='<thead><tr>'+RY_SHIP_COLS.map(function(c){
+    return '<th style="width:'+c[2]+'px;'+(c[0]==='qty'?'text-align:right;':'')+'">'+c[1]+'</th>'; }).join('')+'</tr></thead>';
+  const tb=document.createElement('tbody');
+  rows.forEach(function(r){
+    const tr=document.createElement('tr');
+    RY_SHIP_COLS.forEach(function(c){
+      const td=document.createElement('td');
+      td.textContent=r[c[0]];
+      td.style.fontSize='12.5px';
+      if(c[0]==='qty') td.className='num-cell';
+      if(c[0]==='store') td.style.fontWeight='700';
+      if(c[0]==='addr'||c[0]==='tel') td.style.color='var(--ink-soft)';
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
+  return wrap;
+}
 let ordShowDone=false;
 function buildOrders(pid,view){
   const list=ordersOf(pid);const wrap=document.createElement('div');
@@ -2396,6 +2512,18 @@ function buildOrders(pid,view){
   const hs=document.createElement('span');
   hs.textContent='발주 관리 ('+shown.length+(hidN?' / 전체 '+list.length:'')+')';h.appendChild(hs);
   const tools=document.createElement('div');tools.className='sh-tools';
+  /* NEW 배지를 지울 데가 없어 7월 발주에도 붙어 있었습니다 */
+  const news=list.filter(o=>o.isNew);
+  if(news.length){
+    const ok=document.createElement('button');ok.className='icon-btn';
+    ok.textContent='🔔 NEW 표시 지우기 ('+news.length+')';
+    ok.addEventListener('click',()=>{
+      if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+      news.forEach(o=>{ delete o.isNew; });
+      persistLib();refreshCurrentView();showToast('NEW 표시를 지웠습니다');
+    });
+    tools.appendChild(ok);
+  }
   if(hidN){
     const tg=document.createElement('button');tg.className='icon-btn';
     tg.textContent=ordShowDone?'배송요청 완료 숨기기':'✅ 배송요청 완료도 보기 ('+hidN+')';
@@ -2427,15 +2555,26 @@ function buildOrders(pid,view){
     (hasStore?'<th style="width:120px;">지점</th>':'')+
     '<th style="width:70px;">상태</th><th>품목</th>'+
     '<th style="text-align:right;width:60px;">총수량</th><th style="width:58px;"></th></tr></thead>';
+  /* 같은 발주서를 메일로 두세 번 보내오면 메일ID 가 달라 따로 들어옵니다.
+     (G마켓 7/10 건이 세 줄이었습니다) 내용이 같으면 짝을 지어 표시합니다 —
+     정말 두 번 발주한 것일 수도 있어 지우지는 않고 눈에만 띄게 합니다. */
+  /* 출처가 다르면 같은 발주의 두 얼굴입니다 (발주메일 ↔ 배송요청시트) —
+     그건 위에서 이미 접었으므로, 같은 출처끼리만 견줍니다 */
+  const fpOf=o=>[(o.src||''),(o.date||''),ryStoreKey(orderStore_(o)),
+    (o.items||[]).map(i=>itemKey(i.name)+'×'+i.qty).sort().join(',')].join('|');
+  const fpCnt={};
+  list.forEach(o=>{ const f=fpOf(o); fpCnt[f]=(fpCnt[f]||0)+1; });
   const tb=document.createElement('tbody');
   shown.forEach(o=>{
     const tr=document.createElement('tr');
+    const dupN=fpCnt[fpOf(o)]||1;
     const tq=(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
     const names=(o.items||[]).map(i=>i.name+' ×'+i.qty).join('<br>');
     tr.innerHTML='<td>'+(o.date||'-')+(o.isNew?'<span class="new-badge">NEW</span>':'')+'</td>'+
       (hasStore?'<td style="font-size:12.5px;"><b>'+(orderStore_(o)||'-')+'</b>'+
         (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+o.src+'</div>':'')+
-        (handed[o.id]?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 배송요청 완료</div>':'')+'</td>':'')+
+        (handed[o.id]?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 배송요청 완료</div>':'')+
+        (dupN>1?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ 똑같은 발주 '+dupN+'건</div>':'')+'</td>':'')+
       '<td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
       '<td style="font-size:12.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
       '<td class="num-cell">'+fmt(tq)+'</td>';
@@ -2444,15 +2583,77 @@ function buildOrders(pid,view){
     ed.addEventListener('click',()=>openOrderModal(pid,o.id));
     const dl=document.createElement('button');dl.className='del-btn';dl.textContent='✕';dl.title='삭제';
     dl.addEventListener('click',()=>{
-      if(!confirm('이 발주를 삭제할까요? (휴지통에서 되돌릴 수 있습니다)'))return;
-      trashPush('order',(CH_LABEL[pid]||pid)+' · '+(o.date||'')+' 발주',
-        '품목 '+((o.items||[]).length)+'개 · '+fmt(o.total||0)+'원',{pid},o);
-      const i=list.indexOf(o);if(i>=0)list.splice(i,1);
-      persistLib();refreshCurrentView();showToast('발주를 휴지통으로 이동했습니다');
+      if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+      const tq2=(o.items||[]).reduce((a,b)=>a+(parseFloat(b.qty)||0),0);
+      const cut=function(){ const i=list.indexOf(o); if(i>=0) list.splice(i,1); };
+      askChoice('이 발주를 어떻게 지울까요?',
+        '<b>'+(o.date||'')+' · '+(orderStore_(o)||'지점 미상')+'</b> — 품목 '+((o.items||[]).length)+'개 · '+fmt(tq2)+'개'+
+        (o.src?' <span style="color:var(--ink-mute);">('+o.src+')</span>':''),
+        [{label:'🚫 중복·취소 건입니다 — 다시 안 가져오기',
+          desc:'수집할 때 이 건을 거릅니다. 발주서를 취소하고 고쳐 다시 보낸 경우에 쓰세요. 아래 「다시 안 가져오는 발주」에서 언제든 풀 수 있습니다.',
+          primary:true,
+          run:function(){
+            orderDropOf(pid)[orderDropKey(o)]={at:new Date().toISOString(),
+              date:o.date||'',store:orderStore_(o)||'',src:o.src||'',qty:tq2,
+              items:((o.items||[]).map(function(x){ return x.name+' ×'+x.qty; }))};
+            cut(); persistLib(); refreshCurrentView();
+            showToast('다시 가져오지 않습니다');
+          }},
+         {label:'🗑 휴지통으로',
+          desc:'되돌릴 수 있습니다. 다만 원본 메일·시트가 그대로면 다음 수집에서 다시 올라옵니다.',
+          run:function(){
+            trashPush('order',(CH_LABEL[pid]||pid)+' · '+(o.date||'')+' 발주',
+              '품목 '+((o.items||[]).length)+'개 · '+fmt(o.total||0)+'원',{pid},o);
+            cut(); persistLib(); refreshCurrentView();
+            showToast('발주를 휴지통으로 옮겼습니다');
+          }}]);
     });
     td.append(ed,dl);tr.appendChild(td);tb.appendChild(tr);
   });
   t.appendChild(tb);wrap.appendChild(t);
+  wrap.appendChild(buildOrderDrops(pid));
+  return wrap;
+}
+/* 수집에서 거르고 있는 발주 — 무엇을 왜 안 가져오는지 보이지 않으면 나중에 못 찾습니다 */
+function buildOrderDrops(pid){
+  const wrap=document.createElement('div');
+  const D=orderDropOf(pid);
+  const keys=Object.keys(D);
+  if(!keys.length) return wrap;
+  const fp=foldPanel('🚫 다시 안 가져오는 발주',
+    '<span style="color:var(--ink-soft);">'+keys.length+'건</span>',
+    'setPriceCalc:ordDropOpen:'+pid,false);
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='8px';
+  nt.innerHTML='취소되었거나 중복이라 지운 발주입니다. <b>수집할 때 이 건들은 건너뜁니다.</b><br>'+
+    '<span style="color:var(--ink-soft);">풀면 다음 수집에서 다시 올라옵니다.</span>';
+  fp.body.appendChild(nt);
+  const tb2=document.createElement('table');tb2.className='led-table';
+  tb2.innerHTML='<thead><tr><th style="width:92px;">발주일</th><th style="width:130px;">지점</th>'+
+    '<th>품목</th><th style="width:90px;">지운 날</th><th style="width:56px;"></th></tr></thead>';
+  const body=document.createElement('tbody');
+  keys.sort(function(a,b){ return String(D[b].at||'').localeCompare(String(D[a].at||'')); })
+    .forEach(function(k){
+      const d=D[k]||{};
+      const tr=document.createElement('tr');
+      const c1=document.createElement('td');c1.textContent=d.date||'-';
+      const c2=document.createElement('td');c2.style.fontWeight='700';c2.textContent=d.store||'-';
+      const c3=document.createElement('td');c3.style.fontSize='12px';
+      c3.textContent=(d.items||[]).join(', ')||('수량 '+(d.qty||0));
+      const c4=document.createElement('td');c4.style.color='var(--ink-soft)';
+      c4.textContent=String(d.at||'').slice(0,10);
+      const c5=document.createElement('td');
+      const bt=document.createElement('button');bt.className='icon-btn';bt.textContent='풀기';
+      bt.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        delete orderDropOf(pid)[k];
+        persistLib(); refreshCurrentView();
+        showToast('풀었습니다 — 다음 수집에서 다시 올라옵니다');
+      });
+      c5.appendChild(bt);
+      tr.append(c1,c2,c3,c4,c5);body.appendChild(tr);
+    });
+  tb2.appendChild(body);fp.body.appendChild(tb2);
+  wrap.appendChild(fp.panel);
   return wrap;
 }
 
@@ -3749,11 +3950,14 @@ async function importRyOrders(logEl,onDone){
   const list=ordersOf('ready');
   let added=0, dup=0;
   const lines=[];
+  let blocked=0;
   seq.forEach(k=>{
     const d=byMail[k];
     /* 이미 등록한 발주는 건너뜁니다 (메일ID 기준) */
     if(d.mailId && list.some(o=>o.mailId===d.mailId)){ dup++; return; }
     if(!d.mailId && list.some(o=>o.date===d.date&&o.store===d.store)){ dup++; return; }
+    /* 「중복·취소」로 지운 건은 다시 올리지 않습니다 */
+    if(orderDropped('ready',d)){ blocked++; return; }
     const tot=d.total||d.items.reduce((a,b)=>a+(b.supply||0),0);
     list.push({id:uid('ord'), date:d.date, status:'접수',
       store:d.store, storeKey:ryStoreKey(d.store),
@@ -3768,6 +3972,7 @@ async function importRyOrders(logEl,onDone){
     list.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
     persistLib();
     if(logEl) logEl.textContent='신규 발주 '+added+'건'+(dup?' · 이미 등록 '+dup+'건':'')+
+      (blocked?' · 중복·취소로 거른 '+blocked+'건':'')+
       NL+lines.join(NL);
     showToast('레디영 발주 '+added+'건을 등록했습니다');
 
@@ -3793,7 +3998,8 @@ async function importRyOrders(logEl,onDone){
       return;                       /* 창을 닫을 때 다시 그립니다 */
     }
   }else{
-    if(logEl) logEl.textContent='새로 등록할 발주가 없습니다'+(dup?' (이미 등록 '+dup+'건)':'');
+    if(logEl) logEl.textContent='새로 등록할 발주가 없습니다'+(dup?' (이미 등록 '+dup+'건)':'')+
+      (blocked?' · 중복·취소로 거른 '+blocked+'건':'');
     showToast('새 발주가 없습니다');
   }
   if(onDone) onDone();
@@ -4005,6 +4211,8 @@ async function importEntryOrders(logEl,onDone){
     const g=groups[k];
     const list=ordersOf(g.pid);
     /* 이미 넣은 건은 건너뜁니다 (같은 날·같은 수취인) */
+    /* 「중복·취소」로 지운 건은 다시 올리지 않습니다 */
+    if(orderDropped(g.pid,{srcKey:k})){ return; }
     const prev=list.filter(o=>o.src==='배송요청시트'&&o.srcKey===k)[0];
     if(prev){
       /* 예전에 약국명 없이 들어간 건을 채워 줍니다 (자사몰 「미상」 행 방지) */
