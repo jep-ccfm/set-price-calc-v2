@@ -20,6 +20,7 @@
   .brand .b-title{font-size:16px;font-weight:800;letter-spacing:-0.01em;line-height:1.3;}
   .nav{display:flex;flex-direction:column;gap:3px;}
   .nav-section{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#7A83A0;font-weight:700;margin:16px 8px 6px;}
+  .nav-toggle{display:none;}
   .nav-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;color:#C9D0E0;font-size:13.5px;font-weight:600;padding:10px 12px;border-radius:9px;cursor:pointer;transition:all .15s;font-family:inherit;}
   .nav-item:hover{background:rgba(255,255,255,.08);color:#fff;}
   .nav-item.active{background:var(--accent);color:#fff;}
@@ -969,22 +970,38 @@
     h1{font-size:22px;}
   }
 
-  /* --- 17. 좁은 화면: 사이드바를 상단 가로 바로 --- */
+  /* --- 17. 좁은 화면: 사이드바를 상단 막대로 ---
+     채널이 열 개라 가로로 늘어놓으면 1,400px 이 됩니다. 375px 화면에서는
+     보고 있는 화면(레디영)조차 오른쪽 밖으로 나가 있었습니다.
+     지금 보는 화면만 한 줄로 띄워 두고, 누르면 펼쳐 두 칸씩 보여줍니다. */
   @media (max-width:860px){
     .app{flex-direction:column;}
-    .sidebar{width:100%;height:auto;position:static;padding:14px 12px;
-      flex-direction:row;align-items:center;gap:14px;overflow-x:auto;}
-    .brand{margin:0;flex-shrink:0;}
+    .sidebar{width:100%;height:auto;position:sticky;top:0;z-index:60;padding:10px 12px;
+      flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px;overflow:visible;
+      box-shadow:0 2px 10px rgba(0,0,0,.18);}
+    .brand{margin:0;flex:1 1 auto;min-width:0;}
     .brand .b-eyebrow{display:none;}
-    .brand .b-title{font-size:16px;white-space:nowrap;}
-    .nav{flex-direction:row;gap:4px;flex-wrap:nowrap;}
-    .nav-section{display:none;}
-    .nav-item{white-space:nowrap;padding:9px 12px;font-size:13px;}
-    .nav-item.active::before{top:auto;bottom:0;left:10px;right:10px;width:auto;height:3px;border-radius:3px 3px 0 0;}
-    .side-foot{margin:0 0 0 auto;padding:0;flex-shrink:0;display:flex;align-items:center;gap:10px;}
+    .brand .b-title{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .nav-toggle{display:flex;align-items:center;gap:7px;flex:0 0 auto;max-width:62%;
+      background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
+      color:#fff;font-family:inherit;font-size:13px;font-weight:700;
+      padding:9px 12px;border-radius:10px;cursor:pointer;}
+    .nav-toggle .nt-now{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .nav-toggle .nt-ar{transition:transform .15s;opacity:.7;}
+    .sidebar.nav-open .nav-toggle .nt-ar{transform:rotate(180deg);}
+    .nav{display:none;width:100%;flex-direction:row;flex-wrap:wrap;gap:6px;
+      max-height:calc(100vh - 120px);overflow-y:auto;}
+    .sidebar.nav-open .nav{display:flex;}
+    .nav-section{display:block;width:100%;margin:8px 4px 0;}
+    /* 「홍콩 라이브 커머스」처럼 긴 이름은 잘리지 않고 두 줄로 접힙니다 */
+    .nav-item{flex:1 1 calc(50% - 6px);min-width:0;white-space:normal;
+      word-break:keep-all;line-height:1.3;padding:10px 10px;font-size:12.5px;}
+    .nav-item .badge{flex-shrink:0;}
+    .side-foot{display:none;width:100%;margin:0;padding:6px 0 0;
+      border-top:1px solid rgba(255,255,255,.12);}
+    .sidebar.nav-open .side-foot{display:block;}
     .side-note{display:none;}
-    .sync-btn{width:auto;white-space:nowrap;padding:8px 12px;}
-    .sync-state-line{margin:0;white-space:nowrap;}
+    .sync-btn{width:100%;}
     .content{padding:20px 16px 56px;}
   }
 
@@ -1002,6 +1019,9 @@
       <div class="b-eyebrow">CCFM · 브랜드사업부</div>
       <div class="b-title">B2B 대시보드</div>
     </div>
+    <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="nav">
+      <span class="nt-ic">☰</span><span class="nt-now" id="navNow">홈 대시보드</span><span class="nt-ar">▾</span>
+    </button>
     <nav class="nav" id="nav">
       <button class="nav-item active" data-view="home"><span class="ic">🏠</span>홈 대시보드</button>
       <button class="nav-item" data-view="calc"><span class="ic">🧮</span>계산기</button>
@@ -2464,7 +2484,55 @@ function orderStore_(o){
    목록에 남는 것은 「아직 출고 요청을 안 넣은 발주」 입니다.
    발주 메일이 없는 채널(바로팜·자사몰·아쿠아메디)은 배송요청시트가 유일한
    출처라 접지 않습니다. 접으면 목록이 통째로 비어 버립니다. */
-function ordersHandedOff(list){
+/* 자사몰은 주문시트가 「받은 주문」, 배송요청시트가 「내보낸 것」입니다.
+   둘 다 발주로 올라와 같은 건이 목록에 두 번 보였습니다 — 8건 중 7건이
+   그대로 겹쳤습니다. 주문시트에 짝이 있는 발주는 접고, 짝이 없는 것만
+   남깁니다 (주문시트에 없는데 나간 건이라 오히려 눈에 띄어야 합니다).
+   날짜는 며칠씩 어긋나고(주문일 vs 시트 기재일) 주문 두 건이 한 번에
+   나가기도 해서, 약국별로 품목·수량을 모아 덜어내는 방식으로 봅니다. */
+function mallItemBag_(items){
+  const bag={};
+  (items||[]).forEach(function(x){
+    const k=itemKey(aliasOf(x.name)||x.name);
+    if(k) bag[k]=(bag[k]||0)+(Number(x.qty)||0);
+  });
+  return bag;
+}
+function mallCovered(list){
+  const out={};
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  const pool={};
+  Object.keys(led.months||{}).forEach(function(mk){
+    ((led.months[mk]||{}).docs||[]).forEach(function(d){
+      const k=storeKey_(canonStore(d.branch||''));
+      if(!k) return;
+      (pool[k]=pool[k]||[]).push({date:String(d.date||''),bag:mallItemBag_(d.items),left:true});
+    });
+  });
+  list.slice().sort(function(a,b){ return String(a.date||'').localeCompare(String(b.date||'')); })
+    .forEach(function(o){
+      const docs=pool[storeKey_(canonStore(orderStore_(o)||''))];
+      if(!docs||!docs.length) return;
+      const want=mallItemBag_(o.items);
+      let total=0; Object.keys(want).forEach(function(k){ total+=want[k]; });
+      if(!total) return;
+      const took=[];
+      docs.forEach(function(d){
+        if(!d.left) return;
+        if(d.date&&o.date&&d.date>o.date) return;   /* 나중에 들어온 주문은 짝이 아닙니다 */
+        let fits=true;
+        Object.keys(d.bag).forEach(function(k){ if((want[k]||0)<d.bag[k]) fits=false; });
+        if(!fits) return;
+        Object.keys(d.bag).forEach(function(k){ want[k]-=d.bag[k]; total-=d.bag[k]; });
+        took.push(d);
+      });
+      if(took.length&&total===0){ took.forEach(function(d){ d.left=false; }); out[o.id]=1; }
+      else took.forEach(function(d){ Object.keys(d.bag).forEach(function(k){ want[k]+=d.bag[k]; }); });
+    });
+  return out;
+}
+function ordersHandedOff(list,pid){
+  if(pid==='pharmmall') return mallCovered(list);
   const out={};
   if(!list.some(o=>o.src==='발주메일')) return out;
   /* 배송요청시트에서 만든 발주는 그 자체가 시트에 있는 것이니 목록에서 내립니다 */
@@ -2793,7 +2861,10 @@ function buildRyShipList(){
 let ordShowDone=false;
 function buildOrders(pid,view){
   const list=ordersOf(pid);const wrap=document.createElement('div');
-  const handed=ordersHandedOff(list);
+  const handed=ordersHandedOff(list,pid);
+  /* 접는 이유가 채널마다 다릅니다 — 레디영은 「시트에 올렸다」,
+     자사몰은 「위 주문 목록에 이미 있다」 입니다 */
+  const doneWord=(pid==='pharmmall')?'주문 목록에 있는 건':'배송요청 완료';
   const hidN=list.filter(o=>handed[o.id]).length;
   const shown=ordShowDone?list:list.filter(o=>!handed[o.id]);
   const h=document.createElement('div');h.className='sec-h';
@@ -2814,7 +2885,7 @@ function buildOrders(pid,view){
   }
   if(hidN){
     const tg=document.createElement('button');tg.className='icon-btn';
-    tg.textContent=ordShowDone?'배송요청 완료 숨기기':'✅ 배송요청 완료도 보기 ('+hidN+')';
+    tg.textContent=ordShowDone?doneWord+' 숨기기':'✅ '+doneWord+'도 보기 ('+hidN+')';
     tg.addEventListener('click',()=>{ordShowDone=!ordShowDone;refreshCurrentView();});
     tools.appendChild(tg);
   }
@@ -2823,8 +2894,11 @@ function buildOrders(pid,view){
   tools.appendChild(add);h.appendChild(tools);wrap.appendChild(h);
   if(hidN){
     const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
-    nt.innerHTML=ordShowDone?'배송요청까지 끝난 발주도 함께 보고 있습니다.'
-      :'<span style="color:var(--good);">✅ 배송요청 완료 '+hidN+'건은 감췄습니다.</span>';
+    nt.innerHTML=ordShowDone
+      ? (pid==='pharmmall'?'위 주문 목록에 이미 있는 발주도 함께 보고 있습니다.'
+                          :'배송요청까지 끝난 발주도 함께 보고 있습니다.')
+      : '<span style="color:var(--good);">✅ '+doneWord+' '+hidN+'건은 감췄습니다.</span>'+
+        (pid==='pharmmall'?' 남은 줄은 <b>주문시트에 없는데 나간 건</b>이라 한 번 확인해주세요.':'');
     wrap.appendChild(nt);
   }
   if(!list.length){
@@ -2834,7 +2908,9 @@ function buildOrders(pid,view){
   if(!shown.length){
     const e=document.createElement('div');e.className='empty-box';
     e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
-    e.textContent='✅ 남은 발주가 없습니다.';
+    e.textContent=(pid==='pharmmall')
+      ? '✅ 배송요청시트에 올린 건이 모두 주문 목록과 맞습니다.'
+      : '✅ 남은 발주가 없습니다.';
     wrap.appendChild(e);return wrap;
   }
   const t=document.createElement('table');t.className='ord-table';
@@ -7096,6 +7172,7 @@ document.getElementById('txSave').addEventListener('click',()=>{
 });
 function refreshCurrentView(){
   const v=currentView;
+  setTimeout(function(){ try{ wrapWideTables(); }catch(e){} },0);
   if(v==='calc')return;
   if(v==='home'){renderHome();return;}
   if(v==='geo'){renderGeo();return;}
@@ -10165,6 +10242,31 @@ document.getElementById('nameModal').addEventListener('click',e=>{if(e.target.id
 document.getElementById('modalConfirm').addEventListener('click',()=>{const v=document.getElementById('modalInput').value.trim();if(!v){showToast('값을 입력해주세요');return;}const cb=modalConfirmCb;closeModal();if(cb)cb(v);});
 document.getElementById('modalInput').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('modalConfirm').click();if(e.key==='Escape')closeModal();});
 
+/* 좁은 화면에서 표가 화면보다 넓으면 페이지가 통째로 옆으로 밀립니다.
+   감싸는 칸이 없는 표가 열아홉 개라 그릴 때마다 하나 씌워 줍니다 —
+   표 안에서만 옆으로 긁히고 화면은 제자리에 있습니다.
+   넓은 화면에서는 아무것도 건드리지 않습니다. */
+function wrapWideTables(){
+  if(innerWidth>860) return;
+  const W=document.documentElement.clientWidth;
+  document.querySelectorAll('main table').forEach(function(t){
+    const par=t.parentElement;
+    if(!par||par.getAttribute('data-tscroll')==='1') return;
+    let anc=par,ok=false;
+    for(let i=0;i<4&&anc;i++,anc=anc.parentElement){
+      const o=getComputedStyle(anc).overflowX;
+      if(o==='auto'||o==='scroll'){ ok=true; break; }
+    }
+    if(ok) return;
+    if(t.getBoundingClientRect().width<=W) return;
+    const w=document.createElement('div');
+    w.setAttribute('data-tscroll','1');
+    w.style.cssText='overflow-x:auto;max-width:100%;';
+    par.insertBefore(w,t); w.appendChild(t);
+  });
+}
+addEventListener('resize',function(){ try{ wrapWideTables(); }catch(e){} });
+
 /* ============================================================
    뷰 전환
    ============================================================ */
@@ -10173,6 +10275,9 @@ function switchView(view){
   const navKey=(view==='ph_sinsa'||view==='ph_apgujeong')?'ch_aquamedi'
     :(view==='ph_mall'?'ch_pharmmall':view);
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===navKey));
+  const now=document.getElementById('navNow');
+  const cur=document.querySelector('.nav-item[data-view="'+navKey+'"]');
+  if(now&&cur) now.textContent=(cur.textContent||'').replace(/^[^가-힣A-Za-z0-9]+/,'').replace(/\d+$/,'').trim();
   document.getElementById('view-calc').hidden=(view!=='calc');
   document.getElementById('view-home').hidden=(view!=='home');
   const cv=document.getElementById('view-company');
@@ -10197,9 +10302,21 @@ function switchView(view){
   else if(isTrash)renderTrash();
   else if(view!=='calc')renderCompany(view);
   updateMemoDock();
+  try{ wrapWideTables(); }catch(e){}
   window.scrollTo(0,0);
 }
 document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
+/* 좁은 화면에서 메뉴를 접었다 폈다 — 넓은 화면에서는 CSS 가 단추를 숨깁니다 */
+(function(){
+  const sb=document.querySelector('.sidebar'), tg=document.getElementById('navToggle');
+  if(!sb||!tg) return;
+  function setOpen(v){ sb.classList.toggle('nav-open',v); tg.setAttribute('aria-expanded',v?'true':'false'); }
+  tg.addEventListener('click',()=>setOpen(!sb.classList.contains('nav-open')));
+  document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>setOpen(false)));
+  document.addEventListener('click',e=>{ if(sb.classList.contains('nav-open')&&!sb.contains(e.target)) setOpen(false); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') setOpen(false); });
+  addEventListener('resize',()=>{ if(innerWidth>860) setOpen(false); });
+})();
 
 /* ===== 차수 플로팅 메모 ===== */
 let memoOpen=(localStorage.getItem('setPriceCalc:memoOpen')==='1');
