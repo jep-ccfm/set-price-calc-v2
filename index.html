@@ -173,6 +173,17 @@
   .ch-panel.open .ch-head .chev{transform:rotate(90deg);}
   .ch-body{display:none;padding:0 16px 16px;}
   .ch-panel.open .ch-body{display:block;}
+  /* 일하는 차례대로 묶는 큰 덩어리 — 패널이 열 개 넘게 쌓이면 순서를 잃습니다 */
+  .grp{border:1.5px solid var(--line);border-radius:14px;background:var(--panel);margin:0 0 14px;overflow:hidden;}
+  .grp-h{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 17px;cursor:pointer;user-select:none;background:#FAF8F5;}
+  .grp.open>.grp-h{border-bottom:1px solid var(--line);}
+  .grp-t{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:800;color:var(--ink);}
+  .grp-n{display:inline-flex;align-items:center;justify-content:center;min-width:21px;height:21px;border-radius:50%;background:var(--accent);color:#fff;font-size:11.5px;font-weight:800;}
+  .grp-s{font-size:12.5px;font-weight:700;color:var(--ink-soft);text-align:right;}
+  .grp-h .chev{color:var(--ink-soft);font-size:11px;transition:transform .2s;}
+  .grp.open .grp-h .chev{transform:rotate(90deg);}
+  .grp-b{display:none;padding:15px 17px 3px;}
+  .grp.open>.grp-b{display:block;}
   .ch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:9px;}
   .ch-item{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px;}
   .ch-item b{display:block;font-size:10.5px;color:var(--ink-soft);font-weight:700;margin-bottom:2px;}
@@ -1745,7 +1756,8 @@ function aggregate(round){
    ============================================================ */
 function renderCompany(k){
   const meta=companyMeta(k);const c=getCompany(k);
-  const box=document.getElementById('view-company');box.innerHTML='';
+  /* ready 화면은 마지막 묶음 안으로 그릇을 옮깁니다 (아래 ④ 참고) */
+  let box=document.getElementById('view-company');box.innerHTML='';
   const brandInfo=c.brands?JP_BRANDS.find(b=>b.key===c.activeBrand):null;
   const head=document.createElement('header');head.className='page-head';
   head.innerHTML='<div class="eyebrow">SET LIBRARY · 세트 저장소</div>'+
@@ -1770,19 +1782,66 @@ function renderCompany(k){
   }
 
   if(k==='ready'){
-    box.appendChild(buildBranchStock());
-    box.appendChild(buildPriceTable('ready',false));
-    box.appendChild(buildTaxDocs('ready'));
-    box.appendChild(buildRySync());
-    box.appendChild(buildEntrySync());
-    box.appendChild(buildRyShipList());
-    box.appendChild(buildOrders('ready','ready'));
-    box.appendChild(buildRyVerify());
-    box.appendChild(buildReadyBranch());
-    box.appendChild(buildDeposits('ready'));
-    box.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
-    const dv=document.createElement('div');dv.style.cssText='border-top:1px solid var(--line);margin:26px 0 18px;';box.appendChild(dv);
-    const sh2=document.createElement('div');sh2.className='sec-h';sh2.style.marginTop='0';sh2.textContent='세트 제안 저장소 (차수별)';box.appendChild(sh2);
+    /* ① 발주 → ② 점검 → ③ 돈 → ④ 자료. 참조표를 맨 위에 두면
+       매일 하는 일이 스크롤 아래로 밀립니다. */
+    const ords=ordersOf('ready')||[];
+    const handed=ordersHandedOff(ords);
+    const todoN=ords.filter(function(o){ return !handed[o.id]; }).length;
+    let shipN=0; try{ shipN=ryShipRows().length; }catch(e){}
+    const rv=(lib.ryVerify&&lib.ryVerify.rows)||[];
+    const badN=rv.filter(function(r){ return RV_TODO[r.st]; }).length;
+    const waitN=rv.filter(function(r){ return r.st==='wait'; }).length;
+
+    const g1=groupBox(1,'📦 발주 받고 내보내기',
+      (shipN?'<span style="color:var(--accent);">출고할 '+shipN+'줄</span>':'<span style="color:var(--good);">출고할 것 없음</span>')+
+      ' · 처리할 발주 '+todoN+'건',
+      'setPriceCalc:grpReady1',true);
+    g1.body.appendChild(buildRySync());
+    g1.body.appendChild(entrySyncLink());
+    g1.body.appendChild(buildRyShipList());
+    g1.body.appendChild(buildOrders('ready','ready'));
+    g1.body.appendChild(buildBranchStock());
+    box.appendChild(g1.group);
+
+    const g2=groupBox(2,'🔍 맞는지 점검',
+      (!rv.length?'<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
+        :(badN?'<span style="color:var(--warn);">확인 필요 '+badN+'건</span>'
+             :'<span style="color:var(--good);">✓ 어긋난 것 없음</span>'))+
+      (waitN?' · 배송요청 전 '+waitN+'건':''),
+      'setPriceCalc:grpReady2',badN>0);
+    g2.body.appendChild(buildRyVerify());
+    box.appendChild(g2.group);
+
+    let arTxt='';
+    try{
+      let ar=0;
+      depMonths('ready','').forEach(function(m){
+        const sv=salesOf('ready',m,''); const d=sv-depSum('ready',m,'');
+        if(sv&&d>0) ar+=d;
+      });
+      arTxt=ar>0?'<span style="color:#C62828;">미수금 '+fmt(ar)+'원</span>'
+                :'<span style="color:var(--good);">✓ 미수 없음</span>';
+    }catch(e){ arTxt=''; }
+    const g3=groupBox(3,'💰 계산서 · 입금 · 명세서',arTxt,'setPriceCalc:grpReady3',false);
+    g3.body.appendChild(buildTaxDocs('ready'));
+    g3.body.appendChild(buildDeposits('ready'));
+    const lh9=document.createElement('div');lh9.className='sec-h';lh9.style.marginTop='4px';
+    lh9.textContent='거래명세서 (월별 집계)';g3.body.appendChild(lh9);
+    g3.body.appendChild(buildLedger('ready',{sheet:SHEET_URL}));
+    box.appendChild(g3.group);
+
+    const g4=groupBox(4,'📚 참고자료',
+      '<span style="color:var(--ink-mute);">공급가표 · 지점별 대조 · 세트 제안</span>',
+      'setPriceCalc:grpReady4',false);
+    g4.body.appendChild(buildPriceTable('ready',false));
+    g4.body.appendChild(buildReadyBranch());
+    const dv=document.createElement('div');dv.style.cssText='border-top:1px solid var(--line);margin:22px 0 14px;';
+    g4.body.appendChild(dv);
+    const sh2=document.createElement('div');sh2.className='sec-h';sh2.style.marginTop='0';
+    sh2.textContent='세트 제안 저장소 (차수별)';g4.body.appendChild(sh2);
+    box.appendChild(g4.group);
+    /* 아래 공통 코드가 그리는 세트 제안 저장소도 ④ 안에 담습니다 */
+    box=g4.body;
   }
 
   // 브랜드 토글 (일본라방: 메라블 / 루솔브)
@@ -3108,6 +3167,37 @@ async function importDeposits(files, logEl, onDone){
 /* ---------- 입금·미수금 UI ---------- */
 /* 큰 섹션을 접어두고 헤더에 핵심 숫자만 남긴다.
    접힌 상태에서도 결과를 알 수 있어야 하므로 요약을 헤더 우측에 넣는다. */
+/* ---------- 화면 묶음 ----------
+   한 채널에 패널이 열 개 넘게 쌓여 무엇부터 봐야 할지 알 수 없었습니다.
+   일하는 차례대로 묶고, 묶음째 접습니다. 헤더에 요약을 달아 접어둔 채로도
+   안에 볼 것이 있는지 알 수 있게 합니다. */
+function groupBox(no,title,sub,lsKey,openDefault){
+  const saved=lsKey?localStorage.getItem(lsKey):null;
+  const open=(saved===null)?!!openDefault:(saved==='1');
+  const g=document.createElement('div');g.className='grp'+(open?' open':'');
+  const h=document.createElement('div');h.className='grp-h';
+  h.innerHTML='<span class="grp-t"><span class="chev">▶</span>'+
+    '<span class="grp-n">'+no+'</span>'+title+'</span>'+
+    '<span class="grp-s">'+(sub||'')+'</span>';
+  h.addEventListener('click',function(){ g.classList.toggle('open');
+    if(lsKey) localStorage.setItem(lsKey,g.classList.contains('open')?'1':'0'); });
+  g.appendChild(h);
+  const b=document.createElement('div');b.className='grp-b';g.appendChild(b);
+  return {group:g,body:b};
+}
+/* 배송요청시트 수집은 채널을 가리지 않고 한 번에 처리합니다.
+   채널마다 같은 창을 둘 이유가 없어 홈으로 보내고, 여기엔 한 줄만 남깁니다. */
+function entrySyncLink(){
+  const d=document.createElement('div');d.className='link-bar';d.style.marginBottom='14px';
+  const a=document.createElement('button');a.className='link-btn alt';a.type='button';
+  a.textContent='🚚 배송요청시트에서 발주 가져오기';
+  a.addEventListener('click',function(){ switchView('home'); });
+  const n2=document.createElement('span');n2.className='hint';
+  n2.style.cssText='align-self:center;';
+  n2.textContent='홈에서 모든 채널을 한 번에 처리합니다';
+  d.append(a,n2);
+  return d;
+}
 function foldPanel(titleHtml,rightHtml,lsKey,openDefault){
   const saved=lsKey?localStorage.getItem(lsKey):null;
   const open=(saved===null)?!!openDefault:(saved==='1');
@@ -5155,7 +5245,7 @@ function renderChannel(view){
     box.appendChild(buildPartners('barofarm','바로팜'));
     box.appendChild(buildBarofarmItems());
     box.appendChild(buildBarofarmUploader(meta.id));
-    box.appendChild(buildEntrySync());
+    box.appendChild(entrySyncLink());
     box.appendChild(buildOrders(meta.id,view));
     box.appendChild(buildBarofarmSettle());
     box.appendChild(buildBarofarmVerify());
@@ -5167,7 +5257,7 @@ function renderChannel(view){
     return;
   }
   if(meta.id==='aquamedi'){
-    box.appendChild(buildEntrySync());
+    box.appendChild(entrySyncLink());
     box.appendChild(buildAquamediPharms());
     box.appendChild(buildPartners('aquamedi','아쿠아메디'));
     box.appendChild(buildAquamediRollup());
@@ -5195,7 +5285,7 @@ function renderChannel(view){
     box.appendChild(buildChannelGeo('pharmmall','자사몰'));
     box.appendChild(buildApplicants());
   }
-  box.appendChild(buildEntrySync());
+  box.appendChild(entrySyncLink());
   box.appendChild(buildOrders(meta.id,view));
   box.appendChild(buildTaxDocs(meta.id));
   box.appendChild(buildDeposits(meta.id));
