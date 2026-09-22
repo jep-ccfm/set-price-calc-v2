@@ -2149,8 +2149,18 @@ function loadCfgToCalc(cfg){
 /* [브.사] 레디영 매출 시트 (2026-09 신규본).
    이전에는 구 성과시트(1oJL1Lt1…)를 가리키고 있었습니다. */
 const SHEET_URL='https://docs.google.com/spreadsheets/d/1R7KZpSo90SMAPjq5U-gu4XvxvJKne7snky1xOMdZMYw/edit';
-const PHARMS=[{key:'ph_sinsa',id:'sinsa',name:'신사 타워약국'},{key:'ph_apgujeong',id:'apgujeong',name:'압구정 생생 온누리약국'}];
-const pharmMeta=v=>PHARMS.find(p=>p.key===v);
+/* 아쿠아메디 소속 약국 — 처음 두 곳은 코드에 박혀 있었고, 늘릴 방법이
+   없었습니다. 이제 추가분은 공용 저장(lib.aquaPharms)에 쌓입니다.
+   붙박이 두 곳은 지난 발주·서류가 그 이름에 달려 있어 그대로 둡니다. */
+const PHARMS_BUILTIN=[{key:'ph_sinsa',id:'sinsa',name:'신사 타워약국'},
+                      {key:'ph_apgujeong',id:'apgujeong',name:'압구정 생생 온누리약국'}];
+function aquaAdded(){ lib.aquaPharms=lib.aquaPharms||[]; return lib.aquaPharms; }
+function PHARMS_(){
+  return PHARMS_BUILTIN.concat(aquaAdded().map(function(x){
+    return {key:'ph_'+x.pid, id:x.pid, name:x.name, added:true};
+  }));
+}
+const pharmMeta=v=>PHARMS_().find(p=>p.key===v);
 
 /* 보고 있는 월 = 브라우저별 개인 설정 (공용 저장 안 함) */
 function monthOf(id,months){
@@ -3373,14 +3383,14 @@ const DEP_MATCH = [
   {id:'barofarm', re:/바로팜|바로팜약국/},
   {id:'aquamedi', re:/아쿠아메디|아쿠아메디칼/}
 ];
-const AQUA_IDS = ['aquamedi','sinsa','apgujeong'];
+function aquaIds(){ return ['aquamedi'].concat(PHARMS_().map(function(x){ return x.id; })); }
 
 function depositsOf(id){lib.deposits=lib.deposits||{};lib.deposits[id]=lib.deposits[id]||[];return lib.deposits[id];}
 function bankLabel(no){const b=BANKS.filter(x=>x.no===String(no||'').replace(/\D/g,''))[0];return b?b.label:(no||'-');}
 function depNorm(s){return String(s||'').replace(/[\s（）()㈜（주）\.]/g,'').replace(/주식회사/g,'').toUpperCase();}
 
 /* 그 채널의 매출을 어느 원장에서 모을지 */
-function salesIdsFor(id){ return id==='aquamedi' ? AQUA_IDS.slice() : [id]; }
+function salesIdsFor(id){ return id==='aquamedi' ? aquaIds() : [id]; }
 
 /* 채널(+약국)의 월 매출 — 거래명세서/주문 + 세금계산서 안의 반품·조정 */
 function salesOf(id, mk, store){
@@ -4605,9 +4615,19 @@ function freeQty_(txt){
 
 function entryKey_(s){ return String(s||'').replace(/[\s()（）]/g,''); }
 
-/* 아쿠아메디는 약국이 둘이라 수취인명으로 갈라 넣습니다 */
+/* 아쿠아메디는 약국이 여럿이라 수취인명으로 갈라 넣습니다.
+   새로 넣은 약국은 등록한 이름으로 맞춰 봅니다 — 긴 이름부터 봐야
+   「온누리약국」이 「생생온누리약국」을 가로채지 않습니다. */
 function entryAquaPid_(recv){
   const k=entryKey_(recv);
+  if(!k) return 'aquamedi';
+  const added=aquaAdded().slice().sort(function(a,b){
+    return entryKey_(b.name).length-entryKey_(a.name).length;
+  });
+  for(let i=0;i<added.length;i++){
+    const nm=entryKey_(pharmInfoOf(added[i].pid).name||added[i].name);
+    if(nm&&(k.indexOf(nm)>=0||nm.indexOf(k)>=0)) return added[i].pid;
+  }
   if(/신사|타워/.test(k)) return 'sinsa';
   if(/압구정|생생|온누리/.test(k)) return 'apgujeong';
   return 'aquamedi';
@@ -5931,11 +5951,12 @@ const CHANNELS=[
   {key:'ch_pharmmall',id:'pharmmall',name:'자사몰 약사 전용관',ic:'🏬',desc:'자사몰 내 약사 전용관 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
   {key:'ch_aquamedi',id:'aquamedi',name:'아쿠아메디',ic:'💧',desc:'아쿠아메디 소속 약국 — 발주·거래 내역과 서류를 약국별로 관리합니다.'}
 ];
-/* 아쿠아메디 소속 약국 */
-const AQUAMEDI_PHARMS=[
-  {view:'ph_sinsa',pid:'sinsa',name:'신사 타워약국'},
-  {view:'ph_apgujeong',pid:'apgujeong',name:'압구정 생생 온누리약국'}
-];
+/* 아쿠아메디 소속 약국 — 붙박이 둘 + 나중에 넣은 곳 */
+function aquamediPharms(){
+  return PHARMS_().map(function(x){
+    return {view:x.key, pid:x.id, name:x.name, added:!!x.added};
+  });
+}
 const channelMeta=v=>CHANNELS.find(c=>c.key===v);
 function renderChannel(view){
   const meta=channelMeta(view);if(!meta)return;
@@ -5987,7 +6008,7 @@ function renderChannel(view){
   }
   if(meta.id==='aquamedi'){
     /* 약국별 건과 본사 직접 건이 한 줄로 섞여 헷갈렸습니다 — 갈라 둡니다 */
-    const g1=groupBox(1,'💊 소속 약국',AQUAMEDI_PHARMS.length+'곳 합산','setPriceCalc:grpAq1',true);
+    const g1=groupBox(1,'💊 소속 약국',aquamediPharms().length+'곳 합산','setPriceCalc:grpAq1',true);
     g1.body.appendChild(entrySyncLink());
     g1.body.appendChild(buildAquamediPharms());
     g1.body.appendChild(buildAquamediRollup());
@@ -6126,18 +6147,62 @@ function renderMallStore(){
   }
 }
 
+/* 약국 넣기 — 이름만 받고, 나머지는 약국 화면의 「약국정보 확인 / 수정」에서 */
+function addAquaPharm(){
+  if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+  openModal({title:'소속 약국 추가',desc:'약국 이름을 넣으면 그 약국의 발주·거래·서류 화면이 생깁니다. 사업자 정보와 배송지는 만든 뒤 「약국정보 확인 / 수정」에서 채우세요.',
+    value:'',confirmText:'추가',onConfirm:function(v){
+      const name=String(v||'').trim();
+      if(!name){ showToast('약국 이름을 넣어주세요'); return; }
+      const dup=aquamediPharms().filter(function(x){
+        return entryKey_(pharmInfoOf(x.pid).name||x.name)===entryKey_(name); })[0];
+      if(dup){ showToast('이미 있는 약국입니다 — '+(pharmInfoOf(dup.pid).name||dup.name)); return; }
+      const pid=uid('aq');
+      aquaAdded().push({pid:pid,name:name,at:new Date().toISOString()});
+      pharmInfoOf(pid).name=name;
+      persistLib();
+      showToast(name+' 을(를) 소속 약국에 넣었습니다');
+      switchView('ph_'+pid);
+      openPharmInfo(pid,name);
+    }});
+}
+/* 빼기 — 발주·명세서·서류가 달려 있으면 막습니다 (지우면 같이 사라집니다) */
+function removeAquaPharm(ph){
+  if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+  const nm=pharmInfoOf(ph.pid).name||ph.name;
+  const nOrd=((lib.orders&&lib.orders[ph.pid])||[]).length;
+  const nFile=((pharmInfoOf(ph.pid).files)||[]).length;
+  let nDoc=0;
+  try{ const L=(lib.ledger&&lib.ledger[ph.pid])||{months:{}};
+    Object.keys(L.months||{}).forEach(function(mk){ nDoc+=((L.months[mk]||{}).docs||[]).length; }); }catch(e){}
+  if(nOrd||nFile||nDoc){
+    showToast(nm+' 은(는) 발주 '+nOrd+'건 · 명세서 '+nDoc+'건 · 서류 '+nFile+'건이 달려 있어 뺄 수 없습니다');
+    return;
+  }
+  askChoice('소속 약국에서 빼기','<b>'+nm+'</b> 를 소속 약국 목록에서 뺍니다.<br>달린 발주·명세서·서류가 없어 지울 것이 없습니다.',
+    [{label:'뺍니다',desc:'다시 넣으려면 「＋ 약국 추가」로 넣으면 됩니다.',run:function(){
+      lib.aquaPharms=aquaAdded().filter(function(x){ return x.pid!==ph.pid; });
+      if(lib.pharmInfo) delete lib.pharmInfo[ph.pid];
+      persistLib(); switchView('ch_aquamedi'); showToast(nm+' 을(를) 뺐습니다');
+    }},{label:'그대로 둡니다',desc:'아무것도 바꾸지 않습니다.',run:function(){}}]);
+}
 /* ---------- 아쿠아메디 소속 약국 버튼 ---------- */
 function buildAquamediPharms(){
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');hs.textContent='소속 약국 ('+AQUAMEDI_PHARMS.length+')';h.appendChild(hs);
+  const list=aquamediPharms();
+  const hs=document.createElement('span');hs.textContent='소속 약국 ('+list.length+')';h.appendChild(hs);
+  const tools=document.createElement('div');tools.className='sh-tools';
+  const addB=document.createElement('button');addB.className='icon-btn';addB.textContent='＋ 약국 추가';
+  addB.addEventListener('click',addAquaPharm);
+  tools.appendChild(addB);h.appendChild(tools);
   wrap.appendChild(h);
   const note=document.createElement('div');note.className='hint';note.style.marginBottom='10px';
   note.innerHTML='약국을 누르면 해당 약국의 <b>발주·거래 내역, 약국 정보, 첨부 서류</b> 화면으로 이동합니다.';
   wrap.appendChild(note);
   const g=document.createElement('div');
   g.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:18px;';
-  AQUAMEDI_PHARMS.forEach(ph=>{
+  list.forEach(ph=>{
     const inf=pharmInfoOf(ph.pid);
     const nOrd=((lib.orders&&lib.orders[ph.pid])||[]).length;
     const nFile=(inf.files||[]).length;
@@ -6151,7 +6216,16 @@ function buildAquamediPharms(){
       (inf.ship||inf.addr||'배송지 미입력')+'<br>'+
       '발주 <b>'+nOrd+'</b>건 · 서류 <b>'+nFile+'</b>건</div>';
     b.addEventListener('click',()=>switchView(ph.view));
-    g.appendChild(b);
+    if(ph.added){
+      const cell=document.createElement('div');
+      cell.style.cssText='position:relative;';
+      b.style.width='100%';cell.appendChild(b);
+      const x=document.createElement('button');x.type='button';x.className='del-btn';
+      x.textContent='✕';x.title='이 약국을 목록에서 뺍니다';
+      x.style.cssText='position:absolute;top:8px;right:8px;';
+      x.addEventListener('click',ev=>{ ev.stopPropagation(); removeAquaPharm(ph); });
+      cell.appendChild(x);g.appendChild(cell);
+    } else g.appendChild(b);
   });
   wrap.appendChild(g);
   return wrap;
@@ -6160,7 +6234,7 @@ function buildAquamediPharms(){
 /* ---------- 아쿠아메디 소속 약국 거래·발주 합산 ---------- */
 function aquamediSources(){
   /* 소속 약국 + 아쿠아메디 본사 자체 건 */
-  return AQUAMEDI_PHARMS.map(x=>({pid:x.pid,view:x.view,name:(pharmInfoOf(x.pid).name||x.name)}))
+  return aquamediPharms().map(x=>({pid:x.pid,view:x.view,name:(pharmInfoOf(x.pid).name||x.name)}))
     .concat([{pid:'aquamedi',view:'ch_aquamedi',name:'아쿠아메디 (본사 직접)'}]);
 }
 /* 발주를 약국 구분과 함께 한 줄로 펼친다 */
@@ -9741,9 +9815,14 @@ function renderHome(){
     ['주문 금액',fmt(pm.total)+'원'],['가입 대기',waiting+'건']],'시트 자동 수집 · 가입 심사');
   const ordS=(pid)=>((lib.orders&&lib.orders[pid])||[]).length;
   const aq=ledgerSummary('aquamedi',mk);
-  card('💧','아쿠아메디','ch_aquamedi',[['신사 타워약국',ordS('sinsa')+'건'],
-    ['압구정 생생온누리',ordS('apgujeong')+'건'],
-    ['거래명세서',aq.latest?fmt(aq.total)+'원':'-']],'소속 약국 발주 · 서류 관리');
+  /* 약국이 늘면 카드도 따라 늡니다 — 셋을 넘으면 접어서 셉니다 */
+  const aqL=aquamediPharms();
+  const aqRows=(aqL.length<=3
+    ? aqL.map(function(x){ return [(pharmInfoOf(x.pid).name||x.name),ordS(x.pid)+'건']; })
+    : [['소속 약국',aqL.length+'곳'],
+       ['발주',aqL.reduce(function(a,x){ return a+ordS(x.pid); },0)+'건']])
+    .concat([['거래명세서',aq.latest?fmt(aq.total)+'원':'-']]);
+  card('💧','아쿠아메디','ch_aquamedi',aqRows,'소속 약국 발주 · 서류 관리');
   box.appendChild(grid);
 
   box.appendChild(buildEntrySync());
@@ -10351,8 +10430,9 @@ addEventListener('resize',function(){ try{ wrapWideTables(); }catch(e){} });
    ============================================================ */
 function switchView(view){
   currentView=view;
-  const navKey=(view==='ph_sinsa'||view==='ph_apgujeong')?'ch_aquamedi'
-    :(view==='ph_mall'?'ch_pharmmall':view);
+  /* 새로 넣은 약국(ph_aq_…)도 아쿠아메디 밑입니다 */
+  const navKey=(view==='ph_mall')?'ch_pharmmall'
+    :(view.indexOf('ph_')===0?'ch_aquamedi':view);
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===navKey));
   const now=document.getElementById('navNow');
   const cur=document.querySelector('.nav-item[data-view="'+navKey+'"]');
