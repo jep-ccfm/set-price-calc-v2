@@ -4711,20 +4711,26 @@ function entryDate_(v){
      품목   '유쎄라블 실프팅 4D 크림' ↔ '유쎄라블 실프팅 4D크림'
    그래서 공백을 지운 뒤 약국·품목·수량으로 맞춥니다. */
 function shipKey_(recv,item,qty){
-  return entryKey_(canonStore(recv))+'|'+entryKey_(item)+'|'+(parseInt(String(qty||'').replace(/[^0-9]/g,''),10)||0);
+  /* 대소문자·어순까지 다릅니다 (「유쎄라블 4d 실프팅 크림」 ↔ 「유쎄라블 실프팅 4D 크림」)
+     — 공백만 지워서는 안 맞아 우리 품목명으로 맞춘 뒤 견줍니다 */
+  return entryKey_(canonStore(recv))+'|'+itemKey(itemLabel(item))+'|'+
+         (parseInt(String(qty||'').replace(/[^0-9]/g,''),10)||0);
 }
 function shippedOf(){ lib.entryShipped=lib.entryShipped||{at:'',map:{}}; return lib.entryShipped; }
 /* 배송요청시트를 읽어 '송장 찍힌 건' 을 세어 둡니다.
    같은 약국·품목·수량이 여러 번이면 그 횟수만큼만 출고로 봅니다. */
 async function refreshShipped(){
   const got=await fetchEntryRows();
+  /* 개수만 세면 같은 약국이 같은 품목·수량을 두 번 시키면 어느 쪽이 나갔는지
+     모릅니다 — 송장이 찍힌 날짜를 같이 적어 둡니다. */
   const map={};
   got.rows.forEach(function(r){
     if(got.c.inv<0) return;
     if(!String(r[got.c.inv]||'').trim()) return;
     const k=shipKey_(r[got.c.recv],r[got.c.item],r[got.c.qty]);
-    map[k]=(map[k]||0)+1;
+    (map[k]=map[k]||[]).push(entryDate_(r[got.c.date])||'');
   });
+  Object.keys(map).forEach(function(k){ map[k].sort(); });
   /* 배송요청시트 전체는 3천 건이 넘습니다. 그대로 담아두면 팀 공용 데이터가
      쓸데없이 무거워지므로, 자사몰 주문에 해당하는 것만 남깁니다. */
   const need={};
@@ -4886,13 +4892,29 @@ function mallOrderRows(storeName,showShipped){
     });
   });
   out.sort((a,b)=>String(b.date+b.serial).localeCompare(String(a.date+a.serial)));
-  /* 배송요청시트에 송장이 찍힌 만큼만 출고로 처리합니다 (같은 품목이 여러 번일 수 있어 개수를 셉니다) */
+  /* 배송요청시트에 송장이 찍힌 만큼만 출고로 처리합니다.
+     예전에는 최신 주문부터 짝을 지었습니다. 출고는 먼저 들어온 주문부터
+     나가므로, 같은 약국이 같은 품목·수량을 두 번 시키면 아직 안 나간
+     새 주문이 송장을 가로채고 이미 나간 옛 주문이 목록에 남았습니다
+     (9/16 미유 토닝샷 10개). 오래된 주문부터, 그 주문일 이후에 찍힌
+     송장 가운데 가장 이른 것과 잇습니다. */
   const left={}; const S=shippedOf().map||{};
-  Object.keys(S).forEach(k=>{ left[k]=S[k]; });
-  out.forEach(r=>{
-    const k=shipKey_(r.store,r.item,r.qty);
-    if(left[k]>0){ r.shipped=true; left[k]--; }
-  });
+  Object.keys(S).forEach(k=>{ left[k]=Array.isArray(S[k])?S[k].slice():S[k]; });
+  out.slice().sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)))
+    .forEach(r=>{
+      const k=shipKey_(r.store,r.item,r.qty);
+      const v=left[k];
+      if(Array.isArray(v)){
+        if(!v.length) return;
+        let bi=-1;
+        v.forEach(function(d,i){
+          if(d&&r.date&&d<r.date) return;            /* 주문 전에 나간 송장은 남의 것입니다 */
+          if(bi<0||String(d)<String(v[bi])) bi=i;
+        });
+        if(bi<0) bi=0;                               /* 날짜를 못 견주면 있는 대로 씁니다 */
+        r.shipped=true; v.splice(bi,1);
+      } else if(v>0){ r.shipped=true; left[k]=v-1; }  /* 예전에 개수만 담아 둔 기록 */
+    });
   out.hiddenShipped=out.filter(r=>r.shipped).length;
   if(showShipped) return out;
   const kept=out.filter(r=>!r.shipped);
@@ -4932,7 +4954,9 @@ function buildMallOrderList(storeName){
     rb.addEventListener('click',async()=>{
       rb.disabled=true;rb.textContent='확인 중…';
       try{ const n=await refreshShipped(); persistLib();
-           showToast('출고 확인 완료 — 송장 찍힌 '+n+'종'); ledgerRefresh(); }
+           const left=mallOrderRows(null,false).length;
+           showToast('출고 확인 완료 — 송장 '+n+'종 · 아직 못 보낸 '+left+'줄');
+           ledgerRefresh(); }
       catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 출고 상태 새로고침'; }
     });
     tools.appendChild(rb);
