@@ -6608,8 +6608,8 @@ async function importBarofarm(id,files,logEl,onDone){
    그래서 정산서는 두 가지를 잡아줍니다.
      ① 주문내역(원장)에 빠지거나 틀린 주문이 없는지
      ② 매출과 입금이 다른 이유(수수료)를 숫자로 설명 */
-const BFS_ICON={ok:'✅',diff:'⚠',miss:'❓',extra:'➕'};
-const BFS_LABEL={ok:'일치',diff:'금액 다름',miss:'원장에 없음',extra:'정산서에 없음'};
+const BFS_ICON={ok:'✅',diff:'⚠',miss:'❓',extra:'⏳'};
+const BFS_LABEL={ok:'일치',diff:'금액 다름',miss:'원장에 없음',extra:'아직 정산 안 됨'};
 function bfSettleOf(){lib.bfSettle=lib.bfSettle||[];return lib.bfSettle;}
 
 /* 머리글은 '주문금액(줄바꿈)(판매금액-금융비용)' 처럼 옵니다 → 괄호 앞부분만 씁니다 */
@@ -6771,8 +6771,16 @@ function bfSettleMatch(s){
       ledTotal:lt,ledMk:hit?hit.mk:null,ledBranch:hit?hit.doc.branch:null,
       status:!hit?'miss':(lt===o.total?'ok':'diff')};
   });
-  /* 정산 기간 안의 원장 주문인데 정산서에 없는 건 */
-  const seen={};s.orders.forEach(o=>{seen[o.serial]=1;});
+  /* 바로팜은 주문한 다음 주에 정산합니다 — 9/06 주문이 9/07~9/13 정산서에,
+     9/08·9/11 주문이 9/14~9/20 정산서에 실립니다. 그래서 이 주 정산서에
+     없다는 것만으로 「빠졌다」고 하면, 매주 다음 주에 정산될 주문이
+     경고로 잡혀 같은 주문이 두 화면에 나옵니다.
+     어느 정산서에든 실려 있으면 빠진 것이 아닙니다. */
+  const seen={};
+  bfSettleOf().forEach(function(x){
+    (x.orders||[]).forEach(function(o){ seen[String(o.serial||'')]=1; });
+  });
+  s.orders.forEach(o=>{seen[o.serial]=1;});
   Object.keys(led.months||{}).forEach(mk=>{
     (led.months[mk].docs||[]).forEach(d=>{
       const dt=String(d.date||'');
@@ -6920,7 +6928,9 @@ function buildBarofarmSettle(){
 
   list.forEach(s=>{
     const m=bfSettleMatch(s);
-    const bad=m.filter(r=>r.status!=='ok');
+    /* 아직 정산 안 된 주문은 우리가 할 일이 없습니다 — 다음 정산서에 실립니다 */
+    const bad=m.filter(r=>r.status!=='ok'&&r.status!=='extra');
+    const later=m.filter(r=>r.status==='extra');
     const fixable=m.filter(r=>r.status==='diff'||r.status==='miss');
     const warn=bfSettleAudit(s);
     const pnl=document.createElement('div');
@@ -6938,11 +6948,13 @@ function buildBarofarmSettle(){
     pnl.appendChild(top);
 
     const st=document.createElement('div');st.style.cssText='margin-top:8px;font-size:13px;font-weight:700;';
-    st.innerHTML=(bad.length||warn.length)
+    const laterTxt=later.length
+      ? '<span style="color:var(--ink-soft);font-weight:600;"> · 다음 정산 대기 '+later.length+'건</span>' : '';
+    st.innerHTML=((bad.length||warn.length)
       ? '<span style="color:var(--warn);">⚠ 확인 필요 — '+
         (bad.length?'주문 '+bad.length+'건':'')+(bad.length&&warn.length?' · ':'')+
         (warn.length?'검산 '+warn.length+'건':'')+'</span>'
-      : '<span style="color:#2E7D32;">✅ 주문 '+m.length+'건 · 검산 모두 일치</span>';
+      : '<span style="color:#2E7D32;">✅ 주문 '+(m.length-later.length)+'건 · 검산 모두 일치</span>')+laterTxt;
     pnl.appendChild(st);
 
     if(warn.length){
@@ -6998,10 +7010,15 @@ function buildBarofarmSettle(){
       fx.addEventListener('click',()=>bfSettleFix(s));
       act.appendChild(fx);
     }
-    const del=document.createElement('button');del.className='icon-btn';del.textContent='이 정산 기록 삭제';
+    const del=document.createElement('button');del.className='icon-btn';
+    del.textContent='이 정산 기록 삭제 ('+s.from+'~'+s.to+')';
+    del.title='이 한 주 정산 기록만 지웁니다. 주문내역(매출)은 그대로입니다.';
     del.addEventListener('click',()=>{
+      if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+      if(!confirm('정산 '+s.no+' ('+s.from+'~'+s.to+') 한 건만 지웁니다.'+NL+
+        '주문내역(매출)에는 영향이 없고, 정산서를 다시 올리면 돌아옵니다.')) return;
       const i=bfSettleOf().indexOf(s);if(i>=0)bfSettleOf().splice(i,1);
-      persistLib();ledgerRefresh();});
+      persistLib();showToast('정산 '+s.no+' 기록을 지웠습니다');ledgerRefresh();});
     act.appendChild(del);pnl.appendChild(act);
     wrap.appendChild(pnl);
   });
