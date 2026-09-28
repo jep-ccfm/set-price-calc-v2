@@ -4710,6 +4710,17 @@ function entryDate_(v){
      약국명 '그린온누리약국' ↔ '그린 온누리약국'
      품목   '유쎄라블 실프팅 4D 크림' ↔ '유쎄라블 실프팅 4D크림'
    그래서 공백을 지운 뒤 약국·품목·수량으로 맞춥니다. */
+/* 시트가 전화번호를 숫자로 저장하면 앞자리 0 이 떨어집니다
+   (010-4801-0693 → 1048010693, 02-512-3111 → 25123111).
+   그대로 배송요청시트에 붙이면 못 거는 번호가 됩니다. */
+function telFix_(v){
+  const d=String(v||'').replace(/[^0-9]/g,'');
+  if(!d) return '';
+  if(d.charAt(0)==='0') return d;
+  if(/^1[568][0-9]{6}$/.test(d)) return d;   /* 1588·1600·1899 같은 대표번호 */
+  if(d.length>=8&&d.length<=10) return '0'+d;
+  return d;
+}
 function shipKey_(recv,item,qty){
   /* 대소문자·어순까지 다릅니다 (「유쎄라블 4d 실프팅 크림」 ↔ 「유쎄라블 실프팅 4D 크림」)
      — 공백만 지워서는 안 맞아 우리 품목명으로 맞춘 뒤 견줍니다 */
@@ -4885,7 +4896,7 @@ function mallOrderRows(storeName,showShipped){
       const m=d.meta||{};
       (d.items||[]).forEach(it=>{
         out.push({date:d.date||'', store:d.branch||'미상',
-          addr:m['약국주소']||'', tel:m['전화']||'',
+          addr:m['약국주소']||'', tel:telFix_(m['전화']),
           item:it.name||'', qty:Number(it.qty)||0,
           total:(Number(it.supply)||0)+(Number(it.vat)||0), serial:d.serial||''});
       });
@@ -9169,7 +9180,7 @@ async function importApplicants(logEl,onDone){
   let got;
   try{ got=await fetchApplyRows(); }
   catch(e){ if(logEl)logEl.textContent='✕ '+e.message; showToast('신청 목록을 못 읽었습니다'); return; }
-  const {rows,c}=got;
+  const {rows,c}=got;
   /* 신청 첨부는 3장(면허·사업자·통장)인데 시트가 2장까지만 받으면 통장이 빠집니다 */
   const shortCols=(c.docs.length<3)||(c.docNames<0);
   const NLx=String.fromCharCode(10);
@@ -9618,7 +9629,7 @@ async function fetchMallOrders(){
     const sub=parseInt(String(r2[c.sum]||'').replace(/[^0-9]/g,''),10)||qty*unit;
     if(!byOrder[oid])byOrder[oid]={file:'자사몰 시트',serial:oid,date,branch:canonStore(name)||'미상',
       items:[],qty:0,supply:0,vat:0,total:0,src:'pharmmall',
-      meta:{약국주소:addr,전화:String(r2[c.tel]||'').trim(),접수일시:dt},
+      meta:{약국주소:addr,전화:telFix_(r2[c.tel]),접수일시:dt},
       isTest:isTestOrder(name,addr)};
     const o=byOrder[oid];
     /* 약사가는 VAT 포함 단가 → 공급가액/부가세로 분리 (항목별로 나눠 합산하므로 합계와 정확히 일치) */
