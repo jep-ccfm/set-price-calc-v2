@@ -2992,7 +2992,7 @@ function buildOrders(pid,view){
   }
   if(!list.length){
     const e=document.createElement('div');e.className='empty-box';e.innerHTML='등록된 발주가 없습니다.<br>카톡으로 접수된 발주를 <b>「＋ 발주 등록」</b>으로 기록해두면 출고·정산까지 추적할 수 있습니다.';
-    wrap.appendChild(e);return wrap;
+    wrap.appendChild(buildOrderDrops(pid));return wrap;
   }
   if(!shown.length){
     const e=document.createElement('div');e.className='empty-box';
@@ -3000,7 +3000,10 @@ function buildOrders(pid,view){
     e.textContent=(pid==='pharmmall')
       ? '✅ 배송요청시트에 올린 건이 모두 주문 목록과 맞습니다.'
       : '✅ 남은 발주가 없습니다.';
-    wrap.appendChild(e);return wrap;
+    wrap.appendChild(e);
+    /* 보여 줄 줄이 없어도 「다시 안 가져오는 발주」는 내놓아야 합니다 —
+       여기서 빠지면 한번 걸러 둔 발주를 되살릴 방법이 화면에 없습니다 */
+    wrap.appendChild(buildOrderDrops(pid));return wrap;
   }
   const t=document.createElement('table');t.className='ord-table';
   const hasStore=list.some(o=>orderStore_(o));
@@ -9729,6 +9732,9 @@ function buildMallSync(){
   wrap.appendChild(uz);
   return wrap;
 }
+/* 판정이 끝난 줄까지 다 펼쳐 두면 새로 들어온 주문을 보려고 한참 내려야 합니다.
+   가능으로 난 줄은 접어 둡니다 — 불가와 미판정은 손댈 일이 남아 있어 그대로 둡니다. */
+let mallJudgeShowOk=false;
 /* 자사몰 주문 — 2km 판정 결과와 함께 보기 */
 function buildMallOrders(){
   const led=ledgerOf('pharmmall');const g=geoStore();
@@ -9753,22 +9759,47 @@ function buildMallOrders(){
     e.innerHTML='아직 가져온 주문이 없습니다. 위 <b>「시트에서 주문 가져오기」</b>를 눌러주세요.';
     wrap.appendChild(e);return wrap;
   }
+  /* 판정을 먼저 매겨 둡니다 — 몇 줄을 접을지 알아야 머리글을 그립니다 */
+  const g2=geoStore();
+  const judged=rows.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(function(d){
+    const ad=(d.meta&&d.meta.약국주소)||'';
+    const c=ad?g2.checks[ad]:null;
+    const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+    let kind='un';
+    if(!ad) kind='noaddr';
+    else if(j&&j.ok===true) kind='ok';
+    else if(j&&j.ok===false) kind='ng';
+    return {d:d,ad:ad,j:j,kind:kind};
+  });
   let okC=0,ngC=0,unC=0;
+  judged.forEach(function(x){ if(x.kind==='ok')okC++; else if(x.kind==='ng')ngC++; else unC++; });
+  const hideOk=!mallJudgeShowOk&&okC>0;
+  {
+    const tools=document.createElement('div');tools.className='sh-tools';
+    const tg=document.createElement('button');tg.className='icon-btn';
+    tg.textContent=mallJudgeShowOk?'거래 가능 숨기기':'✅ 거래 가능도 보기 ('+okC+')';
+    tg.addEventListener('click',()=>{ mallJudgeShowOk=!mallJudgeShowOk; refreshCurrentView(); });
+    if(okC) { tools.appendChild(tg); h.appendChild(tools); }
+  }
+  /* 다 감춰서 볼 줄이 하나도 없으면 아래 빈 칸이 같은 말을 합니다 */
+  if(hideOk&&judged.length>okC){
+    const hn=document.createElement('div');hn.className='hint';hn.style.margin='-4px 0 10px';
+    hn.innerHTML='<span style="color:var(--good);">✅ 거래 가능으로 난 '+okC+'건은 감췄습니다.</span> 남은 줄이 아직 볼 것입니다.';
+    wrap.appendChild(hn);
+  }
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='760px';
   t.innerHTML='<thead><tr><th style="width:86px;">주문일</th><th style="width:120px;">약국</th><th>주소</th>'+
     '<th style="text-align:right;width:64px;">수량</th><th style="text-align:right;width:90px;">금액</th><th style="width:160px;">2km 판정</th></tr></thead>';
   const tb=document.createElement('tbody');
-  rows.sort((a,b)=>String(b.date).localeCompare(String(a.date))).forEach(d=>{
-    const ad=(d.meta&&d.meta.약국주소)||'';
-    const c=ad?g.checks[ad]:null;
-    const j=(c&&typeof c.lat==='number')?judgePoint(c):null;
+  judged.forEach(x=>{
+    if(hideOk&&x.kind==='ok') return;
+    const d=x.d, ad=x.ad, j=x.j;
     let v='<span style="color:var(--ink-soft);">미판정</span>';
     if(!ad)v='<span style="color:var(--warn);">주소 없음</span>';
-    else if(j&&j.ok===true){v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';okC++;}
-    else if(j&&j.ok===false){v='<span style="color:var(--warn);font-weight:800;">⛔ 불가 (2km 이내)</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';ngC++;}
-    else if(j&&j.ok===null){v='<span style="color:var(--warn);">지점 좌표 필요</span>';unC++;}
-    else unC++;
+    else if(j&&j.ok===true)v='<span style="color:var(--good);font-weight:800;">✅ 가능</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+    else if(j&&j.ok===false)v='<span style="color:var(--warn);font-weight:800;">⛔ 불가 (2km 이내)</span><div style="color:var(--ink-soft);font-size:12px;">'+j.nearest+' '+distLabel(j.dist)+'</div>';
+    else if(j&&j.ok===null)v='<span style="color:var(--warn);">지점 좌표 필요</span>';
     const tr=document.createElement('tr');
     if(j&&j.ok===false)tr.style.background='#FBEDE6';
     else if(j&&j.ok===true)tr.style.background='#F4FAF6';
@@ -9782,7 +9813,14 @@ function buildMallOrders(){
       '<td style="font-size:12px;">'+v+'</td>';
     tb.appendChild(tr);
   });
-  t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
+  t.appendChild(tb);box.appendChild(t);
+  if(tb.children.length) wrap.appendChild(box);
+  else {
+    const e=document.createElement('div');e.className='empty-box';
+    e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
+    e.textContent='✅ '+okC+'건 모두 거래 가능으로 났습니다 — 볼 것이 없습니다.';
+    wrap.appendChild(e);
+  }
   const sm=document.createElement('div');sm.className='agg-total';
   sm.innerHTML='<span style="color:var(--good);">거래 가능 <span class="num-mono">'+okC+'</span></span>'+
     '<span style="color:var(--warn);">거래 불가 <span class="num-mono">'+ngC+'</span></span>'+
