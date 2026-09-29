@@ -9733,7 +9733,8 @@ function buildMallSync(){
   return wrap;
 }
 /* 판정이 끝난 줄까지 다 펼쳐 두면 새로 들어온 주문을 보려고 한참 내려야 합니다.
-   가능으로 난 줄은 접어 둡니다 — 불가와 미판정은 손댈 일이 남아 있어 그대로 둡니다. */
+   가능이든 불가든 판정이 난 줄은 접고, 아직 안 본 줄만 남깁니다.
+   불가 건수는 접혀 있어도 머리글과 맨 아래 합계에 그대로 적힙니다. */
 let mallJudgeShowOk=false;
 /* 자사몰 주문 — 2km 판정 결과와 함께 보기 */
 function buildMallOrders(){
@@ -9773,18 +9774,21 @@ function buildMallOrders(){
   });
   let okC=0,ngC=0,unC=0;
   judged.forEach(function(x){ if(x.kind==='ok')okC++; else if(x.kind==='ng')ngC++; else unC++; });
-  const hideOk=!mallJudgeShowOk&&okC>0;
-  {
+  const doneC=okC+ngC;
+  const hideDone=!mallJudgeShowOk&&doneC>0;
+  if(doneC){
     const tools=document.createElement('div');tools.className='sh-tools';
     const tg=document.createElement('button');tg.className='icon-btn';
-    tg.textContent=mallJudgeShowOk?'거래 가능 숨기기':'✅ 거래 가능도 보기 ('+okC+')';
+    tg.textContent=mallJudgeShowOk?'판정 끝난 것 숨기기':'📍 판정 끝난 것도 보기 ('+doneC+')';
     tg.addEventListener('click',()=>{ mallJudgeShowOk=!mallJudgeShowOk; refreshCurrentView(); });
-    if(okC) { tools.appendChild(tg); h.appendChild(tools); }
+    tools.appendChild(tg); h.appendChild(tools);
   }
   /* 다 감춰서 볼 줄이 하나도 없으면 아래 빈 칸이 같은 말을 합니다 */
-  if(hideOk&&judged.length>okC){
+  if(hideDone&&judged.length>doneC){
     const hn=document.createElement('div');hn.className='hint';hn.style.margin='-4px 0 10px';
-    hn.innerHTML='<span style="color:var(--good);">✅ 거래 가능으로 난 '+okC+'건은 감췄습니다.</span> 남은 줄이 아직 볼 것입니다.';
+    hn.innerHTML='<span style="color:var(--good);">📍 판정이 끝난 '+doneC+'건은 감췄습니다.</span>'+
+      (ngC?' <span style="color:var(--warn);font-weight:700;">그 가운데 거래 불가 '+ngC+'건</span> — 단추로 펴서 확인하세요.'
+          :' 남은 줄이 아직 볼 것입니다.');
     wrap.appendChild(hn);
   }
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
@@ -9793,7 +9797,7 @@ function buildMallOrders(){
     '<th style="text-align:right;width:64px;">수량</th><th style="text-align:right;width:90px;">금액</th><th style="width:160px;">2km 판정</th></tr></thead>';
   const tb=document.createElement('tbody');
   judged.forEach(x=>{
-    if(hideOk&&x.kind==='ok') return;
+    if(hideDone&&(x.kind==='ok'||x.kind==='ng')) return;
     const d=x.d, ad=x.ad, j=x.j;
     let v='<span style="color:var(--ink-soft);">미판정</span>';
     if(!ad)v='<span style="color:var(--warn);">주소 없음</span>';
@@ -9817,8 +9821,11 @@ function buildMallOrders(){
   if(tb.children.length) wrap.appendChild(box);
   else {
     const e=document.createElement('div');e.className='empty-box';
-    e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
-    e.textContent='✅ '+okC+'건 모두 거래 가능으로 났습니다 — 볼 것이 없습니다.';
+    e.style.cssText=ngC?'border-color:var(--warn);color:var(--warn);font-weight:700;'
+                      :'border-color:var(--good);color:var(--good);font-weight:700;';
+    e.textContent=ngC
+      ? '📍 '+doneC+'건 판정이 끝났습니다 (가능 '+okC+' · 불가 '+ngC+') — 새로 볼 줄은 없습니다.'
+      : '✅ '+okC+'건 모두 거래 가능으로 났습니다 — 볼 것이 없습니다.';
     wrap.appendChild(e);
   }
   const sm=document.createElement('div');sm.className='agg-total';
