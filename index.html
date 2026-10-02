@@ -6177,10 +6177,13 @@ function renderChannel(view){
     let shipN=0; try{ shipN=mallOrderRows(null,false).length; }catch(e){}
     const g1=groupBox(1,'📦 주문 받고 내보내기',
       (shipN?'<span style="color:var(--accent);">출고할 '+shipN+'줄</span>'
-            :'<span style="color:var(--good);">출고할 것 없음</span>'),
+            :'<span style="color:var(--good);">출고할 것 없음</span>')+
+      (function(){ let n=0; try{ n=mallPriceGaps().length; }catch(e){}
+        return n?' · <span style="color:var(--warn);">단가 확인 '+n+'건</span>':''; })(),
       'setPriceCalc:grpPm1',true);
     g1.body.appendChild(buildMallSync());
     g1.body.appendChild(entrySyncLink());
+    g1.body.appendChild(buildMallPriceGaps());
     g1.body.appendChild(buildMallOrders());
     g1.body.appendChild(buildMallOrderList(null));
     g1.body.appendChild(buildOrders(meta.id,view));
@@ -6199,7 +6202,9 @@ function renderChannel(view){
     g2.body.appendChild(buildApplicants());
     box.appendChild(g2.group);
 
-    box.appendChild(moneyGroup(3,meta.id,{},'거래명세서 (월별 집계)','setPriceCalc:grpPm3'));
+    /* 자사몰 매출은 주문시트에서 들어옵니다. 거기에 거래명세서 PDF 를 또 올리면
+       같은 주문이 두 번 잡힙니다 — 바로팜과 같은 이유로 업로드 칸을 닫아 둡니다. */
+    box.appendChild(moneyGroup(3,meta.id,{noPdf:true},'주문 내역 (월별 집계)','setPriceCalc:grpPm3'));
 
     const g4=groupBox(4,'📚 참고자료',
       '<span style="color:var(--ink-mute);">계약서 · 판매가표 · 거래처 · 2km 판정</span>',
@@ -9736,6 +9741,172 @@ function buildMallSync(){
    가능이든 불가든 판정이 난 줄은 접고, 아직 안 본 줄만 남깁니다.
    불가 건수는 접혀 있어도 머리글과 맨 아래 합계에 그대로 적힙니다. */
 let mallJudgeShowOk=false;
+/* 주문시트의 「약사가」는 주문 당시 결제 금액이고, 이카운트 거래명세서는
+   품목표의 약사전용관 판매가로 나갑니다. 둘이 어긋나도 명세서를 끊고 나서야
+   알게 됩니다 — 8/31 신사스퀘어 건이 414,000 으로 들어와 명세서는 239,250 이었습니다.
+   주문이 들어온 자리에서 바로 보이게 하고, 청구액으로 맞출 수 있게 합니다. */
+function mallUnitPrice(){
+  const P={};
+  (typeof PRICE_LIST!=='undefined'?PRICE_LIST:[]).forEach(function(r){ P[itemKey(r[1])]=r[6]; });
+  return P;
+}
+function mallPriceGaps(){
+  const P=mallUnitPrice(), led=ledgerOf('pharmmall'), out=[];
+  Object.keys(led.months||{}).sort().forEach(function(mk){
+    ((led.months[mk]||{}).docs||[]).forEach(function(d){
+      if(d.src!=='pharmmall') return;
+      const rows=[]; let paid=0, bill=0;
+      (d.items||[]).forEach(function(it){
+        const m=matchItem(it.name), nm=m?m.name:String(it.name||'').trim();
+        const q=Number(it.qty)||0;
+        const sub=(Number(it.supply)||0)+(Number(it.vat)||0);
+        paid+=sub;
+        const unit=P[itemKey(nm)];
+        if(!unit||!q){ bill+=sub; return; }
+        bill+=unit*q;
+        const u=Math.round(sub/q);
+        if(u!==unit) rows.push({name:nm,qty:q,paid:u,bill:unit});
+      });
+      if(rows.length) out.push({mk:mk,doc:d,paid:paid,bill:bill,diff:bill-paid,rows:rows});
+    });
+  });
+  return out;
+}
+/* 주문 한 건을 품목표 단가(=청구액)로 다시 적습니다. 원래 결제 금액은 남겨 둡니다. */
+function mallRepriceDoc(d){
+  const P=mallUnitPrice();
+  const was=d.total||0;
+  /* 되돌릴 때 비례로 되돌리면 1원씩 어긋납니다 — 원본을 그대로 찍어 둡니다 */
+  d.meta=d.meta||{};
+  if(!d.meta['결제원본']) d.meta['결제원본']=JSON.stringify({
+    supply:d.supply,vat:d.vat,total:d.total,
+    items:(d.items||[]).map(function(it){ return {supply:it.supply,vat:it.vat,unit:it.unit}; })});
+  let sup=0, vat=0, tot=0;
+  (d.items||[]).forEach(function(it){
+    const m=matchItem(it.name), nm=m?m.name:String(it.name||'').trim();
+    const q=Number(it.qty)||0, unit=P[itemKey(nm)];
+    let line=(Number(it.supply)||0)+(Number(it.vat)||0);
+    if(unit&&q){ line=unit*q; it.unit=unit; }
+    const iS=Math.round(line/1.1);
+    it.supply=iS; it.vat=line-iS;
+    sup+=iS; vat+=line-iS; tot+=line;
+  });
+  d.supply=sup; d.vat=vat; d.total=tot;
+  d.meta=d.meta||{};
+  if(!d.meta['결제금액']) d.meta['결제금액']=was;
+  return tot-was;
+}
+/* 청구액으로 맞춰 둔 주문 — 되돌릴 수 있어야 합니다 (팀 공용 자료라) */
+function mallRepriced(){
+  const led=ledgerOf('pharmmall'), out=[];
+  Object.keys(led.months||{}).sort().forEach(function(mk){
+    ((led.months[mk]||{}).docs||[]).forEach(function(d){
+      if(d.meta&&d.meta['결제금액']) out.push({mk:mk,doc:d,was:Number(d.meta['결제금액'])||0});
+    });
+  });
+  return out;
+}
+function mallUndoDoc(d){
+  const was=Number((d.meta||{})['결제금액'])||0;
+  const now=d.total||0;
+  const raw=(d.meta||{})['결제원본'];
+  if(raw){
+    try{
+      const o=JSON.parse(raw);
+      (d.items||[]).forEach(function(it,i){
+        const z=o.items&&o.items[i]; if(!z) return;
+        it.supply=z.supply; it.vat=z.vat;
+        if(z.unit===undefined) delete it.unit; else it.unit=z.unit;
+      });
+      d.supply=o.supply; d.vat=o.vat; d.total=o.total;
+      delete d.meta['결제금액']; delete d.meta['결제원본'];
+      return (d.total||0)-now;
+    }catch(e){}
+  }
+  if(!was||!now) return 0;
+  const k=was/now;
+  let sup=0,vat=0,tot=0;
+  (d.items||[]).forEach(function(it){
+    const line=Math.round(((Number(it.supply)||0)+(Number(it.vat)||0))*k);
+    const iS=Math.round(line/1.1);
+    it.supply=iS; it.vat=line-iS;
+    const q=Number(it.qty)||0; if(q) it.unit=Math.round(line/q);
+    sup+=iS; vat+=line-iS; tot+=line;
+  });
+  d.supply=sup; d.vat=vat; d.total=tot;
+  delete d.meta['결제금액'];
+  return tot-now;
+}
+function buildMallPriceGaps(){
+  const gaps=mallPriceGaps(), done=mallRepriced();
+  const wrap=document.createElement('div');
+  if(!gaps.length&&!done.length) return wrap;
+  if(!gaps.length){
+    const fp=foldPanel('💳 청구액으로 맞춘 주문','<span style="color:var(--ink-soft);">'+done.length+'건</span>',
+      'setPriceCalc:mallRepriced',false);
+    const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='9px';
+    nt.innerHTML='주문시트 결제가 대신 <b>품목표 단가(청구액)</b>로 적어 둔 주문입니다. 되돌리면 주문시트 금액으로 돌아갑니다.';
+    fp.body.appendChild(nt);
+    done.forEach(function(x){
+      const r=document.createElement('div');
+      r.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;';
+      r.innerHTML='<b>'+(x.doc.date||'')+' '+(x.doc.branch||'')+'</b>'+
+        '<span style="color:var(--ink-soft);">주문시트 '+fmt(x.was)+' → 청구 '+fmt(x.doc.total||0)+'</span>';
+      const u=document.createElement('button');u.className='icon-btn';u.style.marginLeft='auto';u.textContent='↩ 되돌리기';
+      u.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+        mallUndoDoc(x.doc); persistLib(); refreshCurrentView();
+        showToast('주문시트 금액으로 되돌렸습니다');
+      });
+      r.appendChild(u); fp.body.appendChild(r);
+    });
+    wrap.appendChild(fp.panel); return wrap;
+  }
+  const box=document.createElement('div');
+  box.style.cssText='border:1.5px solid var(--warn);border-radius:10px;padding:13px 15px;margin:0 0 16px;background:#FFFBF2;';
+  const t=document.createElement('div');
+  t.style.cssText='font-size:13px;font-weight:800;margin-bottom:5px;';
+  t.textContent='⚠ 주문 결제가가 품목표 단가와 다릅니다 — '+gaps.length+'건';
+  box.appendChild(t);
+  const h=document.createElement('div');h.className='hint';h.style.margin='0 0 10px';
+  h.innerHTML='거래명세서는 <b>품목표의 약사전용관 판매가</b>로 나갑니다. 아래 주문은 주문시트에 적힌 결제가가 달라서, 그대로 두면 <b>매출·미수금이 실제 청구액과 어긋납니다.</b>';
+  box.appendChild(h);
+  const tb=document.createElement('div');tb.style.cssText='overflow-x:auto;';
+  const tt=document.createElement('table');tt.className='led-table';tt.style.minWidth='520px';
+  tt.innerHTML='<thead><tr><th>주문일</th><th>약국</th><th>어긋난 품목</th>'+
+    '<th style="text-align:right;">주문시트</th><th style="text-align:right;">청구액</th>'+
+    '<th style="text-align:right;">차이</th></tr></thead>';
+  const tbody=document.createElement('tbody');
+  gaps.forEach(function(g){
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td style="white-space:nowrap;">'+(g.doc.date||'-')+'</td>'+
+      '<td style="font-weight:600;white-space:nowrap;">'+(g.doc.branch||'-')+'</td>'+
+      '<td style="font-size:12px;color:var(--ink-soft);">'+g.rows.map(function(r){
+        return r.name+' '+fmt(r.paid)+' → '+fmt(r.bill)+' ×'+r.qty; }).join('<br>')+'</td>'+
+      '<td class="num-cell">'+fmt(g.paid)+'</td>'+
+      '<td class="num-cell" style="font-weight:800;">'+fmt(g.bill)+'</td>'+
+      '<td class="num-cell" style="color:var(--warn);font-weight:800;">'+(g.diff>0?'+':'')+fmt(g.diff)+'</td>';
+    tbody.appendChild(tr);
+  });
+  tt.appendChild(tbody);tb.appendChild(tt);box.appendChild(tb);
+  const b=document.createElement('button');b.className='icon-btn';b.style.marginTop='11px';
+  b.textContent='💳 청구액으로 맞추기 ('+gaps.length+'건)';
+  b.title='주문 금액을 품목표 단가로 다시 적습니다. 원래 결제 금액은 남겨 둡니다.';
+  b.addEventListener('click',function(){
+    if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+    const NL=String.fromCharCode(10);
+    const msg=gaps.map(function(g){ return '· '+g.doc.date+' '+g.doc.branch+' — '+
+      fmt(g.paid)+' → '+fmt(g.bill)+'원'; }).join(NL);
+    if(!confirm('주문 '+gaps.length+'건을 품목표 단가(청구액)로 맞춥니다.'+NL+NL+msg+NL+NL+
+      '원래 결제 금액은 기록으로 남습니다.')) return;
+    let d=0; gaps.forEach(function(g){ d+=mallRepriceDoc(g.doc); });
+    persistLib(); refreshCurrentView();
+    showToast(gaps.length+'건을 맞췄습니다 — 매출 '+(d>0?'+':'')+fmt(d)+'원');
+  });
+  box.appendChild(b);
+  wrap.appendChild(box);
+  return wrap;
+}
 /* 자사몰 주문 — 2km 판정 결과와 함께 보기 */
 function buildMallOrders(){
   const led=ledgerOf('pharmmall');const g=geoStore();
