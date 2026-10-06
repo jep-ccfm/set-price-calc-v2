@@ -5349,7 +5349,8 @@ function sboMerge(store,lines,oldInv){
   lines.forEach(function(L){
     if(!L['오더코드']&&!L['상품코드']) return;
     const type=L['발주 타입']||'';
-    if(!/B2B/i.test(type)){ st.notB2B++; return; }
+    /* 아쿠아메디는 발주타입 이름에 B2B 가 안 붙을 수도 있어 채널 이름으로도 받습니다 */
+    if(!/B2B/i.test(type)&&!/아쿠아|개인약국/.test(type)){ st.notB2B++; return; }
     const k=L['오더코드']+'|'+L['상품코드'];
     const who=String(L['받는분 이름']||L['주문자 이름']||'').trim();
     if(/취소/.test(L['진행상태']||'')){
