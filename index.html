@@ -1908,7 +1908,7 @@ function renderCompany(k){
       (!rv.length?'<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
         :(badN?'<span style="color:var(--warn);">확인 필요 '+badN+'건</span>'
              :'<span style="color:var(--good);">✓ 어긋난 것 없음</span>'))+
-      (waitN?' · 배송요청 전 '+waitN+'건':''),
+      (waitN?' · 출고 요청 전 '+waitN+'건':''),
       'setPriceCalc:grpReady2',badN>0);
     g2.body.appendChild(buildRyVerify());
     box.appendChild(g2.group);
@@ -2629,7 +2629,7 @@ function ordersHandedOff(list,pid){
   /* 발주 메일 건은 대조가 정한 상태만 믿습니다.
      예전에는 지점·날짜(±1일)·수량으로 어림잡았는데, 9/17 배송요청분과
      9/18 재발주분이 수량이 같아 짝지어져 멀쩡한 발주가 사라졌습니다.
-     시트를 직접 읽는 「🚚 배송요청 반영 확인」 이 있으니 어림짐작은 걷어냅니다. */
+     시트를 직접 읽는 「🚚 출고 반영 확인」 이 있으니 어림짐작은 걷어냅니다. */
   list.forEach(o=>{
     if(o.src!=='발주메일') return;
     if(o.status==='출고'||o.status==='완료') out[o.id]=1;
@@ -2761,13 +2761,13 @@ function buildRyShipList(){
   if(rows.length){
     const tools=document.createElement('div');tools.className='sh-tools';
     const cb=document.createElement('button');cb.className='icon-btn';
-    cb.textContent='📋 배송요청시트용으로 복사';
+    cb.textContent='📋 표 복사';
     cb.addEventListener('click',function(){
       const tsv=rows.map(function(r){ return RY_SHIP_COLS.map(function(c){ return r[c[0]]; })
         .join(String.fromCharCode(9)); }).join(String.fromCharCode(10));
       (navigator.clipboard&&navigator.clipboard.writeText(tsv)
         ? navigator.clipboard.writeText(tsv) : Promise.reject())
-        .then(function(){ showToast(rows.length+'줄을 복사했습니다 — 배송요청시트에 붙여넣으세요'); })
+        .then(function(){ showToast(rows.length+'줄을 복사했습니다 — 사방넷에 입력할 때 붙여 쓰세요'); })
         .catch(function(){ showToast('복사가 안 됩니다 — 표를 직접 끌어서 복사해주세요'); });
     });
     tools.appendChild(cb);h.appendChild(tools);
@@ -2776,8 +2776,8 @@ function buildRyShipList(){
     const tools=h.querySelector('.sh-tools')||document.createElement('div');
     if(!tools.className){ tools.className='sh-tools'; h.appendChild(tools); }
     const rb=document.createElement('button');rb.className='icon-btn';
-    rb.textContent='🚚 배송요청 반영 확인';
-    rb.title='배송요청시트를 읽어 올라간 발주를 「출고」로 바꾸고 목록에서 내립니다';
+    rb.textContent='🚚 출고 반영 확인';
+    rb.title='사방넷 출고(9월까지는 배송요청시트)를 읽어 나간 발주를 「출고」로 바꾸고 목록에서 내립니다';
     rb.addEventListener('click',async function(){
       if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
       rb.disabled=true;rb.textContent='확인 중…';
@@ -2788,15 +2788,14 @@ function buildRyShipList(){
         persistLib();
         showToast(c?('발주 '+c+'건을 「출고」로 바꿨습니다'):'새로 올라간 발주가 없습니다');
         refreshCurrentView();
-      }catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 배송요청 반영 확인'; }
+      }catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 출고 반영 확인'; }
     });
     tools.appendChild(rb);
   }
   wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
-  nt.innerHTML='<b>배송요청시트에 올리면 목록에서 사라집니다.</b> 남은 줄이 아직 출고 요청을 안 넣은 발주입니다.<br>'+
-    '올린 뒤 <b>「🚚 배송요청 반영 확인」</b>을 누르면 시트를 읽어 상태를 「출고」로 바꾸고 여기서 내립니다.<br>'+
-    '순서는 자사몰 「출고할 주문」과 같습니다. 주소·전화는 발주 메일의 배송지 정보입니다.';
+  nt.innerHTML='<b>사방넷에 입력하고 퇴근 전 출고 엑셀을 홈에 올리면</b> 「출고」로 바뀌고 이 목록에서 내려갑니다. 남은 줄이 아직 사방넷에 안 넣은 발주입니다.<br>'+
+    '바로 확인하려면 <b>「🚚 출고 반영 확인」</b>을 누르세요. 주소·전화는 발주 메일의 배송지 정보입니다.';
   wrap.appendChild(nt);
 
   /* 온라인몰 직배송은 배송요청시트에 담당자 이름으로 찍혀 대조가 안 됩니다.
@@ -2806,7 +2805,7 @@ function buildRyShipList(){
   if(dropN){
     const dz=document.createElement('div');dz.className='hint';
     dz.style.cssText='margin:-4px 0 12px;padding:8px 10px;border-left:3px solid var(--warn);background:#FFF8F3;';
-    dz.innerHTML='⚠ <b>온라인몰 직배송 발주 '+dropN+'건</b>이 남아 있습니다. 배송요청시트에 '+
+    dz.innerHTML='⚠ <b>온라인몰 직배송 발주 '+dropN+'건</b>이 남아 있습니다. 출고 기록에 '+
       '<b>담당자 이름</b>으로 찍혀 대조가 안 되니 상태가 정해지지 않습니다.<br>'+
       '<b>「🔗 수취인 이어두기」</b>에서 담당자를 한 번 이어 두면 그때부터 대조에 들어옵니다.';
     const go=document.createElement('button');go.className='icon-btn';
@@ -2835,7 +2834,7 @@ function buildRyShipList(){
     st1.textContent='⚠ 취소하고 다시 보낸 것으로 보이는 발주 '+supOrds.length+'건 — 위 목록에서 뺐습니다';
     sb.appendChild(st1);
     const sd=document.createElement('div');sd.className='hint';sd.style.marginBottom='8px';
-    sd.innerHTML='같은 지점에 <b>같은 품목·수량</b>이 사흘 안에 또 들어왔고, 앞 건은 아직 배송요청시트에 안 올라갔습니다. '+
+    sd.innerHTML='같은 지점에 <b>같은 품목·수량</b>이 사흘 안에 또 들어왔고, 앞 건은 아직 출고 요청이 안 들어갔습니다. '+
       '공급가를 고쳐 다시 보낸 경우입니다.';
     sb.appendChild(sd);
     supOrds.forEach(function(o){
@@ -2873,7 +2872,7 @@ function buildRyShipList(){
     e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
     e.textContent=older
       ? '✅ '+(ryShipMonth?mkLabel(ryShipMonth):'')+' 것은 모두 올렸습니다 — 다른 달에 '+older+'줄 남아 있습니다.'
-      : '✅ 받은 발주를 모두 배송요청시트에 올렸습니다.';
+      : '✅ 받은 발주를 모두 출고 요청했습니다.';
     wrap.appendChild(e);return wrap;
   }
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
@@ -2947,13 +2946,15 @@ function buildRyShipList(){
   t.appendChild(tb);box.appendChild(t);wrap.appendChild(box);
   return wrap;
 }
+/* 출고 기록에서 만든 발주의 출처 — 10월부터는 사방넷 출고입니다 (내부 값은 그대로 둡니다) */
+function ordSrcLabel_(o){ return (o.src==='배송요청시트'&&String(o.date||'')>='2026-10-01')?'사방넷':o.src; }
 let ordShowDone=false;
 function buildOrders(pid,view){
   const list=ordersOf(pid);const wrap=document.createElement('div');
   const handed=ordersHandedOff(list,pid);
   /* 접는 이유가 채널마다 다릅니다 — 레디영은 「시트에 올렸다」,
      자사몰은 「위 주문 목록에 이미 있다」 입니다 */
-  const doneWord=(pid==='pharmmall')?'주문 목록에 있는 건':'배송요청 완료';
+  const doneWord=(pid==='pharmmall')?'주문 목록에 있는 건':'출고 요청 완료';
   const hidN=list.filter(o=>handed[o.id]).length;
   const shown=ordShowDone?list:list.filter(o=>!handed[o.id]);
   const h=document.createElement('div');h.className='sec-h';
@@ -2985,7 +2986,7 @@ function buildOrders(pid,view){
     const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
     nt.innerHTML=ordShowDone
       ? (pid==='pharmmall'?'위 주문 목록에 이미 있는 발주도 함께 보고 있습니다.'
-                          :'배송요청까지 끝난 발주도 함께 보고 있습니다.')
+                          :'출고 요청까지 끝난 발주도 함께 보고 있습니다.')
       : '<span style="color:var(--good);">✅ '+doneWord+' '+hidN+'건은 감췄습니다.</span>'+
         (pid==='pharmmall'?' 남은 줄은 <b>주문시트에 없는데 나간 건</b>이라 한 번 확인해주세요.':'');
     wrap.appendChild(nt);
@@ -2998,7 +2999,7 @@ function buildOrders(pid,view){
     const e=document.createElement('div');e.className='empty-box';
     e.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
     e.textContent=(pid==='pharmmall')
-      ? '✅ 배송요청시트에 올린 건이 모두 주문 목록과 맞습니다.'
+      ? '✅ 출고 요청한 건이 모두 주문 목록과 맞습니다.'
       : '✅ 남은 발주가 없습니다.';
     wrap.appendChild(e);
     /* 보여 줄 줄이 없어도 「다시 안 가져오는 발주」는 내놓아야 합니다 —
@@ -3029,8 +3030,8 @@ function buildOrders(pid,view){
     const names=(o.items||[]).map(i=>itemLabel(i.name)+' ×'+i.qty).join('<br>');
     tr.innerHTML='<td>'+(o.date||'-')+(o.isNew?'<span class="new-badge">NEW</span>':'')+'</td>'+
       (hasStore?'<td style="font-size:12.5px;"><b>'+(orderStore_(o)||'-')+'</b>'+
-        (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+o.src+'</div>':'')+
-        (handed[o.id]?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 배송요청 완료</div>':'')+
+        (o.src?'<div style="font-size:11.5px;color:var(--ink-mute);font-weight:600;">'+ordSrcLabel_(o)+'</div>':'')+
+        (handed[o.id]?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 출고 요청 완료</div>':'')+
         (dupN>1?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ 똑같은 발주 '+dupN+'건</div>':'')+
         (supMap[o.id]?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ '+supMap[o.id].by+' 발주로 대체된 듯</div>':'')+'</td>':'')+
       '<td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
@@ -3654,11 +3655,11 @@ function moneyGroup(no,pid,ledgerOpts,ledgerLabel,lsKey){
 function entrySyncLink(){
   const d=document.createElement('div');d.className='link-bar';d.style.marginBottom='14px';
   const a=document.createElement('button');a.className='link-btn alt';a.type='button';
-  a.textContent='🚚 배송요청시트에서 발주 가져오기';
+  a.textContent='🚚 출고 자료 → 발주 가져오기';
   a.addEventListener('click',function(){ switchView('home'); });
   const n2=document.createElement('span');n2.className='hint';
   n2.style.cssText='align-self:center;';
-  n2.textContent='홈에서 모든 채널을 한 번에 처리합니다';
+  n2.textContent='홈에 사방넷 출고 엑셀을 올리면 모든 채널이 한 번에 처리됩니다';
   d.append(a,n2);
   return d;
 }
@@ -5001,7 +5002,7 @@ function ryStoreName(s){
   const t=(m?m[1]:raw).replace(/레디영/g,'').replace(/[()（）]/g,'');
   return t||raw;
 }
-/* 발주서와 배송요청시트가 같은 지점을 다르게 적어도 한 열쇠로 모으려면,
+/* 발주서와 출고 기록가 같은 지점을 다르게 적어도 한 열쇠로 모으려면,
    지점 목록에 있는 이름으로 맞춰 두어야 합니다.
      발주서 '성수연무장길레디영(성수2호점)'  ┐
      배송요청 '레디영 성수2호점'             ┘ → 둘 다 '성수2호점' */
@@ -5185,7 +5186,7 @@ const ENTRY_LOOKS_PHARM=/약국|바로팜|자사몰|아쿠아|레디영/;
 const ENTRY_FREE=/테스터|샘플|무상|증정|체험단|이벤트|당첨|협업|지급건/;
 /* 관리메모1 에 「약국공급+테스터1」 처럼 적기도 합니다. 이건 무상건이 아니라
    유상 발주에 테스터를 하나 얹은 것입니다. 통째로 걸러내면 그 지점의 배송요청이
-   통째로 사라져 「배송요청 전」 으로 잘못 잡힙니다 (명동플래그쉽 9/02·9/07·9/18).
+   통째로 사라져 「출고 요청 전」 으로 잘못 잡힙니다 (명동플래그쉽 9/02·9/07·9/18).
    공급·판매가 적혀 있으면 유상 발주로 봅니다. */
 function entryFreeOnly_(memo){
   const m=entryKey_(memo);
@@ -5230,6 +5231,45 @@ function entryAquaPid_(recv){
   if(/신사|타워/.test(k)) return 'sinsa';
   if(/압구정|생생|온누리/.test(k)) return 'apgujeong';
   return 'aquamedi';
+}
+/* 처음 보는 아쿠아메디 약국은 소속 약국으로 바로 만듭니다 (2026-10-06 결정).
+   예전엔 「＋ 약국 추가」를 눌러야 해서 새 약국 발주가 「본사 직접 건」으로 떨어져 있었습니다
+   (9/22 에이트뷰티). 수취인이 아쿠아메디(본사)면 본사 직접 건으로 둡니다. */
+function aquaIsHq_(name){ return /아쿠아/.test(String(name||'')); }
+function aquaEnsurePharm_(name,addr,tel){
+  const nm=String(name||'').trim();
+  if(!nm||aquaIsHq_(nm)) return 'aquamedi';
+  const pid0=entryAquaPid_(nm);
+  if(pid0!=='aquamedi') return pid0;
+  if(!canEdit()) return 'aquamedi';
+  const pid=uid('aq');
+  aquaAdded().push({pid:pid,name:nm,at:new Date().toISOString(),auto:true});
+  const inf=pharmInfoOf(pid); inf.name=nm;
+  if(addr){ if(!inf.addr) inf.addr=addr; if(!inf.ship) inf.ship=addr; }
+  if(tel&&!inf.tel) inf.tel=tel;
+  return pid;
+}
+/* 본사 직접 건으로 떨어져 있던 약국 발주를 그 약국 밑으로 옮깁니다 (만들기까지) */
+function aquaAdoptStores_(){
+  if(!canEdit()) return {made:0,moved:0,names:[]};
+  const before=aquaAdded().length;
+  const hq=ordersOf('aquamedi'); let moved=0;
+  for(let i=hq.length-1;i>=0;i--){
+    const o=hq[i];
+    /* 출고 기록에서 온 건만 — 손으로 넣은 본사 건의 메모를 약국으로 착각하지 않게 */
+    if(o.src!=='배송요청시트') continue;
+    const st=orderStore_(o);
+    if(!st||aquaIsHq_(st)) continue;
+    const addr=String(o.note||'').split('·').slice(1).join('·').trim();
+    const pid=aquaEnsurePharm_(st,addr,'');
+    if(pid==='aquamedi') continue;
+    hq.splice(i,1);
+    if(o.srcKey) o.srcKey=String(o.srcKey).replace(/^aquamedi\|/,pid+'|');
+    lib.orders=lib.orders||{}; lib.orders[pid]=lib.orders[pid]||[]; lib.orders[pid].push(o);
+    moved++;
+  }
+  const names=aquaAdded().slice(before).map(function(x){ return x.name; });
+  return {made:names.length,moved:moved,names:names};
 }
 /* ============================================================
    사방넷 출고 (2026-10 ~)
@@ -5460,8 +5500,8 @@ function shipKey_(recv,item,qty){
 function shippedOf(){ lib.entryShipped=lib.entryShipped||{at:'',map:{}}; return lib.entryShipped; }
 /* 배송요청시트를 읽어 '송장 찍힌 건' 을 세어 둡니다.
    같은 약국·품목·수량이 여러 번이면 그 횟수만큼만 출고로 봅니다. */
-async function refreshShipped(){
-  const got=await fetchEntryRows();
+async function refreshShipped(got0){
+  const got=got0||await fetchEntryRows();
   /* 개수만 세면 같은 약국이 같은 품목·수량을 두 번 시키면 어느 쪽이 나갔는지
      모릅니다 — 송장이 찍힌 날짜를 같이 적어 둡니다. */
   const map={};
@@ -5496,20 +5536,8 @@ async function importEntryOrders(logEl,onDone){
   try{ got=await fetchEntryRows(); }
   catch(e){ if(logEl)logEl.textContent='✕ '+e.message; showToast(e.message); return; }
   const {rows,c}=got;
-
-  /* 송장이 찍힌 건을 세어 둡니다 (자사몰 주문 목록에서 걸러내는 데 씁니다) */
-  if(c.inv>=0){
-    const smap={};
-    rows.forEach(function(r){
-      if(!String(r[c.inv]||'').trim()) return;
-      smap[shipKey_(r[c.recv],r[c.item],r[c.qty])]=(smap[shipKey_(r[c.recv],r[c.item],r[c.qty])]||0)+1;
-    });
-    const need={};
-    mallOrderRows(null,true).forEach(function(x){ need[shipKey_(x.store,x.item,x.qty)]=1; });
-    const slim={};
-    Object.keys(need).forEach(function(k){ if(smap[k]) slim[k]=smap[k]; });
-    const S=shippedOf(); S.map=slim; S.at=new Date().toISOString();
-  }
+  /* 아쿠아메디 — 본사 직접 건으로 떨어져 있던 약국 발주를 먼저 제자리로 */
+  const adopt=aquaAdoptStores_();
 
   const groups={}, unknown={};
   rows.forEach(function(r){
@@ -5529,7 +5557,8 @@ async function importEntryOrders(logEl,onDone){
        ('발주일자' 만 있는 행은 그걸 씁니다) */
     const date=entryDate_(r[c.date])||entryDate_(r[c.odate]);
     if(!recv||!date) return;
-    const pid=(hit.pid==='aquamedi')?entryAquaPid_(recv):hit.pid;
+    const pid=(hit.pid==='aquamedi')
+      ? aquaEnsurePharm_(recv,String(r[c.addr]||'').trim(),String(r[c.tel]||'').trim()) : hit.pid;
     const key=pid+'|'+date+'|'+entryKey_(canonStore(recv));
     groups[key]=groups[key]||{pid:pid,ch:hit.ch,date:date,recv:recv,
       /* 자사몰만 약국별로 나뉘므로 그때만 채웁니다 */
@@ -5562,12 +5591,21 @@ async function importEntryOrders(logEl,onDone){
     list.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
     added++; byCh[g.ch]=(byCh[g.ch]||0)+1;
   });
-  if(added||fixed) persistLib();
+  /* 같은 자료로 자사몰 출고 상태 · 레디영 출고 반영까지 —
+     예전엔 채널 화면에서 「출고 상태 새로고침」「출고 반영 확인」을 따로 눌러야 했습니다 */
+  let shipN=0, ryN=0, ryErr='';
+  try{ shipN=await refreshShipped(got); }catch(e){}
+  try{ const rv=await ryVerifyRows(got); saveRyVerify(rv); ryN=applyVerifyToOrders(rv); }catch(e){ ryErr=e.message||''; }
+  persistLib();
 
   const lines=[];
   lines.push('완료 — 신규 '+added+'건'+(dup?' · 이미 등록 '+dup+'건':'')+
     (fixed?' · 약국명 보완 '+fixed+'건':''));
   Object.keys(byCh).forEach(k=>lines.push('   '+k+' '+byCh[k]+'건'));
+  if(adopt.made||adopt.moved) lines.push('   아쿠아메디 소속 약국 새로 '+adopt.made+'곳'+(adopt.names.length?' ('+adopt.names.join(', ')+')':'')+
+    (adopt.moved?' · 본사 직접 건 '+adopt.moved+'건을 옮김':''));
+  lines.push('   레디영 — '+(ryN?'발주 '+ryN+'건을 「출고」로 바꿨습니다':'새로 출고된 발주 없음')+(ryErr?' (대조 실패: '+ryErr+')':''));
+  lines.push('   자사몰 — 송장 찍힌 출고 '+shipN+'종 확인');
   const uk=Object.keys(unknown);
   if(uk.length){
     lines.push('');
@@ -5590,7 +5628,7 @@ function buildEntrySync(){
   const s1=document.createElement('div');s1.className='uz-title';s1.textContent='📦 사방넷 출고 엑셀 올리기';
   const s2=document.createElement('div');s2.className='uz-desc';
   s2.innerHTML='사방넷 풀필먼트 → <b>출고조회</b> → 엑셀 다운로드 받은 파일을 올리세요. 기간은 넉넉하게 잡아도 됩니다.<br>'+
-    '<span style="color:var(--ink-soft);">B2B 만 담고, 출고취소는 거르고, 이미 담은 줄은 송장만 채웁니다. 올리면 바로 발주까지 가져옵니다.</span>';
+    '<span style="color:var(--ink-soft);">B2B 만 담고, 출고취소는 거르고, 이미 담은 줄은 송장만 채웁니다. 올리면 <b>발주 등록 · 레디영 출고 반영 · 자사몰 출고 상태 · 아쿠아메디 새 약국</b>까지 한 번에 처리합니다.</span>';
   const s3=document.createElement('div');s3.className='uz-desc';s3.style.marginTop='6px';
   s3.textContent='담아 둔 출고를 불러오는 중…';
   sz.append(s1,s2,s3);
@@ -5717,12 +5755,12 @@ function buildMallOrderList(storeName){
   h.appendChild(hs);
   if(rows.length){
     const tools=document.createElement('div');tools.className='sh-tools';
-    const cb=document.createElement('button');cb.className='icon-btn';cb.textContent='📋 배송요청시트용으로 복사';
+    const cb=document.createElement('button');cb.className='icon-btn';cb.textContent='📋 표 복사';
     cb.addEventListener('click',()=>{
       const tsv=rows.map(r=>MALL_COLS.map(c=>r[c[0]]).join('\t')).join('\n');
       (navigator.clipboard&&navigator.clipboard.writeText(tsv)
         ? navigator.clipboard.writeText(tsv) : Promise.reject())
-        .then(()=>showToast(rows.length+'줄을 복사했습니다 — 배송요청시트에 붙여넣으세요'))
+        .then(()=>showToast(rows.length+'줄을 복사했습니다 — 사방넷에 입력할 때 붙여 쓰세요'))
         .catch(()=>showToast('복사가 안 됩니다 — 표를 직접 끌어서 복사해주세요'));
     });
     tools.appendChild(cb);h.appendChild(tools);
@@ -5751,8 +5789,8 @@ function buildMallOrderList(storeName){
   wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
   const S=shippedOf();
-  nt.innerHTML='<b>배송요청시트에 송장번호가 찍히면 목록에서 사라집니다.</b> 남은 줄이 아직 못 보낸 주문입니다.<br>'+
-    '순서는 배송요청시트와 같아 그대로 복사해 붙여넣을 수 있습니다. 사업자 정보·서류는 <b>약국 이름</b>을 누르세요.'+
+  nt.innerHTML='<b>송장번호가 찍히면 목록에서 사라집니다</b> — 홈에 사방넷 출고 엑셀을 올리면 자동으로 맞춰집니다. 남은 줄이 아직 못 보낸 주문입니다.<br>'+
+    '사업자 정보·서류는 <b>약국 이름</b>을 누르세요.'+
     (hid&&!mallShowShipped?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
     (S.at?'<br><span style="color:var(--ink-mute);">출고 확인 '+String(S.at).slice(0,16).replace('T',' ')+'</span>'
         :'<br><span style="color:var(--warn);">아직 출고 상태를 안 읽었습니다 — 「🚚 출고 상태 새로고침」을 눌러주세요.</span>');
@@ -5892,7 +5930,7 @@ function buildStoreMerge(){
     const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='8px';
     nt.innerHTML='해제하면 앞으로 들어오는 주문부터 다시 따로 잡히고, 이미 합쳐둔 거래·발주는 원래 이름으로 되돌립니다.<br>'+
       '<span style="color:var(--ink-soft);">약국 정보 표로 옮겨 담은 사업자 정보와 출고 대조 기록은 되돌리지 않습니다 '+
-      '(출고는 배송요청시트를 다시 읽으면 맞춰집니다).</span>';
+      '(출고는 「출고 상태 새로고침」을 누르면 다시 맞춰집니다).</span>';
     fp.body.appendChild(nt);
     const tb=document.createElement('table');tb.className='led-table';
     tb.innerHTML='<thead><tr><th>원래 이름</th><th>합친 이름</th><th style="width:90px;">합친 날</th><th style="width:60px;"></th></tr></thead>';
@@ -6049,8 +6087,8 @@ const won_=v=>{const n=Number(String(v==null?'':v).replace(/[,\s₩]/g,''));retu
    '날짜' 가 아니라 '발주일자' 를 씁니다) */
 const RV_ICON={miss:'❌',diff:'⚠',extra:'➕',wait:'⏳',ok:'✅'};
 const RV_LABEL={miss:'출고 누락',diff:'수량 다름',extra:'발주서에 없음',
-  wait:'배송요청 전',ok:'일치'};
-/* 「배송요청 전」 은 아직 우리가 시트에 안 올린 것이라 오류가 아닙니다 */
+  wait:'출고 요청 전',ok:'일치'};
+/* 「출고 요청 전」 은 아직 우리가 시트에 안 올린 것이라 오류가 아닙니다 */
 const RV_TODO={miss:1,diff:1,extra:1};
 
 /* ---------- 발주서 ↔ 배송요청시트 대조 ----------
@@ -6060,8 +6098,8 @@ const RV_TODO={miss:1,diff:1,extra:1};
    한 칸만 보면 어긋납니다. 발주일자만 봤더니 명동 9/07·9/08 두 묶음이 한 바구니로
    들어가 9/07 은 출고가 두 배로, 9/08 은 통째로 누락으로 잡혔습니다.
    그래서 두 칸을 다 열쇠로 잡아 두고, 「날짜」가 맞는 것을 먼저 씁니다. */
-async function ryVerifyRows(){
-  const got=await fetchEntryRows();
+async function ryVerifyRows(got0){
+  const got=got0||await fetchEntryRows();
   const {rows,c}=got;
 
   /* 발주 메일에 나온 수취처 이름들 — 관리메모1 과 맞춰보는 데 씁니다 */
@@ -6090,7 +6128,7 @@ async function ryVerifyRows(){
     const name=String(r[c.item]||'').trim();
     if(!name) return;
     /* 같은 지점에 같은 날 두 번 넣기도 합니다 (비타터닝 재발주분 + 루비알엔 정기분).
-       한 묶음으로 뭉치면 앞 발주가 뒤 발주 몫까지 가져가 뒤 발주가 「배송요청 전」 이 됩니다.
+       한 묶음으로 뭉치면 앞 발주가 뒤 발주 몫까지 가져가 뒤 발주가 「출고 요청 전」 이 됩니다.
        관리메모1 이 다르면 다른 묶음으로 봅니다. */
     const k=store+'|'+(d1||'')+'|'+(d2||'')+'|'+entryKey_(r[c.memo]);
     let g=gmap[k];
@@ -6178,7 +6216,7 @@ async function ryVerifyRows(){
   orders.forEach(function(o,i){ grab(i,o,function(g){ return g.d1===o.date&&fits(g,o); }); });
   /* 한 지점이 같은 날 발주를 두 번 보내도 우리는 배송요청시트에 한 줄 묶음으로
      올립니다. 묶음이 하나뿐이라 앞 발주가 통째로 가져가고 뒤 발주는
-     「배송요청 전」 으로 남았습니다 (9/21 부산 토닝샷 30개).
+     「출고 요청 전」 으로 남았습니다 (9/21 부산 토닝샷 30개).
      합쳐서 딱 맞으면 묶음 하나를 여러 발주가 나눠 갖게 합니다. */
   (function(){
     const left={};
@@ -6379,17 +6417,17 @@ function buildRyVerify(){
   const okN=rows.filter(r=>r.st==='ok').length;
   const sum=!saved ? '<span style="color:var(--ink-mute);">아직 대조 안 함</span>'
     : (bad ? '<span style="color:var(--warn);">확인 필요 '+bad+'건</span>'+
-             (waitN?'<span style="color:var(--ink-soft);"> · 배송요청 전 '+waitN+'건</span>':'')
-       : (waitN ? '<span style="color:var(--ink-soft);">배송요청 전 '+waitN+'건</span>'
+             (waitN?'<span style="color:var(--ink-soft);"> · 출고 요청 전 '+waitN+'건</span>':'')
+       : (waitN ? '<span style="color:var(--ink-soft);">출고 요청 전 '+waitN+'건</span>'
                 : '<span style="color:var(--good);">✓ 전부 일치</span>'));
-  const fp=foldPanel('🔍 발주서 ↔ 배송요청 대조',sum,'setPriceCalc:ryVerifyOpen',false);
+  const fp=foldPanel('🔍 발주서 ↔ 출고 대조',sum,'setPriceCalc:ryVerifyOpen',false);
   const wrap=fp.body;
 
   const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
-  nt.innerHTML='레디영 <b>발주 메일</b>을 기준으로 <b>배송요청시트</b>에 빠진 건이나 수량이 다른 건을 찾습니다.<br>'+
-    '지점과 날짜로 맞추는데, 배송요청시트의 <b>「날짜」를 먼저 보고 안 맞으면 「발주일자」</b>를 봅니다. '+
+  nt.innerHTML='레디영 <b>발주 메일</b>을 기준으로 <b>출고 기록</b>(9월까지 배송요청시트 · 10월부터 사방넷)에 빠진 건이나 수량이 다른 건을 찾습니다.<br>'+
+    '지점과 날짜로 맞추는데, 출고 기록의 <b>「날짜」(사방넷은 출고희망일)를 먼저 보고 안 맞으면 「발주일자」</b>를 봅니다. '+
     '두 칸이 어긋난 행이 많아서입니다.<br>'+
-    '<span style="color:var(--ink-soft);">⏳ <b>배송요청 전</b> 은 그 지점·그 날 배송요청이 아직 하나도 없는 것입니다 — '+
+    '<span style="color:var(--ink-soft);">⏳ <b>출고 요청 전</b> 은 그 지점·그 날 출고 요청이 아직 하나도 없는 것입니다 — '+
     '오류가 아니라 우리가 올릴 차례입니다. <b>일주일이 넘은 건은 색을 넣어 표시</b>합니다.</span>';
   wrap.appendChild(nt);
 
@@ -6397,7 +6435,7 @@ function buildRyVerify(){
   const b=document.createElement('button');b.className='icon-btn';b.textContent='🔍 대조하기';
   const lg=document.createElement('div');lg.className='up-log';lg.style.cssText='max-height:120px;margin-bottom:9px;';
   b.addEventListener('click',async()=>{
-    b.textContent='대조 중…';b.disabled=true;lg.classList.add('show');lg.textContent='배송요청시트를 읽는 중…';
+    b.textContent='대조 중…';b.disabled=true;lg.classList.add('show');lg.textContent='출고 기록을 읽는 중…';
     try{
       const r=await ryVerifyRows();
       saveRyVerify(r);
@@ -6408,9 +6446,9 @@ function buildRyVerify(){
       const fz2=r.filter(x=>x.free>0).length;
       const sh=r.filter(function(x){ return x.shift; }).length;
       lg.textContent='대조 완료 — '+r.length+'행 중 확인 필요 '+n+'건'+
-        (w?' · 배송요청 전 '+w+'건':'')+
+        (w?' · 출고 요청 전 '+w+'건':'')+
         (st?NLC_()+'발주 '+st+'건의 상태를 「출고」로 맞췄습니다.':'')+
-        (sh?NLC_()+'배송요청이 하루 밀려 적힌 '+sh+'건은 품목·수량이 같아 같은 건으로 봤습니다.':'')+
+        (sh?NLC_()+'출고 요청이 하루 밀려 적힌 '+sh+'건은 품목·수량이 같아 같은 건으로 봤습니다.':'')+
         (fz2?NLC_()+'비고의 덤(테스터·디피) '+fz2+'건은 빼고 맞췄습니다.':'')+
         (r.skipped?NLC_()+'온라인몰 직배송 발주 '+r.skipped+'건은 개인에게 나가 견줄 짝이 없어 제외했습니다.':'')+
         (r.offBook?NLC_()+'지점으로 못 알아본 수취인 출고 '+r.offBook+'묶음은 제외했습니다 (온라인몰 직배송 등).':'');
@@ -6430,7 +6468,7 @@ function buildRyVerify(){
   if(!rows.length){
     const e=document.createElement('div');e.className='empty-box';
     e.innerHTML=saved?'대조 결과가 없습니다 (발주 메일로 들어온 발주가 있어야 합니다).'
-      :'<b>「🔍 대조하기」</b>를 누르면 발주서와 배송요청시트를 맞춰봅니다.';
+      :'<b>「🔍 대조하기」</b>를 누르면 발주서와 출고 기록를 맞춰봅니다.';
     wrap.appendChild(e);return fp.panel;
   }
 
@@ -6445,7 +6483,7 @@ function buildRyVerify(){
   if(!shown.length){
     const e2=document.createElement('div');e2.className='empty-box';
     e2.style.cssText='border-color:var(--good);color:var(--good);font-weight:700;';
-    e2.textContent='✅ 발주서와 배송요청시트가 '+rows.length+'줄 모두 일치합니다.';
+    e2.textContent='✅ 발주서와 출고 기록가 '+rows.length+'줄 모두 일치합니다.';
     wrap.appendChild(e2);
     const cnt0={};rows.forEach(r=>{cnt0[r.st]=(cnt0[r.st]||0)+1;});
     const tot0=document.createElement('div');tot0.className='agg-total';
@@ -6469,7 +6507,7 @@ function buildRyVerify(){
       const tr=document.createElement('tr');
       if(r.st==='miss')tr.style.background='#FBEDE6';
       else if(r.st==='diff')tr.style.background='#FFF7E6';
-      /* 배송요청 전이 며칠째인지 — 오래 묵은 건은 회색에 묻히면 안 됩니다 */
+      /* 출고 요청 전이 며칠째인지 — 오래 묵은 건은 회색에 묻히면 안 됩니다 */
       let extra2='', old=false;
       if(r.st==='wait'&&r.date){
         const dd=Math.round((Date.now()-new Date(r.date+'T00:00:00').getTime())/86400000);
@@ -6567,7 +6605,7 @@ function buildRyVerify(){
     ot.textContent='🔗 지점으로 못 알아본 수취인 '+saved.offNames.length+'곳';
     ob.appendChild(ot);
     const od=document.createElement('div');od.className='hint';od.style.marginBottom='8px';
-    od.innerHTML='배송요청시트에 <b>담당자 이름</b>으로 찍힌 건입니다 (창고·온라인몰 담당자 등). '+
+    od.innerHTML='출고 기록에 <b>담당자 이름</b>으로 찍힌 건입니다 (창고·온라인몰 담당자 등). '+
       '어느 발주처인지 이어 두면 그때부터 대조에 들어옵니다.';
     ob.appendChild(od);
     const opts=(saved.ordStores||[]).slice().sort();
@@ -6699,7 +6737,7 @@ const RDB_LABEL={ok:'일치',diff:'계산서 금액 다름',noTax:'계산서에 
   rawOnly:'명세서 미발행·미업로드'};
 /* 어긋난 건을 어떻게 고쳐야 하는지 한 줄로 알려줍니다 */
 const RDB_FIX={
-  noRaw:'레디영 매출 시트 「매출 rawdata」에 이 지점 행이 없습니다 → 배송요청시트 ③ 으로 반영하거나 직접 추가',
+  noRaw:'레디영 매출 시트 「매출 rawdata」에 이 지점 행이 없습니다 → 9월까지는 레디영 자동화 ③ 으로 반영 · 10월부터는 이카운트 방향이 정해질 때까지 비어 있습니다',
   rawDiff:'레디영 매출 시트 「매출 rawdata」 금액이 명세서와 다릅니다 → 수량·단가 확인',
   rawOnly:'거래명세서를 발행해 이 대시보드에 올려주세요 (그러면 약국 통합 매출에도 붙습니다)',
   diff:'세금계산서 금액이 명세서와 다릅니다 → 계산서 확인',
@@ -6729,7 +6767,7 @@ function buildReadyBranch(){
   nt.innerHTML='레디영은 <b>지점이 본사로 보내고 본사가 한 번에 입금</b>합니다. '+
     '그래서 <b>미수금은 지점별로 나누지 않고 「레디영」 하나로만</b> 답니다.<br>'+
     '이 표는 세 곳의 금액을 나란히 맞춰봅니다.<br>'+
-    '<b>rawdata</b> = 레디영 매출 시트(배송요청 승인분) · <b>명세서</b> = 여기 올린 거래명세서 · <b>계산서</b> = 세금계산서<br>'+
+    '<b>rawdata</b> = 레디영 매출 시트(9월까지 배송요청 승인분 · 10월부터 미연동) · <b>명세서</b> = 여기 올린 거래명세서 · <b>계산서</b> = 세금계산서<br>'+
     '기준은 <b>명세서</b>입니다 — 세금계산서·입금과 맞아야 하는 쪽입니다.';
   wrap.appendChild(nt);
 
@@ -6904,6 +6942,8 @@ function renderChannel(view){
     return;
   }
   if(meta.id==='aquamedi'){
+    try{ const ad=aquaAdoptStores_(); if(ad.made||ad.moved){ persistLib();
+      showToast('아쿠아메디 소속 약국 '+ad.made+'곳을 새로 만들고 발주 '+ad.moved+'건을 옮겼습니다'+(ad.names.length?' — '+ad.names.join(', '):'')); } }catch(e){}
     /* 약국별 건과 본사 직접 건이 한 줄로 섞여 헷갈렸습니다 — 갈라 둡니다 */
     const g1=groupBox(1,'💊 소속 약국',aquamediPharms().length+'곳 합산','setPriceCalc:grpAq1',true);
     g1.body.appendChild(entrySyncLink());
