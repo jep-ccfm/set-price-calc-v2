@@ -3626,8 +3626,8 @@ function arOf(pid,store){
     depMonths(pid,store||'').forEach(function(m){
       const sv=salesOf(pid,m,store||''); const d=sv-depSum(pid,m,store||'');
       if(!sv||d<=0) return;
-      let due=null; try{ due=b2bDue(m).pay; }catch(e){}
-      if(due&&new Date()<=due) soon+=d; else over+=d;
+      let due=null; try{ due=b2bDue(m,pid).pay; }catch(e){}
+      if(due&&!pastDue(due)) soon+=d; else over+=d;
     });
   }catch(e){}
   return {over:over,soon:soon,weekly:false};
@@ -3830,19 +3830,54 @@ function buildDeposits(id, opts){
 const B2B_TAX_DAY=5;      // 세금계산서 발행·전달 기한 (익월)
 const B2B_PAY_DAY=10;     // 입금 기한 (익월)
 const MALL_MIN_ORDER=100000;   // 자사몰 약사 전용관 최소주문금액 (일 10만원, 2026-09-04 확정)
-/* 주말이면 다음 영업일로 미룹니다 (공휴일은 별도 확인 필요) */
+/* 금융기관 휴무일 — 주말 말고도 공휴일·대체공휴일·근로자의 날(은행 휴무).
+   예전엔 주말만 건너뛰어 10/5(개천절 대체)·10/9(한글날)를 영업일로 셌습니다.
+   ※ 2027년은 음력 명절·대체공휴일을 미리 넣어 둔 것 — 정부 공식 발표로 다시 확인 */
+const KR_HOLIDAYS={
+  '2026-01-01':1,'2026-02-16':1,'2026-02-17':1,'2026-02-18':1,'2026-03-02':1,'2026-05-01':1,
+  '2026-05-05':1,'2026-05-25':1,'2026-06-03':1,'2026-08-17':1,'2026-09-24':1,'2026-09-25':1,
+  '2026-09-26':1,'2026-10-05':1,'2026-10-09':1,'2026-12-25':1,
+  '2027-01-01':1,'2027-02-05':1,'2027-02-08':1,'2027-03-01':1,'2027-05-05':1,'2027-05-13':1,
+  '2027-08-16':1,'2027-09-14':1,'2027-09-15':1,'2027-09-16':1,'2027-10-04':1,'2027-10-11':1,
+  '2027-12-27':1
+};
+function isBizDay(d){
+  const w=d.getDay(); if(w===0||w===6) return false;
+  const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  return !KR_HOLIDAYS[k];
+}
+/* 쉬는 날이면 다음 영업일로 */
 function bizDay(d){
   const x=new Date(d.getTime());
-  while(x.getDay()===0||x.getDay()===6)x.setDate(x.getDate()+1);
+  while(!isBizDay(x)) x.setDate(x.getDate()+1);
   return x;
+}
+/* 쉬는 날이면 이전 영업일로 — 자사몰 약사전용관 계약 제4조 ③ */
+function bizDayBefore(d){
+  const x=new Date(d.getTime());
+  while(!isBizDay(x)) x.setDate(x.getDate()-1);
+  return x;
+}
+/* 기한 당일은 아직 안 늦었습니다 — 그날이 지나야 경과 */
+function pastDue(due){
+  if(!due) return false;
+  const end=new Date(due.getTime()); end.setHours(0,0,0,0); end.setDate(end.getDate()+1);
+  return new Date()>=end;
 }
 /* 귀속월(YYYY-MM)의 발행·입금 기한 */
 /* 2026-08 분은 예외 — 새 플로우 합의 전이라 9/10까지 발행하기로 했습니다 */
 const B2B_TAX_EXCEPT={"2026-08":10};
-function b2bDue(mk){
+/* 입금 기한은 채널마다 계약이 다릅니다.
+     자사몰 약사전용관  익월 10일, 금융기관 영업일이 아니면 「그 이전」 영업일 (계약 제4조 ③)
+     레디영·아쿠아메디  익월 10일, 쉬는 날이면 다음 영업일 (계약에 규정 없음 · 9/4 재무회계팀 합의)
+   세금계산서 교부는 어느 채널이든 쉬는 날이면 다음 영업일 (자사몰 계약 제4조 ④ 와 같음) */
+function b2bDue(mk,ch){
   const y=parseInt(mk.slice(0,4),10), m=parseInt(mk.slice(5,7),10);
   const td=B2B_TAX_EXCEPT[mk]||B2B_TAX_DAY;
-  return {tax:bizDay(new Date(y,m,td)), pay:bizDay(new Date(y,m,B2B_PAY_DAY)), except:!!B2B_TAX_EXCEPT[mk]};
+  const payRaw=new Date(y,m,B2B_PAY_DAY);
+  return {tax:bizDay(new Date(y,m,td)),
+          pay:(ch==='pharmmall')?bizDayBefore(payRaw):bizDay(payRaw),
+          except:!!B2B_TAX_EXCEPT[mk]};
 }
 function dDayText(due){
   const t=new Date(); t.setHours(0,0,0,0);
@@ -3965,7 +4000,7 @@ function settlePeriodLabel_(f,t){ return f===t?mkLabel(f):mkLabel(f)+' ~ '+mkLab
 /* 한 거래처 = A4 한 장 */
 function settlePageHtml_(ch,c,f,t){
   const S=SETTLE_SUPPLIER, I=c.info, e=settleEsc_;
-  const due=b2bDue(t).pay;
+  const due=b2bDue(t,ch.id).pay;
   const acct=SETTLE_BANK[ch.acct]||{};
   const fm=function(v){ return fmt(v); };
   let rows='';
@@ -4171,14 +4206,16 @@ function buildCloseCheck(){
   hs.textContent='🗓 '+mkLabel(mk)+' 마감 체크  ·  명세서 '+doneDoc+'/4  ·  계산서 '+doneTax+'/'+need.length+'  ·  수금 '+donePay+'/'+need.length;
   h.appendChild(hs);wrap.appendChild(h);
   /* 재무회계팀 합의 기준을 화면에 박아둔다 — 매달 헷갈리는 지점 */
-  const due=b2bDue(mk);
+  const due=b2bDue(mk), dueM=b2bDue(mk,'pharmmall');
   const sch=document.createElement('div');sch.className='hint';sch.style.margin='-6px 0 10px';
-  const lateTax=(doneTax<need.length)&&(new Date()>due.tax);
-  const latePay=(donePay<need.length)&&(new Date()>due.pay);
-  sch.innerHTML='B2B 약국 채널 공통 기준 — <b>말일 마감 → '+B2B_TAX_DAY+'일 세금계산서 발행·전달 → '+B2B_PAY_DAY+'일 입금</b>'+
-    ' <span style="color:var(--ink-mute);">(연휴면 직후 첫 영업일)</span>'+(due.except?' <span style="color:var(--warn);">· 8월분은 예외로 10일까지</span>':'')+'<br>'+
+  const lateTax=(doneTax<need.length)&&pastDue(due.tax);
+  const latePay=(donePay<need.length)&&pastDue(due.pay);
+  sch.innerHTML='B2B 약국 채널 공통 기준 — <b>말일 마감 → '+B2B_TAX_DAY+'일 정산 통보·세금계산서 → '+B2B_PAY_DAY+'일 입금</b>'+
+    ' <span style="color:var(--ink-mute);">(공휴일 반영 · 입금은 쉬는 날이면 다음 영업일, <b>자사몰은 계약상 이전 영업일</b>)</span>'+
+    (due.except?' <span style="color:var(--warn);">· 8월분은 예외로 10일까지</span>':'')+'<br>'+
     '발행 기한 <b'+(lateTax?' style="color:var(--warn);"':'')+'>'+ymdText(due.tax)+' ('+dDayText(due.tax)+')</b>'+
-    ' · 입금 기한 <b'+(latePay?' style="color:var(--warn);"':'')+'>'+ymdText(due.pay)+' ('+dDayText(due.pay)+')</b>';
+    ' · 입금 기한 <b'+(latePay?' style="color:var(--warn);"':'')+'>'+ymdText(due.pay)+' ('+dDayText(due.pay)+')</b>'+
+    (ymdText(dueM.pay)!==ymdText(due.pay)?' · <span style="color:var(--ink-soft);">자사몰 '+ymdText(dueM.pay)+' ('+dDayText(dueM.pay)+')</span>':'');
   wrap.appendChild(sch);
 
   const t=document.createElement('table');t.className='led-table';
@@ -10590,7 +10627,7 @@ function renderHome(){
           s:(r.rows.filter(x=>x.diff!==0).map(x=>x.branch).join(', ')||'세부 확인 필요'),view,kind:'warn'});
       else if(!r.hasTax&&m<mk&&id!=='barofarm'){   // 바로팜은 수수료에만 계산서가 발행됨 (마감 체크와 동일 규칙)
         const dueT=b2bDue(m).tax;
-        const over=new Date()>dueT;
+        const over=pastDue(dueT);
         alerts.push({t:(over?'🔴 ':'📄 ')+label+' '+mkLabel(m)+' 세금계산서 미등록',
           s:'발행 기한 '+ymdText(dueT)+' ('+dDayText(dueT)+')'+(over?' — 기한이 지났습니다':''),
           view,kind:over?'warn':'info'});
@@ -10606,8 +10643,8 @@ function renderHome(){
       const sale=salesOf(id,m2), paid=depSum(id,m2), ar=sale-paid;
       if(ar<=0||!sale)return;
       const y=parseInt(m2.slice(0,4),10), mo=parseInt(m2.slice(5,7),10);
-      const due=b2bDue(m2).pay;
-      if(new Date()<=due)return;                     // 결제일 전이면 알리지 않음
+      const due=b2bDue(m2,id).pay;
+      if(!pastDue(due))return;                       // 결제일(당일 포함) 전이면 알리지 않음
       alerts.push({t:'🔴 '+label+' '+mkLabel(m2)+' 미수금 '+fmt(ar)+'원',
         s:'결제 기한 '+ymdText(due)+' 경과 — 입금 확인 필요',view,kind:'warn'});
     });
