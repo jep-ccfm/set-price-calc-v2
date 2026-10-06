@@ -3897,11 +3897,12 @@ function dDayText(due){
      바로팜      바로팜이 정산서를 직접 보내므로 뺍니다
    여러 달을 한 장에 묶을 수 있습니다 (8·9월 합산 청구 같은 경우).
    ============================================================ */
-/* 공급자 — 이카운트 거래명세서와 같은 내용. 은행명을 넣으면 입금 계좌 줄이 켜집니다. */
+/* 공급자 — 이카운트 거래명세서와 같은 내용.
+   입금 계좌: 3-6-2-3 자리(541-064749-04-0xx)는 IBK기업은행 계좌번호 형식입니다. */
 const SETTLE_SUPPLIER={name:'(주)고지식바이오', bizNo:'274-81-00503', ceo:'성주영, 서준석',
   addr:'서울특별시 강남구 선릉로 428, 9층 111호', tel:'1551-7430'};
-const SETTLE_BANK={'54106474904035':{bank:'',holder:'(주)고지식바이오'},
-                   '54106474904042':{bank:'',holder:'(주)고지식바이오'}};
+const SETTLE_BANK={'54106474904035':{bank:'IBK기업은행',holder:'(주)고지식바이오',disp:'541-064749-04-035'},
+                   '54106474904042':{bank:'IBK기업은행',holder:'(주)고지식바이오',disp:'541-064749-04-042'}};
 function settleChannels(){
   return [
     {id:'ready',     name:'레디영',            pids:['ready'],     one:'(주)레디영', acct:'54106474904035'},
@@ -4032,7 +4033,7 @@ function settlePageHtml_(ch,c,f,t){
       '<tbody>'+rows+'</tbody>'+
       '<tfoot><tr><td colspan="2">합 계</td><td>'+fm(c.t.qty)+'</td><td></td><td>'+fm(c.t.supply)+'</td><td>'+fm(c.t.vat)+'</td><td>'+fm(c.t.total)+'</td></tr></tfoot></table>'+
     '<div class="pay">입금 기한 <b>'+ymdText(due)+'</b>'+
-      (acct.bank?' · 입금 계좌 <b>'+e(acct.bank)+' '+e(ch.acct)+'</b> (예금주 '+e(acct.holder)+')':'')+'</div>'+
+      (acct.bank?'<br>입금 계좌 <b>'+e(acct.bank)+' '+e(acct.disp||ch.acct)+'</b> · 예금주 '+e(acct.holder):'')+'</div>'+
     '<div class="note">단가는 부가세 별도 금액입니다. 문의 '+e(S.tel)+'</div>'+
   '</section>';
 }
@@ -4057,7 +4058,7 @@ const SETTLE_RULES=[
   ['.it tr.sub td','background:#f6f6f6;font-weight:700'],
   ['.it tfoot td','font-weight:800;background:#eee'],
   ['.it tfoot td:first-child','text-align:center'],
-  ['.pay','margin-top:12px;font-size:12.5px'],
+  ['.pay','margin-top:12px;font-size:12.5px;line-height:1.8;padding:8px 10px;border:1px solid #bbb;background:#fafafa'],
   ['.note','margin-top:6px;font-size:11px;color:#555']
 ];
 function settleCss_(pfx){
@@ -4241,7 +4242,7 @@ function settleMailText_(ch,c,f,t){
     '■ 정산 기간 : '+per,
     '■ 청구 금액 : '+fmt(c.t.total)+'원 (부가세 포함)',
     '■ 입금 기한 : '+settleKDate_(due));
-  if(acct.bank) lines.push('■ 입금 계좌 : '+acct.bank+' '+ch.acct+' (예금주 '+acct.holder+')');
+  if(acct.bank) lines.push('■ 입금 계좌 : '+acct.bank+' '+(acct.disp||ch.acct)+' (예금주 '+acct.holder+')');
   lines.push('',
     '첨부한 정산서 확인 부탁드리며, 세금계산서는 월합계로 별도 발행해 드리겠습니다.',
     '내용이 다르거나 궁금하신 점이 있으면 이 메일에 회신해 주시거나 고객센터('+SETTLE_SUPPLIER.tel+')로 연락 주세요.',
