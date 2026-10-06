@@ -4032,29 +4032,143 @@ function settlePageHtml_(ch,c,f,t){
     '<div class="note">단가는 부가세 별도 금액입니다. 문의 '+e(S.tel)+'</div>'+
   '</section>';
 }
+/* 정산서 모양 — 새 창 보기와 PDF 만들기가 같은 규칙을 씁니다.
+   PDF 는 이 페이지 안에서 그리므로, 규칙마다 앞머리(.stld)를 붙여 대시보드 화면에 새지 않게 합니다. */
+const SETTLE_RULES=[
+  ['.pg','width:210mm;min-height:297mm;margin:12px auto;background:#fff;padding:14mm 13mm;page-break-after:always;box-sizing:border-box;font-family:"Malgun Gothic",sans-serif;color:#111'],
+  ['.pg *','box-sizing:border-box'],
+  ['h1','text-align:center;letter-spacing:.6em;font-size:24px;margin:0 0 4px;color:#111'],
+  ['.per','text-align:center;font-size:13px;color:#444;margin-bottom:14px'],
+  ['.two','display:grid;grid-template-columns:1fr 1fr;gap:8px'],
+  ['table','border-collapse:collapse;width:100%'],
+  ['.box th,.box td','border:1px solid #555;padding:4px 6px;font-size:11.5px;text-align:left;color:#111'],
+  ['.box th','background:#f3f3f3;width:62px;white-space:nowrap'],
+  ['.box th.v','width:22px;text-align:center;line-height:1.25'],
+  ['.amt','margin:12px 0 8px;padding:8px 10px;border:1.5px solid #111;font-size:13.5px'],
+  ['.it th,.it td','border:1px solid #777;padding:4px 6px;font-size:11.5px;text-align:right;white-space:nowrap;color:#111'],
+  ['.it th','background:#f3f3f3;text-align:center'],
+  ['.it td.l','text-align:left;white-space:normal'],
+  ['.it td:first-child','text-align:center'],
+  ['.it tr.sec td','background:#fafafa;font-weight:700;text-align:left'],
+  ['.it tr.sub td','background:#f6f6f6;font-weight:700'],
+  ['.it tfoot td','font-weight:800;background:#eee'],
+  ['.it tfoot td:first-child','text-align:center'],
+  ['.pay','margin-top:12px;font-size:12.5px'],
+  ['.note','margin-top:6px;font-size:11px;color:#555']
+];
+function settleCss_(pfx){
+  return SETTLE_RULES.map(function(r){
+    return r[0].split(',').map(function(x){ return pfx+x.trim(); }).join(',')+'{'+r[1]+'}';
+  }).join('');
+}
+/* 「9월」 · 「8~9월」 · 해를 넘기면 「26년12월~27년1월」 */
+function settlePerShort_(f,t){
+  const m=function(mk){ return parseInt(mk.slice(5,7),10)+'월'; };
+  if(f===t) return m(f);
+  if(f.slice(0,4)===t.slice(0,4)) return parseInt(f.slice(5,7),10)+'~'+m(t);
+  return mkLabel(f).replace(/\s/g,'')+'~'+mkLabel(t).replace(/\s/g,'');
+}
+function settleTag_(ch){ return {ready:'레디영',pharmmall:'약사전용관',aquamedi:'아쿠아메디'}[ch.id]||ch.name; }
+/* [약사전용관] 마린약국 9월 정산서 */
+function settleFileName_(ch,c,f,t){
+  const nm=String(c.name||'').replace(/[\\/:*?"<>|]/g,'').trim();
+  return '['+settleTag_(ch)+'] '+nm+' '+settlePerShort_(f,t)+' 정산서';
+}
+/* 화면에서 확인용 — 새 창 */
 function settleOpen(ch,custs,f,t){
   if(!custs.length){ showToast('정산서를 만들 거래가 없습니다'); return; }
   const w=window.open('','_blank');
-  if(!w){ showToast('팝업이 막혀 있습니다 — 브라우저에서 이 사이트 팝업을 허용해주세요'); return; }
-  const css='*{box-sizing:border-box}body{margin:0;font-family:"Malgun Gothic",sans-serif;color:#111;background:#eee}'+
-    '.bar{position:sticky;top:0;background:#1B2A4A;color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;font-size:13px}'+
+  if(!w){ showToast('팝업이 막혀 있습니다 — 「⬇ PDF」 로 받아 보세요'); return; }
+  const css='body{margin:0;background:#eee}'+
+    '.bar{position:sticky;top:0;background:#1B2A4A;color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;font:13px "Malgun Gothic",sans-serif}'+
     '.bar button{font:inherit;padding:6px 14px;border:0;border-radius:6px;background:#fff;color:#1B2A4A;font-weight:700;cursor:pointer}'+
-    '.pg{width:210mm;min-height:297mm;margin:12px auto;background:#fff;padding:14mm 13mm;page-break-after:always}'+
-    'h1{text-align:center;letter-spacing:.6em;font-size:24px;margin:0 0 4px}.per{text-align:center;font-size:13px;color:#444;margin-bottom:14px}'+
-    '.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}table{border-collapse:collapse;width:100%}'+
-    '.box th,.box td{border:1px solid #555;padding:4px 6px;font-size:11.5px;text-align:left}.box th{background:#f3f3f3;width:62px;white-space:nowrap}.box th.v{width:22px;text-align:center;line-height:1.25}'+
-    '.amt{margin:12px 0 8px;padding:8px 10px;border:1.5px solid #111;font-size:13.5px}'+
-    '.it th,.it td{border:1px solid #777;padding:4px 6px;font-size:11.5px;text-align:right;white-space:nowrap}.it th{background:#f3f3f3;text-align:center}'+
-    '.it td.l{text-align:left;white-space:normal}.it td:first-child{text-align:center}.it tr.sec td{background:#fafafa;font-weight:700;text-align:left}'+
-    '.it tr.sub td{background:#f6f6f6;font-weight:700}.it tfoot td{font-weight:800;background:#eee}.it tfoot td:first-child{text-align:center}'+
-    '.pay{margin-top:12px;font-size:12.5px}.note{margin-top:6px;font-size:11px;color:#555}'+
-    '@media print{body{background:#fff}.bar{display:none}.pg{margin:0;box-shadow:none;width:auto;min-height:auto}@page{size:A4;margin:10mm}}';
+    settleCss_('')+
+    '@media print{body{background:#fff}.bar{display:none}.pg{margin:0;width:auto;min-height:auto}@page{size:A4;margin:10mm}}';
   const pages=custs.map(function(c){ return settlePageHtml_(ch,c,f,t); }).join('');
+  const title=custs.length===1?settleFileName_(ch,custs[0],f,t):('['+settleTag_(ch)+'] '+settlePerShort_(f,t)+' 정산서');
   w.document.open();
-  w.document.write('<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>'+settleEsc_(ch.name)+' 정산서 '+settleEsc_(settlePeriodLabel_(f,t))+'</title>'+
-    '<style>'+css+'</style></head><body><div class="bar"><b>'+settleEsc_(ch.name)+' 정산서</b> · '+custs.length+'장 · '+
-    settleEsc_(settlePeriodLabel_(f,t))+'<span style="flex:1"></span><button onclick="window.print()">인쇄 / PDF 저장</button></div>'+pages+'</body></html>');
+  w.document.write('<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>'+settleEsc_(title)+'</title>'+
+    '<style>'+css+'</style></head><body><div class="bar"><b>'+settleEsc_(title)+'</b> · '+custs.length+'장'+
+    '<span style="flex:1"></span><button onclick="window.print()">인쇄 / PDF 저장</button></div>'+pages+'</body></html>');
   w.document.close();
+}
+/* PDF 만들기에 쓰는 도구는 받을 때만 불러옵니다 (평소 화면은 가볍게) */
+function settleLoadLibs_(){
+  const need=[];
+  if(!window.html2canvas) need.push('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+  if(!(window.jspdf&&window.jspdf.jsPDF)) need.push('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  if(!window.JSZip) need.push('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+  return need.reduce(function(pr,u){
+    return pr.then(function(){ return new Promise(function(ok,no){
+      const sc=document.createElement('script'); sc.src=u; sc.onload=ok;
+      sc.onerror=function(){ no(new Error('PDF 도구를 불러오지 못했습니다 — 인터넷 연결을 확인해주세요')); };
+      document.head.appendChild(sc);
+    }); });
+  },Promise.resolve());
+}
+/* 거래처 한 곳 → PDF. 길면 여러 장으로 나누되, 표 줄 중간에서 자르지 않습니다. */
+async function settlePdfBlob_(ch,c,f,t){
+  const host=document.createElement('div');
+  host.className='stld';
+  host.style.cssText='position:fixed;left:-12000px;top:0;width:794px;background:#fff;z-index:-1;';
+  host.innerHTML='<style>'+settleCss_('.stld ')+'</style>'+settlePageHtml_(ch,c,f,t);
+  document.body.appendChild(host);
+  try{
+    const pg=host.querySelector('.pg');
+    pg.style.margin='0'; pg.style.minHeight='0'; pg.style.width='794px';
+    const SC=2;
+    const cv=await html2canvas(pg,{scale:SC,backgroundColor:'#ffffff',logging:false});
+    const W=cv.width, k=210/W, pageH=Math.floor(297/k), gap=Math.round(10/k);
+    const top0=pg.getBoundingClientRect().top;
+    const cuts=[].slice.call(pg.querySelectorAll('tr,.amt,.pay,.note,.two,.per'))
+      .map(function(e){ return Math.round((e.getBoundingClientRect().bottom-top0)*SC); })
+      .sort(function(a,b){ return a-b; });
+    const pdf=new window.jspdf.jsPDF({unit:'mm',format:'a4',orientation:'portrait',compress:true});
+    let y=0, first=true;
+    while(y<cv.height-2){
+      const usable=first?pageH:pageH-gap;
+      let end=Math.min(y+usable,cv.height);
+      if(end<cv.height){
+        const ok=cuts.filter(function(v){ return v>y+60&&v<=end; });
+        if(ok.length) end=ok[ok.length-1];
+      }
+      const sl=document.createElement('canvas'); sl.width=W; sl.height=end-y;
+      sl.getContext('2d').drawImage(cv,0,y,W,end-y,0,0,W,end-y);
+      if(!first) pdf.addPage();
+      pdf.addImage(sl.toDataURL('image/jpeg',0.9),'JPEG',0,first?0:10,210,(end-y)*k);
+      y=end; first=false;
+    }
+    return pdf.output('blob');
+  }finally{ host.remove(); }
+}
+function settleSave_(blob,name){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },3000);
+}
+/* 한 곳이면 PDF 한 장, 여러 곳이면 ZIP 하나에 약국별 PDF */
+async function settleDownload(ch,custs,f,t,btn){
+  if(!custs.length){ showToast('정산서를 만들 거래가 없습니다'); return; }
+  const label=btn?btn.textContent:'';
+  try{
+    if(btn){ btn.disabled=true; btn.textContent='PDF 만드는 중…'; }
+    await settleLoadLibs_();
+    if(custs.length===1){
+      settleSave_(await settlePdfBlob_(ch,custs[0],f,t), settleFileName_(ch,custs[0],f,t)+'.pdf');
+      showToast('「'+settleFileName_(ch,custs[0],f,t)+'.pdf」 를 받았습니다');
+    } else {
+      const zip=new window.JSZip();
+      for(let i=0;i<custs.length;i++){
+        if(btn) btn.textContent='PDF 만드는 중… '+(i+1)+'/'+custs.length;
+        zip.file(settleFileName_(ch,custs[i],f,t)+'.pdf', await settlePdfBlob_(ch,custs[i],f,t));
+      }
+      const zn='['+settleTag_(ch)+'] '+settlePerShort_(f,t)+' 정산서 ('+custs.length+'곳).zip';
+      settleSave_(await zip.generateAsync({type:'blob'}), zn);
+      showToast(custs.length+'곳 정산서를 「'+zn+'」 로 받았습니다');
+    }
+  }catch(e){ showToast((e&&e.message)||'PDF 를 만들지 못했습니다'); console.error(e); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=label; } }
 }
 /* 채널 엑셀 — 요약 시트 + 거래처마다 한 시트 */
 function settleXlsx(ch,custs,f,t){
@@ -4076,7 +4190,7 @@ function settleXlsx(ch,custs,f,t){
     while(used[nm]){ nm=nm.slice(0,26)+'_'+(k++); } used[nm]=1;
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(a),nm);
   });
-  XLSX.writeFile(wb,ch.name.replace(/\s+/g,'')+'_정산서_'+(f===t?f:f+'~'+t)+'.xlsx');
+  XLSX.writeFile(wb,'['+settleTag_(ch)+'] '+settlePerShort_(f,t)+' 정산서.xlsx');
 }
 /* 홈 — 월 정산서 */
 function buildSettlePanel(){
@@ -4119,11 +4233,15 @@ function buildSettlePanel(){
       hd.innerHTML='<b style="font-size:14px;">'+settleEsc_(ch.name)+'</b><span style="color:var(--ink-soft);font-size:12.5px;">'+what+'</span>'+
         '<span style="margin-left:auto;font-weight:800;font-variant-numeric:tabular-nums;">'+(cs.length?fmt(D.total)+'원':'')+'</span>';
       if(cs.length){
-        const bp=document.createElement('button');bp.className='icon-btn';bp.textContent=ch.one?'🖨 보기·인쇄':'🖨 전체 인쇄 ('+cs.length+'장)';
+        const bd=document.createElement('button');bd.className='icon-btn';
+        bd.textContent=ch.one?'⬇ PDF':'⬇ PDF 일괄 ('+cs.length+'곳 · ZIP)';
+        bd.title='「['+settleTag_(ch)+'] 거래처 '+settlePerShort_(f,t)+' 정산서.pdf」 로 받습니다';
+        bd.addEventListener('click',function(){ settleDownload(ch,cs,f,t,bd); });
+        const bp=document.createElement('button');bp.className='icon-btn';bp.textContent='🖨 보기';
         bp.addEventListener('click',function(){ settleOpen(ch,cs,f,t); });
         const bx=document.createElement('button');bx.className='icon-btn';bx.textContent='⬇ 엑셀';
         bx.addEventListener('click',function(){ settleXlsx(ch,cs,f,t); });
-        hd.append(bp,bx);
+        hd.append(bd,bp,bx);
       }
       box.appendChild(hd);
       if(!cs.length){
@@ -4135,16 +4253,20 @@ function buildSettlePanel(){
       } else if(!ch.one){
         const tb=document.createElement('table');tb.className='led-table';tb.style.marginTop='8px';
         tb.innerHTML='<thead><tr><th>거래처</th><th style="text-align:right;">건수</th><th style="text-align:right;">수량</th>'+
-          '<th style="text-align:right;">합계</th><th style="width:70px;"></th></tr></thead>';
+          '<th style="text-align:right;">합계</th><th style="width:120px;"></th></tr></thead>';
         const tbd=document.createElement('tbody');
         cs.forEach(function(c){
           const tr=document.createElement('tr');
           tr.innerHTML='<td><b>'+settleEsc_(c.name)+'</b>'+(c.info.bizNo?'':' <span style="color:var(--warn);font-size:11.5px;">사업자번호 없음</span>')+'</td>'+
             '<td class="num-cell">'+c.docs+'</td><td class="num-cell">'+fmt(c.t.qty)+'</td><td class="num-cell">'+fmt(c.t.total)+'</td>';
           const td=document.createElement('td');
-          const b1=document.createElement('button');b1.className='icon-btn';b1.textContent='보기';
+          td.style.whiteSpace='nowrap';
+          const b0=document.createElement('button');b0.className='icon-btn';b0.textContent='⬇ PDF';
+          b0.title=settleFileName_(ch,c,f,t)+'.pdf';
+          b0.addEventListener('click',function(){ settleDownload(ch,[c],f,t,b0); });
+          const b1=document.createElement('button');b1.className='icon-btn';b1.textContent='보기';b1.style.marginLeft='4px';
           b1.addEventListener('click',function(){ settleOpen(ch,[c],f,t); });
-          td.appendChild(b1);tr.appendChild(td);tbd.appendChild(tr);
+          td.append(b0,b1);tr.appendChild(td);tbd.appendChild(tr);
         });
         tb.appendChild(tbd);
         const sc=document.createElement('div');sc.style.cssText='overflow-x:auto;';sc.appendChild(tb);box.appendChild(sc);
