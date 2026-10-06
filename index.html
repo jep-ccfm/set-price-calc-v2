@@ -4683,14 +4683,175 @@ function entryAquaPid_(recv){
   if(/압구정|생생|온누리/.test(k)) return 'apgujeong';
   return 'aquamedi';
 }
-async function fetchEntryRows(){
-  const url='https://docs.google.com/spreadsheets/d/'+ENTRY_SHEET_ID+
-    '/gviz/tq?tqx=out:csv&sheet='+encodeURIComponent(ENTRY_TAB)+'&cb='+Date.now();
-  const r=await fetch(url);
-  if(!r.ok) throw new Error('배송요청시트를 읽지 못했습니다 ('+r.status+') — 공유 설정을 확인하세요');
-  const rows=parseCSV(await r.text());
-  if(rows.length<2) throw new Error('시트가 비어 있습니다');
-  const head=rows[0].map(h=>String(h||'').trim());
+/* ============================================================
+   사방넷 출고 (2026-10 ~)
+   9월까지는 CS 가 배송요청시트에 손으로 적었습니다. 10월부터 B2B 출고는
+   사방넷 풀필먼트에서 직접 입력하고 배송요청시트는 더 쓰지 않습니다.
+   사방넷 「출고조회」 엑셀을 홈에 올리면 배송요청시트 한 줄과 같은 꼴로
+   바꿔 팀 공용 저장(Supabase 'sbOut')에 담아 둡니다.
+   fetchEntryRows() 가 배송요청시트(9월까지) 뒤에 이걸 이어 붙여 돌려주므로
+   발주 가져오기 · 레디영 배송요청 반영 확인 · 자사몰 출고 상태는
+   고칠 것 없이 10월분을 그대로 봅니다.
+   ============================================================ */
+const SBO_ID='sbOut';
+/* 사방넷 「발주 타입」 → 배송요청시트 관리메모1. 발주 분류 규칙이 이 글자로 채널을 가릅니다. */
+const SBO_CHANNELS=[
+  {re:/레디영/,          memo:'약국 공급'},
+  {re:/바로팜/,          memo:'바로팜 약국 판매'},
+  {re:/자사몰/,          memo:'자사몰 약국 판매'},
+  {re:/아쿠아|개인약국/,  memo:'개인약국 판매'}
+];
+/* 배송요청시트를 못 읽어도(나중에 보관 처리 등) 사방넷 줄은 돌아가야 합니다 */
+const ENTRY_HEAD_DEFAULT=['날짜','수취인명','수취인 주소','수취인 전화번호','발주일자','관리메모1',
+  '브랜드','배송메시지','출고상품명','수량','택배사','송장번호','비고'];
+async function sboLoad(){
+  const g=await sbGet(SBO_ID);
+  const pl=(g.row&&g.row.payload)||{};
+  return {rows:Array.isArray(pl.rows)?pl.rows:[], files:Array.isArray(pl.files)?pl.files:[], at:pl.at||''};
+}
+function sboDigits_(v){ return String(v==null?'':v).replace(/[^0-9]/g,''); }
+/* 배송요청시트는 010-8050-3151 꼴입니다. 숫자로 들어오면 앞 0 도 떨어져 있습니다. */
+function sboTel_(v){
+  let d=sboDigits_(v);
+  if(!d) return '';
+  if(d.charAt(0)!=='0'&&!/^1[568][0-9]{6}$/.test(d)&&d.length>=8&&d.length<=10) d='0'+d;
+  if(/^02/.test(d)) return d.length===9?d.replace(/^(02)(\d{3})(\d{4})$/,'$1-$2-$3'):d.replace(/^(02)(\d{4})(\d{4})$/,'$1-$2-$3');
+  if(d.length===11) return d.replace(/^(\d{3})(\d{4})(\d{4})$/,'$1-$2-$3');
+  if(d.length===10) return d.replace(/^(\d{3})(\d{3})(\d{4})$/,'$1-$2-$3');
+  return d;
+}
+/* 「루비알엔 피코샷 크림 55ml」 → 「루비알엔 피코샷 크림」 — 용량을 떼고 우리 품목명으로 */
+function sboItem_(name){
+  const full=String(name||'').trim().replace(/포어\s+시그널/g,'포어시그널');
+  const cut=full.replace(/\s*\d+(?:\.\d+)?\s*(?:ml|g|매입|매|ea|개입)\s*$/i,'').trim()||full;
+  const nm=itemLabel(cut);
+  const known=knownItemNames().some(function(x){ return itemKey(x)===itemKey(nm); });
+  return {name:nm, known:known};
+}
+function sboCell_(v){
+  if(v instanceof Date&&!isNaN(v)){
+    const z=function(x){ return String(x).padStart(2,'0'); };
+    return v.getFullYear()+'-'+z(v.getMonth()+1)+'-'+z(v.getDate())+' '+z(v.getHours())+':'+z(v.getMinutes());
+  }
+  return String(v==null?'':v).trim();
+}
+/* 엑셀 한 장 → 머리글 이름으로 읽은 줄들 */
+async function sboReadFile_(file){
+  const wb=XLSX.read(new Uint8Array(await file.arrayBuffer()),{type:'array',cellDates:true});
+  const a=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:'',raw:true});
+  if(a.length<2) throw new Error(file.name+' — 내용이 없습니다');
+  const head=a[0].map(sboCell_);
+  ['발주 타입','진행상태','상품코드','출고상품명','수량','받는분 이름','오더코드'].forEach(function(k){
+    if(head.indexOf(k)<0) throw new Error(file.name+' — 「'+k+'」 칸이 없습니다. 사방넷 「출고조회」 엑셀이 맞는지 확인해주세요.');
+  });
+  return a.slice(1).map(function(r){ const o={}; head.forEach(function(h,i){ if(h) o[h]=sboCell_(r[i]); }); return o; });
+}
+/* 올린 줄을 담아 둔 줄에 합칩니다 (순수 계산 — 저장은 따로)
+     · B2B 발주타입만 · 출고취소는 안 넣고, 전에 출고요청으로 담았던 줄은 지움
+     · 출고요청은 송장 없이 담았다가 출고완료로 오면 송장을 채움
+     · 9월까지 배송요청시트에 사람이 적은 줄과 같은 송장+품목이면 건너뜀
+       (9/29~10/1 은 두 쪽에 다 있고, 시트 쪽은 이미 이카운트에 들어갔습니다)
+     · 「날짜」는 출고희망일로 고정 — 출고완료일로 바꾸면 발주 가져오기가
+       같은 건을 다른 날 발주로 한 번 더 만듭니다 */
+function sboMerge(store,lines,oldInv){
+  const rows=store.rows.map(function(x){ return Object.assign({},x); });
+  const at={}; rows.forEach(function(x,i){ at[x.k]=i; });
+  const st={add:0,upd:0,del:0,dup:0,cancel:0,notB2B:0,same:0}, warn=[], seen={}, gone={};
+  const w=function(t){ if(!seen[t]){ seen[t]=1; warn.push(t); } };
+  lines.forEach(function(L){
+    if(!L['오더코드']&&!L['상품코드']) return;
+    const type=L['발주 타입']||'';
+    if(!/B2B/i.test(type)){ st.notB2B++; return; }
+    const k=L['오더코드']+'|'+L['상품코드'];
+    const who=String(L['받는분 이름']||L['주문자 이름']||'').trim();
+    if(/취소/.test(L['진행상태']||'')){
+      st.cancel++;
+      if((k in at)&&!gone[k]){ gone[k]=1; st.del++; }
+      return;
+    }
+    const it=sboItem_(L['출고상품명']);
+    if(!it.known) w('「'+L['출고상품명']+'」('+L['상품코드']+') — 품목표에서 못 찾았습니다');
+    const ch=SBO_CHANNELS.filter(function(c){ return c.re.test(type); })[0];
+    if(!ch) w('발주타입 「'+type+'」 을 어느 채널로 볼지 모릅니다');
+    const tel=L['전화번호1']||L['전화번호2']||'';
+    const tl=sboDigits_(tel).length;
+    if(tel&&(tl<9||tl>11)) w(who+' — 전화번호 「'+tel+'」 자릿수가 이상합니다 (사방넷 입력 확인)');
+    const done=/완료/.test(L['진행상태']||'');
+    const rec={k:k,
+      d:entryDate_(L['출고희망일'])||entryDate_(L['발주일자']), od:entryDate_(L['발주일자']),
+      fin:done?entryDate_(L['출고완료일']):'', s:done?'출고완료':(L['진행상태']||''),
+      r:who, a:L['주소(전체)']||'', t:sboTel_(tel), ty:type, m:ch?ch.memo:type,
+      i:it.name, ic:L['상품코드']||'', q:Number(sboDigits_(L['수량']))||0,
+      cr:L['택배사']||'', v:sboDigits_(L['송장번호']), msg:L['배송메시지']||'',
+      b:['관리메모1','관리메모2','관리메모3','관리메모4','관리메모5']
+          .map(function(x){ return L[x]; }).filter(Boolean).join(' · ')};
+    if(k in at){
+      if(gone[k]){ delete gone[k]; st.del--; }
+      const old=rows[at[k]];
+      if(old.v!==rec.v||old.s!==rec.s||old.fin!==rec.fin){ rows[at[k]]=Object.assign({},old,rec); st.upd++; }
+      else st.same++;
+      return;
+    }
+    if(rec.v&&oldInv[rec.v+'|'+itemKey(it.name)]){ st.dup++; return; }
+    at[k]=rows.length; rows.push(rec); st.add++;
+  });
+  if(st.del) w('사방넷에서 취소된 출고 '+st.del+'줄을 지웠습니다 — 이미 발주로 등록됐다면 발주 관리에서 확인하세요');
+  return {rows:rows.filter(function(x){ return !gone[x.k]; }), stat:st, warn:warn};
+}
+/* 홈에서 엑셀을 올리면 — 읽고, 합치고, 저장 */
+async function sboUpload(files,logEl){
+  if(!canEdit()){ showToast('보기 전용입니다 — 로그인한 뒤 올려주세요'); return false; }
+  if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return false; }
+  const arr=[].slice.call(files||[]).filter(function(f){ return /\.(xlsx|xls)$/i.test(f.name); });
+  if(!arr.length){ showToast('엑셀(.xlsx) 파일이 없습니다'); return false; }
+  logEl.classList.add('show'); logEl.textContent='사방넷 엑셀을 읽는 중…';
+  let lines=[];
+  for(const f of arr){
+    try{ lines=lines.concat(await sboReadFile_(f)); }
+    catch(e){ logEl.textContent='✕ '+e.message; showToast(e.message); return false; }
+  }
+  /* 9월까지 배송요청시트에 적힌 송장+품목 — 겹치는 줄을 거르는 데 씁니다 */
+  const oldInv={};
+  try{
+    const g=await fetchEntryRows({sheetOnly:true});
+    g.rows.forEach(function(r){
+      const v=sboDigits_(r[g.c.inv]); if(!v) return;
+      const m=matchItem(r[g.c.item]);
+      oldInv[v+'|'+itemKey(m?m.name:r[g.c.item])]=1;
+    });
+  }catch(e){}
+  const store=await sboLoad();
+  const res=sboMerge(store,lines,oldInv);
+  const s=res.stat;
+  if(s.add||s.upd||s.del){
+    const files2=store.files.concat(arr.map(function(f){ return {name:f.name,at:new Date().toISOString()}; })).slice(-30);
+    const ok=await sbUpsert(SBO_ID,{rows:res.rows,files:files2,at:new Date().toISOString()});
+    if(ok!==true){ logEl.textContent='✕ 저장하지 못했습니다 — 다시 로그인한 뒤 올려주세요'; showToast('저장 실패'); return false; }
+  }
+  const out=['사방넷 '+lines.length+'줄 읽음 → 담아 둔 출고 '+res.rows.length+'줄',
+    '   새로 담음 '+s.add+' · 송장 채움 '+s.upd+(s.del?' · 취소로 지움 '+s.del:''),
+    '   9월 배송요청시트와 겹침 '+s.dup+' · 출고취소 '+s.cancel+
+      (s.same?' · 이미 담김 '+s.same:'')+(s.notB2B?' · B2B 아님 '+s.notB2B:'')];
+  if(res.warn.length){ out.push('','⚠ 확인 필요'); res.warn.slice(0,12).forEach(function(x){ out.push('   · '+x); }); }
+  logEl.textContent=out.join('\n');
+  showToast('사방넷 출고 — 새로 '+s.add+' · 송장 '+s.upd);
+  return true;
+}
+async function fetchEntryRows(opts){
+  opts=opts||{};
+  let rows=[], head=ENTRY_HEAD_DEFAULT.slice(), sheetErr='';
+  try{
+    const url='https://docs.google.com/spreadsheets/d/'+ENTRY_SHEET_ID+
+      '/gviz/tq?tqx=out:csv&sheet='+encodeURIComponent(ENTRY_TAB)+'&cb='+Date.now();
+    const r=await fetch(url);
+    if(!r.ok) throw new Error('배송요청시트를 읽지 못했습니다 ('+r.status+') — 공유 설정을 확인하세요');
+    rows=parseCSV(await r.text());
+    if(rows.length<2) throw new Error('배송요청시트가 비어 있습니다');
+    head=rows[0].map(h=>String(h||'').trim());
+  }catch(e){
+    if(opts.sheetOnly) throw e;
+    sheetErr=e.message; rows=[head];
+  }
   const ix=n=>head.indexOf(n);
   const c={date:ix('날짜'),recv:ix('수취인명'),addr:ix('수취인 주소'),tel:ix('수취인 전화번호'),
            odate:ix('발주일자'),memo:ix('관리메모1'),item:ix('출고상품명'),qty:ix('수량'),
@@ -4699,7 +4860,23 @@ async function fetchEntryRows(){
            bigo:ix('비고'),msg:ix('배송메시지')};
   if(c.recv<0||c.memo<0||c.item<0)
     throw new Error('시트 양식이 다릅니다 (수취인명·관리메모1·출고상품명 없음)');
-  return {rows:rows.slice(1),c:c};
+  const out=rows.slice(1);
+  if(!opts.sheetOnly){
+    /* 10월부터는 사방넷 출고가 같은 칸에 들어옵니다 */
+    let so={rows:[]};
+    try{ so=await sboLoad(); }catch(e){}
+    const cc=ix('택배사');
+    so.rows.forEach(function(x){
+      const a=new Array(head.length).fill('');
+      const put=function(i,v){ if(i>=0) a[i]=v; };
+      put(c.date,x.d); put(c.recv,x.r); put(c.addr,x.a); put(c.tel,x.t); put(c.odate,x.od);
+      put(c.memo,x.m); put(c.item,x.i); put(c.qty,String(x.q)); put(c.inv,x.v);
+      put(c.bigo,x.b); put(c.msg,x.msg); put(cc,x.cr);
+      out.push(a);
+    });
+    if(sheetErr&&!so.rows.length) throw new Error(sheetErr);
+  }
+  return {rows:out,c:c};
 }
 /* 'YYYY. M. D' / 'YYYY.MM.DD' / 'YYYY-MM-DD' 를 모두 받습니다 */
 function entryDate_(v){
@@ -4766,7 +4943,7 @@ function mallStoreName_(recv){
   return canonStore(hit||String(recv||'').trim());
 }
 async function importEntryOrders(logEl,onDone){
-  if(logEl){logEl.classList.add('show');logEl.textContent='배송요청시트를 읽는 중…';}
+  if(logEl){logEl.classList.add('show');logEl.textContent='배송요청시트 · 사방넷 출고를 읽는 중…';}
   let got;
   try{ got=await fetchEntryRows(); }
   catch(e){ if(logEl)logEl.textContent='✕ '+e.message; showToast(e.message); return; }
@@ -4855,18 +5032,46 @@ async function importEntryOrders(logEl,onDone){
   if(onDone) onDone();
 }
 function buildEntrySync(){
-  const fp=foldPanel('🚚 배송요청시트에서 발주 가져오기',
-    '<span style="color:var(--ink-mute);font-weight:600;">관리메모1 로 약국 건만</span>',
+  const fp=foldPanel('🚚 출고 자료 → 발주 가져오기',
+    '<span class="sbo-sum" style="color:var(--ink-mute);font-weight:600;">10월부터 사방넷 출고 엑셀</span>',
     'setPriceCalc:entryOpen',true);
   const wrap=fp.body;
+
+  /* ① 사방넷 출고 엑셀 — 10월부터의 출고는 여기로 들어옵니다 */
+  const sz=document.createElement('div');sz.className='up-zone';
+  const s1=document.createElement('div');s1.className='uz-title';s1.textContent='📦 사방넷 출고 엑셀 올리기';
+  const s2=document.createElement('div');s2.className='uz-desc';
+  s2.innerHTML='사방넷 풀필먼트 → <b>출고조회</b> → 엑셀 다운로드 받은 파일을 올리세요. 기간은 넉넉하게 잡아도 됩니다.<br>'+
+    '<span style="color:var(--ink-soft);">B2B 만 담고, 출고취소는 거르고, 이미 담은 줄은 송장만 채웁니다. 올리면 바로 발주까지 가져옵니다.</span>';
+  const s3=document.createElement('div');s3.className='uz-desc';s3.style.marginTop='6px';
+  s3.textContent='담아 둔 출고를 불러오는 중…';
+  sz.append(s1,s2,s3);
+  const sb=document.createElement('div');sb.className='up-btns';
+  const sfi=document.createElement('input');sfi.type='file';sfi.accept='.xlsx,.xls';sfi.multiple=true;sfi.hidden=true;
+  const sbtn=document.createElement('button');sbtn.className='up-btn';sbtn.textContent='엑셀 파일 선택';
+  sb.append(sbtn,sfi);sz.appendChild(sb);
+  const slog=document.createElement('div');slog.className='up-log';sz.appendChild(slog);
+  wrap.appendChild(sz);
+  sboLoad().then(function(so){
+    const last=so.files.length?so.files[so.files.length-1]:null;
+    const done=so.rows.filter(function(x){ return x.v; }).length;
+    s3.innerHTML=so.rows.length
+      ? '담아 둔 출고 <b>'+so.rows.length+'</b>줄 (송장 '+done+' · 출고 전 '+(so.rows.length-done)+')'+
+        (last?' · 마지막 올림 '+(function(d){ const z=function(x){return String(x).padStart(2,"0");}; return isNaN(d)?'':d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+' '+z(d.getHours())+':'+z(d.getMinutes()); })(new Date(last.at))+' · '+last.name:'')
+      : '<span style="color:var(--warn);">아직 올린 사방넷 엑셀이 없습니다 — 10월 출고가 대시보드에 안 보입니다.</span>';
+    const sum=fp.panel.querySelector('.sbo-sum');
+    if(sum&&so.rows.length) sum.textContent='사방넷 출고 '+so.rows.length+'줄';
+  }).catch(function(){ s3.textContent=''; });
+
+  /* ② 발주 가져오기 — 9월까지 배송요청시트 + 10월부터 사방넷 출고 */
   const lb=document.createElement('div');lb.className='link-bar';
   const a=document.createElement('a');a.className='link-btn';a.href=ENTRY_SHEET_URL;
-  a.target='_blank';a.rel='noopener';a.textContent='📊 배송요청시트 열기';
-  lb.appendChild(a);wrap.appendChild(lb);
+  a.target='_blank';a.rel='noopener';a.textContent='📊 배송요청시트 (9월까지 기록)';
+  lb.appendChild(a);
   const uz=document.createElement('div');uz.className='up-zone';
   const t1=document.createElement('div');t1.className='uz-title';t1.textContent='🚚 발주 자동등록';
   const t2=document.createElement('div');t2.className='uz-desc';
-  t2.innerHTML='배송요청시트의 <b>관리메모1</b> 로 약국 건만 골라 발주로 등록합니다.<br>'+
+  t2.innerHTML='9월까지는 배송요청시트, 10월부터는 위에 올린 사방넷 출고에서 <b>채널별로</b> 골라 발주로 등록합니다.<br>'+
     '<span style="color:var(--ink-soft);">약국공급 → 레디영 · 바로팜약국판매 → 바로팜 · '+
     '개인약국판매 → 아쿠아메디 · 자사몰약국판매 → 자사몰</span><br>'+
     '같은 날·같은 수취인은 한 건으로 묶고, <b>이미 등록한 건은 건너뜁니다.</b>';
@@ -4881,6 +5086,18 @@ function buildEntrySync(){
     b.disabled=false;b.textContent='발주 가져오기';
   });
   wrap.appendChild(uz);
+  wrap.appendChild(lb);
+  const go=async function(files){
+    sbtn.disabled=true;sbtn.textContent='올리는 중…';
+    const ok=await sboUpload(files,slog);
+    sbtn.disabled=false;sbtn.textContent='엑셀 파일 선택';
+    if(ok) await importEntryOrders(log,refreshCurrentView);
+  };
+  sbtn.addEventListener('click',()=>sfi.click());
+  sfi.addEventListener('change',e=>{ go(e.target.files); e.target.value=''; });
+  sz.addEventListener('dragover',e=>{e.preventDefault();sz.classList.add('drag');});
+  sz.addEventListener('dragleave',()=>sz.classList.remove('drag'));
+  sz.addEventListener('drop',e=>{e.preventDefault();sz.classList.remove('drag');go(e.dataTransfer.files);});
   return fp.panel;
 }
 
