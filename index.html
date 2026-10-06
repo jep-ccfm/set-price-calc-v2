@@ -3853,6 +3853,280 @@ function dDayText(due){
   return String(Math.abs(diff))+'일 지남';
 }
 
+/* ============================================================
+   월 정산서 — 매월 5일 발송
+   원장(확정 매출)을 기간으로 잘라 채널 > 거래처별로 한 장씩 만듭니다.
+     레디영      (주)레디영 1장, 안에 지점별로 묶음 (입금·계산서가 본사 일괄)
+     자사몰      약국별로 한 장씩
+     아쿠아메디   소속 약국별로 한 장씩
+     바로팜      바로팜이 정산서를 직접 보내므로 뺍니다
+   여러 달을 한 장에 묶을 수 있습니다 (8·9월 합산 청구 같은 경우).
+   ============================================================ */
+/* 공급자 — 이카운트 거래명세서와 같은 내용. 은행명을 넣으면 입금 계좌 줄이 켜집니다. */
+const SETTLE_SUPPLIER={name:'(주)고지식바이오', bizNo:'274-81-00503', ceo:'성주영, 서준석',
+  addr:'서울특별시 강남구 선릉로 428, 9층 111호', tel:'1551-7430'};
+const SETTLE_BANK={'54106474904035':{bank:'',holder:'(주)고지식바이오'},
+                   '54106474904042':{bank:'',holder:'(주)고지식바이오'}};
+function settleChannels(){
+  return [
+    {id:'ready',     name:'레디영',            pids:['ready'],     one:'(주)레디영', acct:'54106474904035'},
+    {id:'pharmmall', name:'자사몰 약사전용관', pids:['pharmmall'], one:'',          acct:'54106474904042'},
+    {id:'aquamedi',  name:'아쿠아메디',        pids:aquaIds(),     one:'',          acct:'54106474904035'}
+  ];
+}
+function settleEsc_(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+/* 239,250 → 이십삼만구천이백오십 (거래명세서 금액 표기) */
+function wonKorean(v){
+  let x=Math.round(Math.abs(Number(v)||0)); if(!x) return '영';
+  const D=['','일','이','삼','사','오','육','칠','팔','구'], U=['','십','백','천'], B=['','만','억','조'];
+  let out='', i=0;
+  while(x>0){
+    const part=x%10000; x=Math.floor(x/10000);
+    if(part){ let t='', y=part, j=0; while(y>0){ const k=y%10; if(k) t=D[k]+U[j]+t; y=Math.floor(y/10); j++; } out=t+B[i]+out; }
+    i++;
+  }
+  return out;
+}
+function settleMonths_(pids){
+  const m={};
+  pids.forEach(function(pid){ const L=(lib.ledger&&lib.ledger[pid])||{months:{}};
+    Object.keys(L.months||{}).forEach(function(k){ if(/^\d{4}-\d{2}$/.test(k)) m[k]=1; }); });
+  return Object.keys(m).sort();
+}
+/* 아쿠아메디 원장 지점명 → 소속 약국 정보 */
+function settleAquaInfo_(branch){
+  const k=storeKey_(branch);
+  const hit=aquamediPharms().filter(function(x){
+    const a=storeKey_(pharmInfoOf(x.pid).name||x.name), b=storeKey_(x.name);
+    return a.indexOf(k)>=0||k.indexOf(a.replace(/[^가-힣A-Za-z0-9]/g,''))>=0||b.indexOf(k)>=0;
+  })[0];
+  return hit?pharmInfoOf(hit.pid):{};
+}
+/* 기간 안 원장 → 채널 > 거래처 > (지점) > 줄 */
+function settleCollect(fromMk,toMk){
+  const res=[];
+  settleChannels().forEach(function(ch){
+    const docs=[];
+    ch.pids.forEach(function(pid){
+      const L=(lib.ledger&&lib.ledger[pid])||{months:{}};
+      Object.keys(L.months||{}).forEach(function(mk){
+        if(mk<fromMk||mk>toMk) return;
+        ((L.months[mk]||{}).docs||[]).forEach(function(d){ docs.push(d); });
+      });
+    });
+    const custs={}, order=[];
+    docs.forEach(function(d){
+      const br=String(d.branch||'미상').trim();
+      const ck=ch.one||br;
+      if(!custs[ck]){
+        const m=d.meta||{};
+        let info={};
+        if(ch.id==='pharmmall'){ const si=storeInfoOf(br);
+          info={biz:si.biz||br, bizNo:si.bizNo||'', ceo:si.ceo||'', addr:m['약국주소']||'', tel:telFix_(m['전화'])}; }
+        else if(ch.id==='aquamedi'){ const pi=settleAquaInfo_(br);
+          info={biz:pi.name||br, bizNo:pi.biz||'', ceo:pi.owner||'', addr:pi.addr||pi.ship||'', tel:pi.tel||''}; }
+        else { info={biz:ch.one, bizNo:'', ceo:'', addr:'', tel:''}; }
+        custs[ck]={name:ck, info:info, secs:{}, secOrder:[], docs:0};
+        order.push(ck);
+      }
+      const c=custs[ck];
+      c.docs++;
+      /* 주소·연락처는 가장 최근 주문 것으로 — 옛 주문엔 잘못 저장된 번호가 남아 있습니다 */
+      if(ch.id==='pharmmall'&&String(d.date||'')>=String(c.lastDate||'')){
+        c.lastDate=d.date||''; const mm=d.meta||{};
+        if(mm['약국주소']) c.info.addr=mm['약국주소'];
+        if(mm['전화']) c.info.tel=telFix_(mm['전화']);
+      }
+      const sk=ch.one?br:'';
+      if(!c.secs[sk]){ c.secs[sk]=[]; c.secOrder.push(sk); }
+      (d.items||[]).forEach(function(it){
+        const q=Number(it.qty)||0, sp=Number(it.supply)||0, vt=Number(it.vat)||0;
+        c.secs[sk].push({date:d.date||'', item:itemLabel(it.name)||it.name, qty:q,
+          unit:q?Math.round(sp/q):0, supply:sp, vat:vt, total:sp+vt});
+      });
+    });
+    const list=order.map(function(k){
+      const c=custs[k];
+      const secs=c.secOrder.sort(function(a,b){ return a.localeCompare(b,'ko'); }).map(function(sk){
+        const lines=c.secs[sk].sort(function(a,b){ return String(a.date).localeCompare(String(b.date))||a.item.localeCompare(b.item,'ko'); });
+        const t={qty:0,supply:0,vat:0,total:0};
+        lines.forEach(function(l){ t.qty+=l.qty; t.supply+=l.supply; t.vat+=l.vat; t.total+=l.total; });
+        return {title:sk, lines:lines, t:t};
+      });
+      const T={qty:0,supply:0,vat:0,total:0};
+      secs.forEach(function(x){ ['qty','supply','vat','total'].forEach(function(f){ T[f]+=x.t[f]; }); });
+      return {name:c.name, info:c.info, secs:secs, t:T, docs:c.docs};
+    }).sort(function(a,b){ return b.t.total-a.t.total; });
+    res.push({ch:ch, custs:list, total:list.reduce(function(a,x){ return a+x.t.total; },0)});
+  });
+  return res;
+}
+function settlePeriodLabel_(f,t){ return f===t?mkLabel(f):mkLabel(f)+' ~ '+mkLabel(t); }
+/* 한 거래처 = A4 한 장 */
+function settlePageHtml_(ch,c,f,t){
+  const S=SETTLE_SUPPLIER, I=c.info, e=settleEsc_;
+  const due=b2bDue(t).pay;
+  const acct=SETTLE_BANK[ch.acct]||{};
+  const fm=function(v){ return fmt(v); };
+  let rows='';
+  c.secs.forEach(function(sec){
+    if(sec.title) rows+='<tr class="sec"><td colspan="7">'+e(sec.title)+'</td></tr>';
+    sec.lines.forEach(function(l){
+      rows+='<tr><td>'+e(String(l.date).slice(5).replace('-','/'))+'</td><td class="l">'+e(l.item)+'</td>'+
+        '<td>'+fm(l.qty)+'</td><td>'+fm(l.unit)+'</td><td>'+fm(l.supply)+'</td><td>'+fm(l.vat)+'</td><td>'+fm(l.total)+'</td></tr>';
+    });
+    if(sec.title) rows+='<tr class="sub"><td colspan="2">'+e(sec.title)+' 소계</td><td>'+fm(sec.t.qty)+'</td><td></td>'+
+      '<td>'+fm(sec.t.supply)+'</td><td>'+fm(sec.t.vat)+'</td><td>'+fm(sec.t.total)+'</td></tr>';
+  });
+  return '<section class="pg">'+
+    '<h1>정 산 서</h1><div class="per">'+e(settlePeriodLabel_(f,t))+' 거래분</div>'+
+    '<div class="two">'+
+      '<table class="box"><tr><th rowspan="5" class="v">공<br>급<br>받<br>는<br>자</th><th>상호</th><td>'+e(I.biz||c.name)+' 貴中</td></tr>'+
+        '<tr><th>사업자번호</th><td>'+e(I.bizNo)+'</td></tr><tr><th>대표</th><td>'+e(I.ceo)+'</td></tr>'+
+        '<tr><th>주소</th><td>'+e(I.addr)+'</td></tr><tr><th>연락처</th><td>'+e(/^[0-9]+$/.test(String(I.tel||''))?sboTel_(I.tel):I.tel)+'</td></tr></table>'+
+      '<table class="box"><tr><th rowspan="5" class="v">공<br>급<br>자</th><th>상호</th><td>'+e(S.name)+'</td></tr>'+
+        '<tr><th>사업자번호</th><td>'+e(S.bizNo)+'</td></tr><tr><th>대표</th><td>'+e(S.ceo)+'</td></tr>'+
+        '<tr><th>주소</th><td>'+e(S.addr)+'</td></tr><tr><th>연락처</th><td>'+e(S.tel)+'</td></tr></table>'+
+    '</div>'+
+    '<div class="amt">합계 금액 : '+wonKorean(c.t.total)+' 원 정 <b>(₩ '+fm(c.t.total)+')</b></div>'+
+    '<table class="it"><thead><tr><th>일자</th><th>품목</th><th>수량</th><th>단가</th><th>공급가액</th><th>부가세</th><th>합계</th></tr></thead>'+
+      '<tbody>'+rows+'</tbody>'+
+      '<tfoot><tr><td colspan="2">합 계</td><td>'+fm(c.t.qty)+'</td><td></td><td>'+fm(c.t.supply)+'</td><td>'+fm(c.t.vat)+'</td><td>'+fm(c.t.total)+'</td></tr></tfoot></table>'+
+    '<div class="pay">입금 기한 <b>'+ymdText(due)+'</b>'+
+      (acct.bank?' · 입금 계좌 <b>'+e(acct.bank)+' '+e(ch.acct)+'</b> (예금주 '+e(acct.holder)+')':'')+'</div>'+
+    '<div class="note">단가는 부가세 별도 금액입니다. 문의 '+e(S.tel)+'</div>'+
+  '</section>';
+}
+function settleOpen(ch,custs,f,t){
+  if(!custs.length){ showToast('정산서를 만들 거래가 없습니다'); return; }
+  const w=window.open('','_blank');
+  if(!w){ showToast('팝업이 막혀 있습니다 — 브라우저에서 이 사이트 팝업을 허용해주세요'); return; }
+  const css='*{box-sizing:border-box}body{margin:0;font-family:"Malgun Gothic",sans-serif;color:#111;background:#eee}'+
+    '.bar{position:sticky;top:0;background:#1B2A4A;color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;font-size:13px}'+
+    '.bar button{font:inherit;padding:6px 14px;border:0;border-radius:6px;background:#fff;color:#1B2A4A;font-weight:700;cursor:pointer}'+
+    '.pg{width:210mm;min-height:297mm;margin:12px auto;background:#fff;padding:14mm 13mm;page-break-after:always}'+
+    'h1{text-align:center;letter-spacing:.6em;font-size:24px;margin:0 0 4px}.per{text-align:center;font-size:13px;color:#444;margin-bottom:14px}'+
+    '.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}table{border-collapse:collapse;width:100%}'+
+    '.box th,.box td{border:1px solid #555;padding:4px 6px;font-size:11.5px;text-align:left}.box th{background:#f3f3f3;width:62px;white-space:nowrap}.box th.v{width:22px;text-align:center;line-height:1.25}'+
+    '.amt{margin:12px 0 8px;padding:8px 10px;border:1.5px solid #111;font-size:13.5px}'+
+    '.it th,.it td{border:1px solid #777;padding:4px 6px;font-size:11.5px;text-align:right;white-space:nowrap}.it th{background:#f3f3f3;text-align:center}'+
+    '.it td.l{text-align:left;white-space:normal}.it td:first-child{text-align:center}.it tr.sec td{background:#fafafa;font-weight:700;text-align:left}'+
+    '.it tr.sub td{background:#f6f6f6;font-weight:700}.it tfoot td{font-weight:800;background:#eee}.it tfoot td:first-child{text-align:center}'+
+    '.pay{margin-top:12px;font-size:12.5px}.note{margin-top:6px;font-size:11px;color:#555}'+
+    '@media print{body{background:#fff}.bar{display:none}.pg{margin:0;box-shadow:none;width:auto;min-height:auto}@page{size:A4;margin:10mm}}';
+  const pages=custs.map(function(c){ return settlePageHtml_(ch,c,f,t); }).join('');
+  w.document.open();
+  w.document.write('<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>'+settleEsc_(ch.name)+' 정산서 '+settleEsc_(settlePeriodLabel_(f,t))+'</title>'+
+    '<style>'+css+'</style></head><body><div class="bar"><b>'+settleEsc_(ch.name)+' 정산서</b> · '+custs.length+'장 · '+
+    settleEsc_(settlePeriodLabel_(f,t))+'<span style="flex:1"></span><button onclick="window.print()">인쇄 / PDF 저장</button></div>'+pages+'</body></html>');
+  w.document.close();
+}
+/* 채널 엑셀 — 요약 시트 + 거래처마다 한 시트 */
+function settleXlsx(ch,custs,f,t){
+  if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return; }
+  if(!custs.length){ showToast('정산서를 만들 거래가 없습니다'); return; }
+  const wb=XLSX.utils.book_new();
+  const sum=[['거래처','사업자번호','건수','수량','공급가액','부가세','합계']];
+  custs.forEach(function(c){ sum.push([c.name,c.info.bizNo||'',c.docs,c.t.qty,c.t.supply,c.t.vat,c.t.total]); });
+  const T=custs.reduce(function(a,c){ a[0]+=c.t.qty;a[1]+=c.t.supply;a[2]+=c.t.vat;a[3]+=c.t.total; return a; },[0,0,0,0]);
+  sum.push(['합계','','',T[0],T[1],T[2],T[3]]);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sum),'요약');
+  const used={'요약':1};
+  custs.forEach(function(c){
+    const a=[['정산서',settlePeriodLabel_(f,t)+' 거래분'],['거래처',c.info.biz||c.name],['사업자번호',c.info.bizNo||''],[],
+      ['일자','지점','품목','수량','단가','공급가액','부가세','합계']];
+    c.secs.forEach(function(sec){ sec.lines.forEach(function(l){ a.push([l.date,sec.title||'',l.item,l.qty,l.unit,l.supply,l.vat,l.total]); }); });
+    a.push(['합계','','',c.t.qty,'',c.t.supply,c.t.vat,c.t.total]);
+    let nm=String(c.name).replace(/[\[\]:*?\/\\]/g,'').slice(0,28)||'거래처', k=2;
+    while(used[nm]){ nm=nm.slice(0,26)+'_'+(k++); } used[nm]=1;
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(a),nm);
+  });
+  XLSX.writeFile(wb,ch.name.replace(/\s+/g,'')+'_정산서_'+(f===t?f:f+'~'+t)+'.xlsx');
+}
+/* 홈 — 월 정산서 */
+function buildSettlePanel(){
+  const allM=settleMonths_(['ready','pharmmall'].concat(aquaIds()));
+  const wrap=document.createElement('div');
+  if(!allM.length) return wrap;
+  const now=new Date(); const prev=new Date(now.getFullYear(),now.getMonth()-1,1);
+  const prevMk=prev.getFullYear()+'-'+String(prev.getMonth()+1).padStart(2,'0');
+  let saved={}; try{ saved=JSON.parse(localStorage.getItem('setPriceCalc:settleRange')||'{}'); }catch(e){}
+  let f=saved.f||(allM.indexOf(prevMk)>=0?prevMk:allM[allM.length-1]);
+  let t=saved.t||f;
+  if(allM.indexOf(f)<0) f=allM[allM.length-1]; if(allM.indexOf(t)<0||t<f) t=f;
+  const fp=foldPanel('📑 월 정산서 — 매월 5일 발송',
+    '<span class="st-sum" style="color:var(--ink-mute);font-weight:600;"></span>','setPriceCalc:settleOpen',true);
+  const body=fp.body;
+  const ctl=document.createElement('div');
+  ctl.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:13px;';
+  const mkSel=function(v){ const sl=document.createElement('select');
+    allM.slice().reverse().forEach(function(m){ const o=document.createElement('option');o.value=m;o.textContent=mkLabel(m);if(m===v)o.selected=true;sl.appendChild(o); });
+    return sl; };
+  const sf=mkSel(f), stl=mkSel(t);
+  const lab=document.createElement('span');lab.textContent='기간';lab.style.fontWeight='700';
+  const til=document.createElement('span');til.textContent='~';
+  const hint=document.createElement('span');hint.className='hint';hint.style.margin='0';
+  hint.textContent='여러 달을 한 장에 묶을 수 있습니다 (예: 8·9월 합산 청구)';
+  ctl.append(lab,sf,til,stl,hint);body.appendChild(ctl);
+  const out=document.createElement('div');body.appendChild(out);
+  const draw=function(){
+    f=sf.value; t=stl.value; if(t<f){ t=f; stl.value=f; }
+    try{ localStorage.setItem('setPriceCalc:settleRange',JSON.stringify({f:f,t:t})); }catch(e){}
+    out.innerHTML='';
+    const data=settleCollect(f,t);
+    let nC=0, sumAll=0;
+    data.forEach(function(D){
+      const ch=D.ch, cs=D.custs; nC+=cs.length; sumAll+=D.total;
+      const box=document.createElement('div');
+      box.style.cssText='border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-bottom:10px;';
+      const hd=document.createElement('div');hd.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+      const what=ch.one?(ch.one+' 1장 · 지점 '+(cs[0]?cs[0].secs.length:0)+'곳 내역'):('거래처 '+cs.length+'곳');
+      hd.innerHTML='<b style="font-size:14px;">'+settleEsc_(ch.name)+'</b><span style="color:var(--ink-soft);font-size:12.5px;">'+what+'</span>'+
+        '<span style="margin-left:auto;font-weight:800;font-variant-numeric:tabular-nums;">'+(cs.length?fmt(D.total)+'원':'')+'</span>';
+      if(cs.length){
+        const bp=document.createElement('button');bp.className='icon-btn';bp.textContent=ch.one?'🖨 보기·인쇄':'🖨 전체 인쇄 ('+cs.length+'장)';
+        bp.addEventListener('click',function(){ settleOpen(ch,cs,f,t); });
+        const bx=document.createElement('button');bx.className='icon-btn';bx.textContent='⬇ 엑셀';
+        bx.addEventListener('click',function(){ settleXlsx(ch,cs,f,t); });
+        hd.append(bp,bx);
+      }
+      box.appendChild(hd);
+      if(!cs.length){
+        const e=document.createElement('div');e.className='hint';e.style.margin='6px 0 0';
+        e.innerHTML='<span style="color:var(--warn);">이 기간 원장이 비어 있습니다.</span> '+
+          (ch.id==='pharmmall'?'자사몰 주문 시트에서 주문을 가져와 주세요.':'거래명세서(PDF)를 채널 화면 ③ 에 먼저 올려주세요.')+
+          (t>='2026-10'&&ch.id!=='pharmmall'?' <b>10월부터는 이카운트 판매입력이 멈춰 있어 명세서가 없습니다.</b>':'');
+        box.appendChild(e);
+      } else if(!ch.one){
+        const tb=document.createElement('table');tb.className='led-table';tb.style.marginTop='8px';
+        tb.innerHTML='<thead><tr><th>거래처</th><th style="text-align:right;">건수</th><th style="text-align:right;">수량</th>'+
+          '<th style="text-align:right;">합계</th><th style="width:70px;"></th></tr></thead>';
+        const tbd=document.createElement('tbody');
+        cs.forEach(function(c){
+          const tr=document.createElement('tr');
+          tr.innerHTML='<td><b>'+settleEsc_(c.name)+'</b>'+(c.info.bizNo?'':' <span style="color:var(--warn);font-size:11.5px;">사업자번호 없음</span>')+'</td>'+
+            '<td class="num-cell">'+c.docs+'</td><td class="num-cell">'+fmt(c.t.qty)+'</td><td class="num-cell">'+fmt(c.t.total)+'</td>';
+          const td=document.createElement('td');
+          const b1=document.createElement('button');b1.className='icon-btn';b1.textContent='보기';
+          b1.addEventListener('click',function(){ settleOpen(ch,[c],f,t); });
+          td.appendChild(b1);tr.appendChild(td);tbd.appendChild(tr);
+        });
+        tb.appendChild(tbd);
+        const sc=document.createElement('div');sc.style.cssText='overflow-x:auto;';sc.appendChild(tb);box.appendChild(sc);
+      }
+      out.appendChild(box);
+    });
+    const bf=document.createElement('div');bf.className='hint';bf.style.margin='2px 0 0';
+    bf.textContent='바로팜은 바로팜이 정산서를 직접 보내므로 뺐습니다. 금액은 대시보드 원장(확정 매출) 그대로입니다.';
+    out.appendChild(bf);
+    const sm=fp.panel.querySelector('.st-sum');
+    if(sm) sm.textContent=settlePeriodLabel_(f,t)+' · '+nC+'곳 · '+fmt(sumAll)+'원';
+  };
+  sf.addEventListener('change',draw); stl.addEventListener('change',draw);
+  draw();
+  wrap.appendChild(fp.panel);
+  return wrap;
+}
 /* ---------- 월마감 체크리스트 ----------
    마감은 전월 기준으로 돕니다(9월 초 = 8월분 마감).
    채널마다 ①명세서 ②세금계산서 ③입금 세 단계가 어디까지 왔는지 한 줄로 봅니다. */
@@ -10389,6 +10663,8 @@ function renderHome(){
 
   /* 월마감 체크리스트 — 전월 기준 */
   box.appendChild(buildCloseCheck());
+  /* 월 정산서 — 마감 체크 바로 아래 (매월 5일 발송) */
+  try{ box.appendChild(buildSettlePanel()); }catch(e){ console.error(e); }
 
   /* ---- 채널 카드 ---- */
   const ch=document.createElement('div');ch.className='sec-h';ch.textContent='채널 현황';box.appendChild(ch);
