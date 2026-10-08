@@ -5378,6 +5378,19 @@ function sboPlaceOf_(so,store,addr){
     (ak?rows.filter(function(r){ return String(r.a||'').replace(/\s/g,'')===ak; }).pop():null);
   return hit?{z:hit.z,a1:hit.a1||'',a2:hit.a2||''}:null;
 }
+/* 처음 나가는 곳은 주소가 한 줄뿐입니다 — 사방넷처럼 도로명+건물번호(뒤 괄호까지)는 주소1, 나머지는 주소2.
+   「구남로41번길40 1층」 → 「구남로41번길40」 / 「1층」, 「서초대로 77길 5, 1층」 → 「서초대로 77길 5」 / 「1층」 */
+function sboSplitAddr_(addr){
+  const t=String(addr||'').replace(/\s+/g,' ').trim();
+  const re=/(?:로|길)\s*\d+(?:-\d+)?(?![\d번길로가-힣])/g;
+  let m, end=-1;
+  while((m=re.exec(t))) end=m.index+m[0].length;
+  if(end<0) return {a1:t,a2:''};
+  let a1=t.slice(0,end), rest=t.slice(end);
+  const par=rest.match(/^\s*\([^)]*\)/);
+  if(par){ a1+=par[0]; rest=rest.slice(par[0].length); }
+  return {a1:a1.trim(), a2:rest.replace(/^[\s,]+/,'').trim()};
+}
 function sboToday_(){
   const d=new Date(Date.now()+9*3600*1000);
   return d.toISOString().slice(0,10);
@@ -5396,8 +5409,8 @@ async function sboOrderXlsx(chId,rows){
     const pl=sboPlaceOf_(so,r.store,r.addr);
     if(!pl) noZip[r.store]=1;
     /* 예전 출고와 같은 곳이면 사방넷에 적혀 있던 주소1·주소2를 그대로 씁니다 */
-    const a1=(pl&&pl.a1)?pl.a1:String(r.addr||'').trim();
-    const a2=(pl&&pl.a1)?pl.a2:'';
+    const sp=(pl&&pl.a1)?{a1:pl.a1,a2:pl.a2}:sboSplitAddr_(r.addr);
+    const a1=sp.a1, a2=sp.a2;
     const v={'상품고유코드':c?c[0]:'','판매상품명':c?c[1]:r.item,'수량':String(r.qty||''),'배송방식':'택배',
       '주문자 이름':r.store,'받는분 이름':r.store,'전화번호1':sboTel_(r.tel)||'','우편번호':pl?pl.z:'',
       '주소1':a1,'주소2':a2,'주문번호':r.ono||'','관리메모1':(r.date?'발주 '+r.date:''),
