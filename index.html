@@ -5734,7 +5734,7 @@ async function importEntryOrders(logEl,onDone){
   /* 같은 자료로 자사몰 출고 상태 · 레디영 출고 반영까지 —
      예전엔 채널 화면에서 「출고 상태 새로고침」「출고 반영 확인」을 따로 눌러야 했습니다 */
   let shipN=0, ryN=0, ryErr='';
-  try{ shipN=await refreshShipped(got); }catch(e){}
+  try{ shipN=await refreshShipped(got); mallStampShipDates_(); }catch(e){}
   try{ const rv=await ryVerifyRows(got); saveRyVerify(rv); ryN=applyVerifyToOrders(rv); }catch(e){ ryErr=e.message||''; }
   persistLib();
 
@@ -5836,6 +5836,25 @@ function buildEntrySync(){
 
 /* 시트에서 가져온 주문을 한 줄씩 펼칩니다 (품목 단위) */
 /* showShipped 를 켜면 출고 완료된 줄도 같이 보여줍니다 */
+/* 주문의 출고일 = 품목이 모두 나간 날 가운데 마지막 날. 통합 매출 시트의 「출고일·출고월」로 갑니다.
+   (재무팀 요청 2026-10-08 — 주문일과 출고일을 같이) */
+function mallStampShipDates_(){
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  const by={};
+  mallOrderRows(null,true).forEach(function(r){
+    const b=by[r.serial]=by[r.serial]||{all:true,last:''};
+    if(!r.shipped||!r.shipDate) b.all=false;
+    else if(r.shipDate>b.last) b.last=r.shipDate;
+  });
+  let n=0;
+  Object.keys(led.months||{}).forEach(function(mk){
+    (led.months[mk].docs||[]).forEach(function(d){
+      const b=by[d.serial]; const v=(b&&b.all)?b.last:'';
+      if((d.shipDate||'')!==v){ if(v) d.shipDate=v; else delete d.shipDate; n++; }
+    });
+  });
+  return n;
+}
 function mallOrderRows(storeName,showShipped){
   const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
   const out=[];
@@ -5872,7 +5891,7 @@ function mallOrderRows(storeName,showShipped){
           if(bi<0||String(d)<String(v[bi])) bi=i;
         });
         if(bi<0) bi=0;                               /* 날짜를 못 견주면 있는 대로 씁니다 */
-        r.shipped=true; v.splice(bi,1);
+        r.shipped=true; r.shipDate=String(v[bi]||''); v.splice(bi,1);
       } else if(v>0){ r.shipped=true; left[k]=v-1; }  /* 예전에 개수만 담아 둔 기록 */
     });
   out.hiddenShipped=out.filter(r=>r.shipped).length;
@@ -5915,7 +5934,7 @@ function buildMallOrderList(storeName){
     rb.textContent='🚚 출고 상태 새로고침';
     rb.addEventListener('click',async()=>{
       rb.disabled=true;rb.textContent='확인 중…';
-      try{ const n=await refreshShipped(); persistLib();
+      try{ const n=await refreshShipped(); mallStampShipDates_(); persistLib();
            const left=mallOrderRows(null,false).length;
            showToast('출고 확인 완료 — 송장 '+n+'종 · 아직 못 보낸 '+left+'줄');
            ledgerRefresh(); }
@@ -7504,7 +7523,9 @@ function barofarmParse(rows,fileName){
   const ix=n=>head.indexOf(n);
   const c={date:ix('주문일시'),no:ix('주문번호'),st:ix('주문상태'),ph:ix('약국명'),biz:ix('사업자번호'),
     ykiho:ix('요양기관번호'),ph2:ix('약사명'),tel:ix('약국전화번호'),addr:ix('배송주소'),
-    item:ix('상품명'),qty:ix('주문수량'),price:ix('판매가'),amt:ix('실주문금액'),amt2:ix('주문금액'),sale:ix('판매금액')};
+    item:ix('상품명'),qty:ix('주문수량'),price:ix('판매가'),amt:ix('실주문금액'),amt2:ix('주문금액'),sale:ix('판매금액'),
+    /* 출하일 — 재무팀은 바로팜 계산서·부가세를 출고일로 끊습니다 (2026-10-08 요청). 주문별 시트엔 없습니다 */
+    ship:ix('출하일')};
   if(c.date<0||c.ph<0)throw new Error('바로팜 양식이 아닙니다 (주문일시/약국명 없음)');
   const out=[];out.excluded=0;
   for(let i=1;i<rows.length;i++){
@@ -7520,6 +7541,7 @@ function barofarmParse(rows,fileName){
     const sup=Math.round(total/1.1), vt=total-sup;
     out.push({
       file:fileName,serial:String(r[c.no]||''),date:d,
+      shipDate:(c.ship>=0?String(r[c.ship]||'').slice(0,10).replace(/[./]/g,'-'):''),
       branch:String(r[c.ph]||'미상').trim(),
       status:String(r[c.st]||''),
       items:[{name,qty,unit,supply:sup,vat:vt}],
@@ -7538,7 +7560,9 @@ function bfMergeBySerial(docs){
   docs.forEach(d=>{
     const k=String(d.serial||'')||('#'+seq.length);
     if(!map[k]){map[k]=Object.assign({},d,{items:[]});seq.push(k);}
-    else{map[k].qty+=d.qty;map[k].supply+=d.supply;map[k].vat+=d.vat;map[k].total+=d.total;}
+    else{map[k].qty+=d.qty;map[k].supply+=d.supply;map[k].vat+=d.vat;map[k].total+=d.total;
+      /* 상품마다 출하일이 다르면 마지막 날 — 다 나가야 그 주문이 출고된 것입니다 */
+      if(String(d.shipDate||'')>String(map[k].shipDate||'')) map[k].shipDate=d.shipDate;}
     (d.items||[]).forEach(it=>map[k].items.push(it));
   });
   return seq.map(k=>map[k]);
@@ -7569,12 +7593,14 @@ async function importBarofarm(id,files,logEl,onDone){
       parsed.filter(x=>useItem?x.byItem:true).forEach(x=>{flat=flat.concat(x.docs);excl+=x.excluded;});
       if(!flat.length&&!excl)throw new Error('읽을 주문이 없습니다');
       const docs=bfMergeBySerial(flat);
-      let merged=0;
+      let merged=0, shipFill=0;
       docs.forEach(doc=>{
         const mk=doc.date?doc.date.slice(0,7):'기타';
         led.months[mk]=led.months[mk]||{docs:[]};
         const cur=led.months[mk].docs.filter(d=>d.serial&&d.serial===doc.serial)[0];
         if(cur){
+          /* 이미 있는 주문도 출하일은 채웁니다 — 주문 때 받은 엑셀엔 출하일이 비어 있습니다 */
+          if(doc.shipDate&&cur.shipDate!==doc.shipDate){ cur.shipDate=doc.shipDate; shipFill++; }
           if((cur.total||0)===doc.total){dup++;return;}
           /* 같은 주문인데 금액이 다르면 새로 읽은 값으로 고칩니다 (상품이 빠져 있던 경우) */
           cur.items=doc.items;cur.qty=doc.qty;cur.supply=doc.supply;
@@ -7583,7 +7609,7 @@ async function importBarofarm(id,files,logEl,onDone){
         doc.isNew=true;led.months[mk].docs.push(doc);ok++;
       });
       log.push('✓ '+f.name+' — 주문 '+docs.length+'건'+
-        (merged?' (금액 보정 '+merged+'건)':'')+(excl?' (취소·반품 '+excl+'건 제외)':''));
+        (merged?' (금액 보정 '+merged+'건)':'')+(shipFill?' (출하일 '+shipFill+'건 채움)':'')+(excl?' (취소·반품 '+excl+'건 제외)':''));
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
   }
   Object.keys(led.months).forEach(m=>{led.months[m].docs.sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)));});
