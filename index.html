@@ -2188,19 +2188,36 @@ function pdfLines(tc){
 }
 function parseStatement(lines,fileName){
   const r={file:fileName,store:null,serial:null,date:null,items:[],total:0,supply:0,vat:0,warn:null};
+  let page=1, grand=0; const foot={};
   for(const raw of lines){
+    if(/^@@PAGE \d+$/.test(raw)){ page=parseInt(raw.slice(7),10); continue; }
     const L=raw.replace(/수신자확인\s*전/g,'').replace(/\s{2,}/g,'  ').trim();
     let m;
+    /* 머리의 「금 액 : … (￦7,735,200)」 = 여러 쪽을 합친 전체 금액 */
+    if(!grand&&(m=L.match(/금\s*액.*[(（]\s*[￦₩]\s*([\d,]+)\s*[)）]/))) grand=_N(m[1]);
     if(!r.store&&(m=L.match(/^(.+?)\s*貴\s*中/)))r.store=m[1].trim();
     if(!r.serial&&(m=L.match(/일련번호\s+(\d{4})\/(\d{2})\/(\d{2})\s*-?\s*(\d*)/))){r.serial=m[1]+'/'+m[2]+'/'+m[3]+'-'+(m[4]||'');r.date=m[1]+'-'+m[2]+'-'+m[3];}
-    if((m=L.match(ITEM_RE)))r.items.push({date:m[1],name:m[2].trim(),qty:_N(m[3]),unit:_N(m[4]),supply:_N(m[5]),vat:_N(m[6])});
-    if((m=L.match(SUM_RE))){r.supply=_N(m[2]);r.vat=_N(m[3]);r.total=_N(m[4]);r.sumQty=_N(m[1]);}
+    if((m=L.match(ITEM_RE)))r.items.push({page:page,date:m[1],name:m[2].trim(),qty:_N(m[3]),unit:_N(m[4]),supply:_N(m[5]),vat:_N(m[6])});
+    /* 쪽마다 한 번만 (같은 쪽의 두 번째 장은 같은 숫자) */
+    if((m=L.match(SUM_RE))&&!foot[page]) foot[page]={qty:_N(m[1]),supply:_N(m[2]),vat:_N(m[3]),total:_N(m[4])};
   }
+  const pages=Object.keys(foot);
+  if(pages.length){
+    r.supply=0;r.vat=0;r.total=0;r.sumQty=0;
+    pages.forEach(function(k){ const f=foot[k]; r.supply+=f.supply; r.vat+=f.vat; r.total+=f.total; r.sumQty+=f.qty; });
+  }
+  if(grand&&grand!==r.total){
+    if(!r.total){ r.total=grand; }
+    else r.warnTotal='머리 금액 '+grand.toLocaleString()+'원 ≠ 쪽 소계 합 '+r.total.toLocaleString()+'원';
+  }
+  /* 같은 쪽의 두 번째 장만 거릅니다 — 다른 쪽에 같은 품목이 또 있으면 다른 줄입니다 */
   const seen=new Set();
-  r.items=r.items.filter(i=>{const k=i.date+'|'+i.name+'|'+i.qty+'|'+i.supply;if(seen.has(k))return false;seen.add(k);return true;});
+  r.items=r.items.filter(i=>{const k=i.page+'|'+i.date+'|'+i.name+'|'+i.qty+'|'+i.supply;if(seen.has(k))return false;seen.add(k);return true;});
+  r.items.forEach(function(i){ delete i.page; });
   r.qty=r.items.reduce((a,b)=>a+b.qty,0);
   if(!r.store)r.warn='거래처 인식 실패';
   else if(r.sumQty!=null&&r.qty!==r.sumQty)r.warn='수량 불일치(합계 '+r.sumQty+' / 항목 '+r.qty+')';
+  else if(r.warnTotal)r.warn=r.warnTotal;
   if(!r.date){const fm=fileName.match(/(\d{2})[.\-_](\d{2})/);if(fm)r.dateHint=fm[1]+'-'+fm[2];}
   const bm=(r.store||'').match(/[(（](.+?)[)）]/);
   r.branch=bm?bm[1]:(r.store||'미상');
@@ -2212,7 +2229,7 @@ async function readPdf(file){
   const buf=await file.arrayBuffer();
   const doc=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
   let lines=[];
-  for(let p=1;p<=doc.numPages;p++){const pg=await doc.getPage(p);lines=lines.concat(pdfLines(await pg.getTextContent()));}
+  for(let p=1;p<=doc.numPages;p++){const pg=await doc.getPage(p);lines.push('@@PAGE '+p);lines=lines.concat(pdfLines(await pg.getTextContent()));}
   return parseStatement(lines,file.name);
 }
 function monthKeyOf(doc){
@@ -2221,6 +2238,31 @@ function monthKeyOf(doc){
   return '기타';
 }
 function mkLabel(mk){if(mk==='기타')return '기타';const p=mk.split('-');return p[0].slice(2)+'년 '+parseInt(p[1],10)+'월';}
+/* 아쿠아메디 식구 장부 — 본사 + 소속 약국 */
+function docFamily_(id){
+  const aq=aquaIds();
+  return aq.indexOf(id)>=0?aq:[id];
+}
+function docLedgerFor_(id,doc){
+  if(docFamily_(id).length<2) return id;
+  const pid=entryAquaPid_(doc.store||doc.branch||'');
+  return pid==='aquamedi'?id:pid;
+}
+/* 같은 명세서 — 일련번호(이카운트 날짜-순번)와 거래처가 같으면 파일 이름이 달라도 같은 것 */
+function docTwin_(id,doc){
+  let hit=null;
+  docFamily_(id).forEach(function(lid){
+    const led=(lib.ledger&&lib.ledger[lid])||{months:{}};
+    Object.keys(led.months||{}).forEach(function(mk){
+      (led.months[mk].docs||[]).forEach(function(d){
+        if(hit) return;
+        if(doc.serial&&d.serial===doc.serial&&entryKey_(d.store||d.branch)===entryKey_(doc.store||doc.branch)) hit=d;
+        else if(d.file===doc.file&&d.serial===doc.serial) hit=d;
+      });
+    });
+  });
+  return hit;
+}
 async function importPdfs(id,files,logEl,onDone){
   const led=ledgerOf(id);let ok=0,fail=0,dup=0;const log=[];
   const arr=[].slice.call(files).filter(f=>/\.pdf$/i.test(f.name));
@@ -2231,10 +2273,14 @@ async function importPdfs(id,files,logEl,onDone){
     try{
       const doc=await readPdf(f);
       const mk=monthKeyOf(doc);
-      led.months[mk]=led.months[mk]||{docs:[]};
-      const exists=led.months[mk].docs.some(d=>d.file===doc.file&&d.serial===doc.serial);
-      if(exists){dup++;log.push('· 중복 건너뜀: '+f.name);}
-      else{doc.isNew=true;led.months[mk].docs.push(doc);ok++;log.push((doc.warn?'⚠ ':'✓ ')+f.name+' → '+doc.branch+' / '+doc.qty+'개 / '+fmt(doc.total)+'원'+(doc.warn?' ('+doc.warn+')':''));}
+      /* 아쿠아메디 — 어느 화면에서 올려도 명세서의 약국 장부로 갑니다 (본사 화면에 올린 약국 건이
+         「본사 직접」과 「소속 약국」에 두 번 보였습니다) */
+      const tid=docLedgerFor_(id,doc);
+      const tled=ledgerOf(tid);
+      tled.months[mk]=tled.months[mk]||{docs:[]};
+      const twin=docTwin_(id,doc);
+      if(twin){dup++;log.push('· 이미 있는 명세서라 건너뜀: '+f.name+' ('+(twin.serial||twin.file)+')');}
+      else{doc.isNew=true;tled.months[mk].docs.push(doc);ok++;log.push((doc.warn?'⚠ ':'✓ ')+f.name+' → '+doc.branch+' / '+doc.qty+'개 / '+fmt(doc.total)+'원'+(tid!==id?' · '+(pharmInfoOf(tid).name||tid)+' 장부로':'')+(doc.warn?' ('+doc.warn+')':''));}
     }catch(e){fail++;log.push('✕ '+f.name+' — '+e.message);}
     logEl.textContent=(i+1)+' / '+arr.length+' 처리 중…\n'+log.slice(-8).join('\n');
   }
@@ -5384,6 +5430,26 @@ function aquaEnsurePharm_(name,addr,tel){
   if(tel&&!inf.tel) inf.tel=tel;
   return pid;
 }
+/* 발주의 품목·수량 모양 — 같은 발주인지 견줄 때 */
+function orderSig_(o){
+  return (o.items||[]).map(function(it){ const m=matchItem(it.name); return itemKey(m?m.name:it.name)+'×'+(Number(it.qty)||0); }).sort().join('|');
+}
+/* 출고 기록에서 온 발주(배송요청시트·사방넷)가 손으로 넣은 발주와 사흘 안·같은 품목수량이면 같은 건 */
+function sheetTwinOf_(list,o){
+  const t=Date.parse(o.date||'')||0, sg=orderSig_(o);
+  return list.filter(function(x){
+    return x!==o&&x.src!=='배송요청시트'&&Math.abs((Date.parse(x.date||'')||0)-t)<=3*86400000&&orderSig_(x)===sg;
+  })[0]||null;
+}
+function dropSheetTwins_(pid){
+  const list=(lib.orders&&lib.orders[pid])||[]; let n=0;
+  for(let i=list.length-1;i>=0;i--){
+    const o=list[i];
+    if(o.src!=='배송요청시트') continue;
+    if(sheetTwinOf_(list,o)){ list.splice(i,1); n++; }
+  }
+  return n;
+}
 /* 본사 직접 건으로 떨어져 있던 약국 발주를 그 약국 밑으로 옮깁니다 (만들기까지) */
 function aquaAdoptStores_(){
   if(!canEdit()) return {made:0,moved:0,names:[]};
@@ -5403,6 +5469,24 @@ function aquaAdoptStores_(){
     lib.orders=lib.orders||{}; lib.orders[pid]=lib.orders[pid]||[]; lib.orders[pid].push(o);
     moved++;
   }
+  /* 본사 장부에 올라간 약국 명세서 → 그 약국 장부로 */
+  const hled=(lib.ledger&&lib.ledger.aquamedi)||{months:{}};
+  Object.keys(hled.months||{}).forEach(function(mk){
+    const docs=hled.months[mk].docs||[];
+    for(let i=docs.length-1;i>=0;i--){
+      const d=docs[i]; const st=d.store||d.branch||'';
+      if(!st||aquaIsHq_(st)) continue;
+      const pid=aquaEnsurePharm_(st,'','');
+      if(pid==='aquamedi') continue;
+      const tl=ledgerOf(pid); tl.months[mk]=tl.months[mk]||{docs:[]};
+      const there=tl.months[mk].docs.some(function(x){ return x.serial===d.serial&&entryKey_(x.store||x.branch)===entryKey_(st); });
+      docs.splice(i,1);
+      if(!there) tl.months[mk].docs.push(d);
+      moved++;
+    }
+  });
+  /* 손으로 넣은 발주와 같은 건을 출고 기록이 한 번 더 들고 온 것 (8/31 생생온누리) */
+  aquaIds().forEach(function(pid){ moved+=dropSheetTwins_(pid); });
   const names=aquaAdded().slice(before).map(function(x){ return x.name; });
   return {made:names.length,moved:moved,names:names};
 }
@@ -5859,6 +5943,8 @@ async function importEntryOrders(logEl,onDone){
     /* 「중복·취소」로 지운 건은 다시 올리지 않습니다 */
     if(orderDropped(g.pid,{srcKey:k})){ return; }
     const prev=list.filter(o=>o.src==='배송요청시트'&&o.srcKey===k)[0];
+    /* 레디영·자사몰 말고는 손으로 넣은 발주가 원본 — 같은 건이면 새로 만들지 않습니다 */
+    if(!prev&&g.pid!=='ready'&&g.pid!=='pharmmall'&&sheetTwinOf_(list,{date:g.date,items:g.items})){ dup++; return; }
     if(prev){
       /* 예전에 약국명 없이 들어간 건을 채워 줍니다 (자사몰 「미상」 행 방지) */
       if(g.store && !prev.store){ prev.store=g.store; fixed++; }
@@ -5884,7 +5970,7 @@ async function importEntryOrders(logEl,onDone){
   Object.keys(byCh).forEach(k=>lines.push('   '+k+' '+byCh[k]+'건'));
   mailLog.forEach(function(x){ lines.push(x); });
   if(adopt.made||adopt.moved) lines.push('   아쿠아메디 소속 약국 새로 '+adopt.made+'곳'+(adopt.names.length?' ('+adopt.names.join(', ')+')':'')+
-    (adopt.moved?' · 본사 직접 건 '+adopt.moved+'건을 옮김':''));
+    (adopt.moved?' · 약국 장부로 옮기거나 겹쳐 지운 발주·명세서 '+adopt.moved+'건':''));
   lines.push('   레디영 — '+(ryN?'발주 '+ryN+'건을 「출고」로 바꿨습니다':'새로 출고된 발주 없음')+(ryErr?' (대조 실패: '+ryErr+')':''));
   lines.push('   자사몰 — 송장 찍힌 출고 '+shipN+'종 확인');
   const uk=Object.keys(unknown);
@@ -7218,7 +7304,7 @@ function renderChannel(view){
   }
   if(meta.id==='aquamedi'){
     try{ const ad=aquaAdoptStores_(); if(ad.made||ad.moved){ persistLib();
-      showToast('아쿠아메디 소속 약국 '+ad.made+'곳을 새로 만들고 발주 '+ad.moved+'건을 옮겼습니다'+(ad.names.length?' — '+ad.names.join(', '):'')); } }catch(e){}
+      showToast('아쿠아메디 정리 — 새 소속 약국 '+ad.made+'곳 · 약국 장부로 옮기거나 겹쳐 지운 발주·명세서 '+ad.moved+'건'+(ad.names.length?' — '+ad.names.join(', '):'')); } }catch(e){}
     /* 약국별 건과 본사 직접 건이 한 줄로 섞여 헷갈렸습니다 — 갈라 둡니다 */
     const g1=groupBox(1,'💊 소속 약국',aquamediPharms().length+'곳 합산','setPriceCalc:grpAq1',true);
     g1.body.appendChild(entrySyncLink());
@@ -7495,7 +7581,7 @@ function buildAquamediRollup(){
   const hs=document.createElement('span');hs.textContent='소속 약국 합산';h.appendChild(hs);
   wrap.appendChild(h);
   const note=document.createElement('div');note.className='hint';note.style.marginBottom='12px';
-  note.innerHTML='신사 타워약국 · 압구정 생생 온누리약국의 <b>발주와 거래명세서를 한 곳에 모아</b> 보여줍니다. 등록·수정은 각 약국 화면에서 하세요.';
+  note.innerHTML='소속 약국의 <b>발주와 거래명세서를 한 곳에 모아</b> 보여줍니다. 명세서는 어느 화면에 올려도 거래처를 보고 그 약국 장부로 들어갑니다.';
   wrap.appendChild(note);
 
   /* 요약 카드 */
