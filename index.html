@@ -2758,46 +2758,19 @@ function buildRyShipList(){
     }
     hs.appendChild(nav);
   }
-  if(rows.length){
-    const tools=document.createElement('div');tools.className='sh-tools';
-    const cb=document.createElement('button');cb.className='icon-btn';
-    cb.textContent='📋 표 복사';
-    cb.addEventListener('click',function(){
-      const tsv=rows.map(function(r){ return RY_SHIP_COLS.map(function(c){ return r[c[0]]; })
-        .join(String.fromCharCode(9)); }).join(String.fromCharCode(10));
-      (navigator.clipboard&&navigator.clipboard.writeText(tsv)
-        ? navigator.clipboard.writeText(tsv) : Promise.reject())
-        .then(function(){ showToast(rows.length+'줄을 복사했습니다 — 사방넷에 입력할 때 붙여 쓰세요'); })
-        .catch(function(){ showToast('복사가 안 됩니다 — 표를 직접 끌어서 복사해주세요'); });
-    });
-    tools.appendChild(cb);
-    tools.appendChild(sboOrderBtn_('ready',function(){ return rows; }));
-    h.appendChild(tools);
-  }
+  /* 배송요청시트에 붙여 넣던 「표 복사」와 시트를 다시 읽던 「출고 반영 확인」은 뺐습니다 (2026-10-09).
+     사방넷 발주 엑셀로 올리고, 출고는 홈에 출고 엑셀을 올릴 때 자동으로 맞춰집니다. */
   {
-    const tools=h.querySelector('.sh-tools')||document.createElement('div');
-    if(!tools.className){ tools.className='sh-tools'; h.appendChild(tools); }
-    const rb=document.createElement('button');rb.className='icon-btn';
-    rb.textContent='🚚 출고 반영 확인';
-    rb.title='사방넷 출고(9월까지는 배송요청시트)를 읽어 나간 발주를 「출고」로 바꾸고 목록에서 내립니다';
-    rb.addEventListener('click',async function(){
-      if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
-      rb.disabled=true;rb.textContent='확인 중…';
-      try{
-        const r=await ryVerifyRows();
-        saveRyVerify(r);
-        const c=applyVerifyToOrders(r);
-        persistLib();
-        showToast(c?('발주 '+c+'건을 「출고」로 바꿨습니다'):'새로 올라간 발주가 없습니다');
-        refreshCurrentView();
-      }catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 출고 반영 확인'; }
-    });
-    tools.appendChild(rb);
+    const tools=document.createElement('div');tools.className='sh-tools';
+    tools.appendChild(sboOrderBtn_('ready',function(){
+      return ryShipRows().filter(function(r){ return !ryShipMonth||String(r.date||'').slice(0,7)===ryShipMonth; });
+    }));
+    h.appendChild(tools);
   }
   wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
-  nt.innerHTML='<b>사방넷에 입력하고 퇴근 전 출고 엑셀을 홈에 올리면</b> 「출고」로 바뀌고 이 목록에서 내려갑니다. 남은 줄이 아직 사방넷에 안 넣은 발주입니다.<br>'+
-    '바로 확인하려면 <b>「🚚 출고 반영 확인」</b>을 누르세요. 주소·전화는 발주 메일의 배송지 정보입니다.';
+  nt.innerHTML='<b>「📤 사방넷 발주 엑셀」</b>로 받아 사방넷 발주등록 → 엑셀등록에 올리세요 (누르면 발주 메일부터 새로 받아옵니다).<br>'+
+    '퇴근 전 <b>사방넷 출고 엑셀을 홈에 올리면</b> 「출고」로 바뀌고 이 목록에서 내려갑니다. 주소·전화는 발주 메일의 배송지 정보입니다.';
   wrap.appendChild(nt);
 
   /* 온라인몰 직배송은 배송요청시트에 담당자 이름으로 찍혀 대조가 안 됩니다.
@@ -3700,7 +3673,7 @@ function moneyGroup(no,pid,ledgerOpts,ledgerLabel,lsKey){
 function entrySyncLink(){
   const d=document.createElement('div');d.className='link-bar';d.style.marginBottom='14px';
   const a=document.createElement('button');a.className='link-btn alt';a.type='button';
-  a.textContent='🚚 출고 자료 → 발주 가져오기';
+  a.textContent='🏠 홈에서 사방넷 출고 엑셀 올리기';
   a.addEventListener('click',function(){ switchView('home'); });
   const n2=document.createElement('span');n2.className='hint';
   n2.style.cssText='align-self:center;';
@@ -3720,6 +3693,111 @@ function foldPanel(titleHtml,rightHtml,lsKey,openDefault){
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';p.appendChild(b);
   return{panel:p,body:b};
+}
+/* ---------- 입금 나누기 ----------
+   8·9월 것을 한 번에 넣는 것처럼 여러 달 대금이 한 입금으로 들어오면,
+   한 달에만 잡혀 앞 달은 미수 · 뒷 달은 초과 입금으로 보입니다 (10/6 신사스퀘어 354,750).
+   달마다 나눠 담습니다. 나눈 조각은 원래 입금의 중복 확인값(key)을 그대로 가져가서
+   같은 클로브 엑셀을 다시 올려도 원래 금액이 또 들어오지 않습니다. */
+function depSplitSuggest_(id,d){
+  const st=d.store||'', total=Number(d.amount)||0;
+  const out=[]; let rem=total;
+  depMonths(id,st).slice().sort().forEach(function(mk){
+    if(rem<=0) return;
+    const sale=salesOf(id,mk,st);
+    const paid=depSum(id,mk,st)-(d.mk===mk?total:0);
+    const due=sale-paid;
+    if(due<=0) return;
+    const a=Math.min(rem,due); out.push({mk:mk,amt:a}); rem-=a;
+  });
+  if(rem>0){
+    const same=out.filter(function(x){ return x.mk===d.mk; })[0];
+    if(same) same.amt+=rem; else out.push({mk:d.mk,amt:rem});
+  }
+  if(out.length<2){
+    /* 못 받은 달을 못 찾으면 원래 달 + 빈 줄 하나 */
+    return [{mk:d.mk,amt:total},{mk:'',amt:0}];
+  }
+  return out.sort(function(a,b){ return a.mk.localeCompare(b.mk); });
+}
+function depSplitModal_(id,d){
+  const total=Number(d.amount)||0;
+  docModalOpen('✂ 입금 나누기 — '+d.date+' '+fmt(total)+'원',function(b){
+    const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='12px';
+    nt.innerHTML='한 번에 들어온 입금을 <b>귀속월마다</b> 나눕니다. '+
+      (d.store?'<b>'+d.store+'</b> · ':'')+'아직 못 받은 달이 있으면 그 금액으로 미리 채워 두었습니다.<br>'+
+      '<span style="color:var(--ink-mute);">나눈 뒤에도 「↺ 합치기」로 되돌릴 수 있고, 같은 클로브 엑셀을 다시 올려도 두 번 잡히지 않습니다.</span>';
+    b.appendChild(nt);
+    const rows=depSplitSuggest_(id,d);
+    const box=document.createElement('div');b.appendChild(box);
+    const sum=document.createElement('div');sum.style.cssText='margin:10px 0;font-weight:800;';
+    const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;align-items:center;';
+    const add=document.createElement('button');add.className='icon-btn';add.textContent='＋ 줄 추가';
+    const save=document.createElement('button');save.className='up-btn';save.textContent='나눠서 저장';save.style.marginLeft='auto';
+    bar.append(add,save);
+    const draw=function(){
+      box.innerHTML='';
+      rows.forEach(function(r,i){
+        const line=document.createElement('div');line.style.cssText='display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;';
+        const m=document.createElement('input');m.className='cell-input';m.placeholder='귀속월 2026-08';m.value=r.mk;m.style.cssText='width:130px;padding:7px 8px;';
+        const a=document.createElement('input');a.className='cell-input';a.placeholder='금액';a.value=r.amt?fmt(r.amt):'';a.style.cssText='width:130px;padding:7px 8px;text-align:right;';
+        const lb=document.createElement('span');lb.className='hint';lb.style.cssText='flex:1;min-width:0;';
+        const info=function(){
+          if(!/^\d{4}-\d{2}$/.test(r.mk)){ lb.textContent=''; return; }
+          const sale=salesOf(id,r.mk,d.store||'');
+          lb.textContent=sale?(mkLabel(r.mk)+' 매출 '+fmt(sale)+'원'):'그 달 매출 없음';
+        };
+        m.addEventListener('input',function(){ r.mk=m.value.trim(); info(); upd(); });
+        a.addEventListener('input',function(){ r.amt=parseInt(String(a.value).replace(/[^0-9]/g,''),10)||0; upd(); });
+        a.addEventListener('blur',function(){ a.value=r.amt?fmt(r.amt):''; });
+        const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
+        x.disabled=rows.length<=2;
+        x.addEventListener('click',function(){ rows.splice(i,1); draw(); });
+        line.append(m,a,lb,x);box.appendChild(line);info();
+      });
+      upd();
+    };
+    const upd=function(){
+      const t=rows.reduce(function(x,r){ return x+(r.amt||0); },0);
+      const okM=rows.every(function(r){ return /^\d{4}-\d{2}$/.test(r.mk)&&r.amt>0; });
+      const diff=total-t;
+      sum.innerHTML='나눈 합계 '+fmt(t)+'원 / 입금 '+fmt(total)+'원'+
+        (diff?' <span style="color:#C62828;">('+(diff>0?'남음 ':'넘침 ')+fmt(Math.abs(diff))+'원)</span>':' <span style="color:var(--good);">✓ 맞음</span>');
+      save.disabled=!(okM&&!diff&&rows.length>=2);
+    };
+    add.addEventListener('click',function(){
+      const t=rows.reduce(function(x,r){ return x+(r.amt||0); },0);
+      rows.push({mk:'',amt:Math.max(0,total-t)}); draw();
+    });
+    save.addEventListener('click',function(){
+      const list=depositsOf(id); const i=list.indexOf(d);
+      if(i<0){ showToast('입금 기록을 찾지 못했습니다 — 새로고침 후 다시 해주세요'); return; }
+      const parts=rows.map(function(r,k){
+        return Object.assign({},d,{id:k===0?d.id:uid('dep'),amount:r.amt,mk:r.mk,
+          splitOf:d.id,splitTotal:total,splitMk:d.mk});
+      });
+      list.splice.apply(list,[i,1].concat(parts));
+      persistLib();
+      document.getElementById('docModal').hidden=true;
+      showToast(fmt(total)+'원을 '+parts.map(function(x){ return mkLabel(x.mk)+' '+fmt(x.amount); }).join(' · ')+'으로 나눴습니다');
+      ledgerRefresh();
+    });
+    b.append(sum,bar);
+    draw();
+  });
+}
+function depMerge_(id,d){
+  const list=depositsOf(id);
+  const parts=list.filter(function(x){ return x.splitOf&&x.splitOf===d.splitOf; });
+  if(!parts.length) return;
+  const total=parts.reduce(function(a,x){ return a+(Number(x.amount)||0); },0);
+  if(!confirm(parts.length+'조각을 다시 한 건('+fmt(total)+'원)으로 합칠까요?')) return;
+  const one=Object.assign({},parts[0],{id:d.splitOf,amount:total,mk:parts[0].splitMk||parts[0].mk});
+  delete one.splitOf; delete one.splitTotal; delete one.splitMk; delete one.split;
+  const i=list.indexOf(parts[0]);
+  for(let k=list.length-1;k>=0;k--) if(parts.indexOf(list[k])>=0) list.splice(k,1);
+  list.splice(Math.min(i,list.length),0,one);
+  persistLib(); showToast('입금을 다시 한 건으로 합쳤습니다'); ledgerRefresh();
 }
 function buildDeposits(id, opts){
   opts=opts||{};
@@ -3850,9 +3928,21 @@ function buildDeposits(id, opts){
         html+='<td'+(d.store?'':' style="color:var(--warn);"')+'>'+(d.store||'⚠ 약국 미지정')+'</td>';
       html+='<td style="font-size:11.5px;color:var(--ink-soft);">'+bankLabel(d.acct)+'</td>'+
         '<td style="text-align:right;font-weight:700;">'+fmt(d.amount)+'</td>'+
-        '<td style="font-size:12px;color:var(--ink-soft);">'+(d.memo||'')+'</td>';
+        '<td style="font-size:12px;color:var(--ink-soft);">'+(d.memo||'')+
+          (d.splitOf?' <span style="color:var(--accent);font-weight:700;white-space:nowrap;">✂ '+fmt(d.splitTotal||0)+'원 중</span>':'')+'</td>';
       tr.innerHTML=html;
-      const td=document.createElement('td');td.style.textAlign='right';
+      const td=document.createElement('td');td.style.cssText='text-align:right;white-space:nowrap;';
+      if(canEdit()){
+        const sp=document.createElement('button');sp.className='icon-btn';sp.style.marginRight='4px';
+        if(d.splitOf){
+          sp.textContent='↺ 합치기';sp.title='나눠 둔 입금을 다시 한 건으로 합칩니다';
+          sp.addEventListener('click',()=>depMerge_(id,d));
+        }else{
+          sp.textContent='✂ 나누기';sp.title='여러 달 것을 한 번에 입금했을 때 달마다 나눠 잡습니다';
+          sp.addEventListener('click',()=>depSplitModal_(id,d));
+        }
+        td.appendChild(sp);
+      }
       const x=document.createElement('button');x.className='del-btn';x.textContent='✕';
       x.addEventListener('click',()=>{
         if(!confirm('이 입금 기록을 지울까요? (휴지통에서 되돌릴 수 있습니다)'+String.fromCharCode(10)+d.date+' '+fmt(d.amount)+'원'))return;
@@ -5479,7 +5569,20 @@ function sboOrderBtn_(chId,getRows){
   const b=document.createElement('button');b.className='icon-btn';
   b.textContent='📤 사방넷 발주 엑셀';
   b.title='사방넷 발주등록 → 엑셀등록(기본서식)에 그대로 올리는 파일을 받습니다. 출고희망일은 오늘입니다.';
-  b.addEventListener('click',function(){ sboOrderXlsx(chId,getRows()); });
+  b.addEventListener('click',async function(){
+    /* 아침에 들어온 메일 주문까지 넣고 뽑습니다 — 따로 「가져오기」를 안 눌러도 됩니다 */
+    b.disabled=true; const t0=b.textContent; b.textContent='메일 주문 받는 중…';
+    let got=false;
+    try{
+      if(canEdit()){
+        const before=JSON.stringify([(lib.orders&&lib.orders.ready||[]).length,mallOrderRows(null,true).length]);
+        await importMailOrders_();
+        got=before!==JSON.stringify([(lib.orders&&lib.orders.ready||[]).length,mallOrderRows(null,true).length]);
+      }
+      await sboOrderXlsx(chId,getRows());
+    }finally{ b.disabled=false; b.textContent=t0; }
+    if(got) refreshCurrentView();
+  });
   return b;
 }
 /* 올린 줄을 담아 둔 줄에 합칩니다 (순수 계산 — 저장은 따로)
@@ -5796,7 +5899,7 @@ async function importEntryOrders(logEl,onDone){
   if(onDone) onDone();
 }
 function buildEntrySync(){
-  const fp=foldPanel('🚚 출고 자료 → 발주 가져오기',
+  const fp=foldPanel('📦 사방넷 출고 엑셀 · 발주 맞추기',
     '<span class="sbo-sum" style="color:var(--ink-mute);font-weight:600;">10월부터 사방넷 출고 엑셀</span>',
     'setPriceCalc:entryOpen',true);
   const wrap=fp.body;
@@ -5832,24 +5935,18 @@ function buildEntrySync(){
   const a=document.createElement('a');a.className='link-btn';a.href=ENTRY_SHEET_URL;
   a.target='_blank';a.rel='noopener';a.textContent='📊 배송요청시트 (9월까지 기록)';
   lb.appendChild(a);
-  const uz=document.createElement('div');uz.className='up-zone';
-  const t1=document.createElement('div');t1.className='uz-title';t1.textContent='🚚 발주 자동등록';
-  const t2=document.createElement('div');t2.className='uz-desc';
-  t2.innerHTML='9월까지는 배송요청시트, 10월부터는 위에 올린 사방넷 출고에서 <b>채널별로</b> 골라 발주로 등록합니다.<br>'+
-    '<span style="color:var(--ink-soft);">약국공급 → 레디영 · 바로팜약국판매 → 바로팜 · '+
-    '개인약국판매 → 아쿠아메디 · 자사몰약국판매 → 자사몰</span><br>'+
-    '같은 날·같은 수취인은 한 건으로 묶고, <b>이미 등록한 건은 건너뜁니다.</b>';
-  uz.append(t1,t2);
-  const btns=document.createElement('div');btns.className='up-btns';
-  const b=document.createElement('button');b.className='up-btn';b.textContent='발주 가져오기';
-  btns.appendChild(b);uz.appendChild(btns);
-  const log=document.createElement('div');log.className='up-log';uz.appendChild(log);
+  /* 예전 「발주 자동등록」 칸은 엑셀을 올리면 자동으로 도는 일이라 한 줄로 줄였습니다 (2026-10-09).
+     엑셀 없이 다시 맞춰 보고 싶을 때(발주를 지웠다 되살렸을 때 등)만 「다시 맞추기」를 씁니다. */
+  const b=document.createElement('button');b.className='link-btn alt';b.type='button';b.textContent='🔄 올린 출고로 다시 맞추기';
+  b.title='새 엑셀 없이, 담아 둔 출고로 메일 주문 받기 · 발주 등록 · 출고 반영을 다시 돌립니다';
+  lb.insertBefore(b,lb.firstChild);
+  const log=document.createElement('div');log.className='up-log';
   b.addEventListener('click',async()=>{
-    b.disabled=true;b.textContent='가져오는 중…';
+    b.disabled=true;b.textContent='맞추는 중…';
     await importEntryOrders(log,refreshCurrentView);
-    b.disabled=false;b.textContent='발주 가져오기';
+    b.disabled=false;b.textContent='🔄 올린 출고로 다시 맞추기';
   });
-  wrap.appendChild(uz);
+  wrap.appendChild(log);
   wrap.appendChild(lb);
   const go=async function(files){
     sbtn.disabled=true;sbtn.textContent='올리는 중…';
@@ -5950,34 +6047,12 @@ function buildMallOrderList(storeName){
   const gN2=rows.length?shipGroups(rows).length:0;
   hs.textContent='📋 출고할 주문'+(rows.length?' ('+gN2+'곳 · '+rows.length+'줄)':'');
   h.appendChild(hs);
-  if(rows.length){
-    const tools=document.createElement('div');tools.className='sh-tools';
-    const cb=document.createElement('button');cb.className='icon-btn';cb.textContent='📋 표 복사';
-    cb.addEventListener('click',()=>{
-      const tsv=rows.map(r=>MALL_COLS.map(c=>r[c[0]]).join('\t')).join('\n');
-      (navigator.clipboard&&navigator.clipboard.writeText(tsv)
-        ? navigator.clipboard.writeText(tsv) : Promise.reject())
-        .then(()=>showToast(rows.length+'줄을 복사했습니다 — 사방넷에 입력할 때 붙여 쓰세요'))
-        .catch(()=>showToast('복사가 안 됩니다 — 표를 직접 끌어서 복사해주세요'));
-    });
-    tools.appendChild(cb);
-    tools.appendChild(sboOrderBtn_('pharmmall',function(){ return rows.map(function(r){ return Object.assign({ono:r.serial},r); }); }));
-    h.appendChild(tools);
-  }
+  /* 「표 복사」(배송요청시트용)·「출고 상태 새로고침」은 뺐습니다 — 사방넷 발주 엑셀 · 홈 출고 엑셀로 대신합니다 */
   {
-    const tools=h.querySelector('.sh-tools')||document.createElement('div');
-    if(!tools.className){tools.className='sh-tools';h.appendChild(tools);}
-    const rb=document.createElement('button');rb.className='icon-btn';
-    rb.textContent='🚚 출고 상태 새로고침';
-    rb.addEventListener('click',async()=>{
-      rb.disabled=true;rb.textContent='확인 중…';
-      try{ const n=await refreshShipped(); mallStampShipDates_(); persistLib();
-           const left=mallOrderRows(null,false).length;
-           showToast('출고 확인 완료 — 송장 '+n+'종 · 아직 못 보낸 '+left+'줄');
-           ledgerRefresh(); }
-      catch(e){ showToast(e.message); rb.disabled=false;rb.textContent='🚚 출고 상태 새로고침'; }
-    });
-    tools.appendChild(rb);
+    const tools=document.createElement('div');tools.className='sh-tools';h.appendChild(tools);
+    tools.appendChild(sboOrderBtn_('pharmmall',function(){
+      return mallOrderRows(storeName,false).map(function(r){ return Object.assign({ono:r.serial},r); });
+    }));
     if(hid){
       const tg=document.createElement('button');tg.className='icon-btn';
       tg.textContent=mallShowShipped?'출고 완료 숨기기':'출고 완료도 보기 ('+hid+')';
@@ -5992,7 +6067,7 @@ function buildMallOrderList(storeName){
     '사업자 정보·서류는 <b>약국 이름</b>을 누르세요.'+
     (hid&&!mallShowShipped?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
     (S.at?'<br><span style="color:var(--ink-mute);">출고 확인 '+String(S.at).slice(0,16).replace('T',' ')+'</span>'
-        :'<br><span style="color:var(--warn);">아직 출고 상태를 안 읽었습니다 — 「🚚 출고 상태 새로고침」을 눌러주세요.</span>');
+        :'<br><span style="color:var(--warn);">아직 출고 상태를 안 읽었습니다 — 홈에 사방넷 출고 엑셀을 올려주세요.</span>');
   wrap.appendChild(nt);
   if(!rows.length){
     const e=document.createElement('div');e.className='hint';
@@ -6129,7 +6204,7 @@ function buildStoreMerge(){
     const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='8px';
     nt.innerHTML='해제하면 앞으로 들어오는 주문부터 다시 따로 잡히고, 이미 합쳐둔 거래·발주는 원래 이름으로 되돌립니다.<br>'+
       '<span style="color:var(--ink-soft);">약국 정보 표로 옮겨 담은 사업자 정보와 출고 대조 기록은 되돌리지 않습니다 '+
-      '(출고는 「출고 상태 새로고침」을 누르면 다시 맞춰집니다).</span>';
+      '(출고는 홈에 사방넷 출고 엑셀을 올리면 다시 맞춰집니다).</span>';
     fp.body.appendChild(nt);
     const tb=document.createElement('table');tb.className='led-table';
     tb.innerHTML='<thead><tr><th>원래 이름</th><th>합친 이름</th><th style="width:90px;">합친 날</th><th style="width:60px;"></th></tr></thead>';
@@ -6631,7 +6706,8 @@ function buildRyVerify(){
   wrap.appendChild(nt);
 
   const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;';
-  const b=document.createElement('button');b.className='icon-btn';b.textContent='🔍 대조하기';
+  /* 대조는 홈에 사방넷 출고 엑셀을 올릴 때 자동으로 돕니다 — 단추는 감춰 둡니다 (2026-10-09) */
+  const b=document.createElement('button');b.className='icon-btn';b.textContent='🔍 대조하기';b.hidden=true;
   const lg=document.createElement('div');lg.className='up-log';lg.style.cssText='max-height:120px;margin-bottom:9px;';
   b.addEventListener('click',async()=>{
     b.textContent='대조 중…';b.disabled=true;lg.classList.add('show');lg.textContent='출고 기록을 읽는 중…';
@@ -6667,7 +6743,7 @@ function buildRyVerify(){
   if(!rows.length){
     const e=document.createElement('div');e.className='empty-box';
     e.innerHTML=saved?'대조 결과가 없습니다 (발주 메일로 들어온 발주가 있어야 합니다).'
-      :'<b>「🔍 대조하기」</b>를 누르면 발주서와 출고 기록를 맞춰봅니다.';
+      :'아직 대조 결과가 없습니다 — <b>홈에 사방넷 출고 엑셀을 올리면</b> 발주서와 출고 기록을 맞춰봅니다.';
     wrap.appendChild(e);return fp.panel;
   }
 
