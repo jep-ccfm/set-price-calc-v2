@@ -3490,13 +3490,18 @@ function parseCloveRows(rows, fileName){
   if(!rows.length) return [];
   let hi=-1;
   for(let i=0;i<Math.min(rows.length,10);i++){
-    if(rows[i].indexOf('거래일시')>=0 && rows[i].indexOf('입금액')>=0){hi=i;break;}
+    /* 2026-10 클로브 「라벨」 양식은 「입금액」이 「입금」으로 바뀌었습니다 — 둘 다 받습니다 */
+    const hr=rows[i].map(x=>String(x||'').trim());
+    if(hr.indexOf('거래일시')>=0 && (hr.indexOf('입금액')>=0||hr.indexOf('입금')>=0)){hi=i;break;}
   }
-  if(hi<0) throw new Error('클로브 거래내역 양식이 아닙니다 (거래일시/입금액 없음)');
+  if(hi<0) throw new Error('클로브 거래내역 양식이 아닙니다 (거래일시/입금 없음)');
   const H=rows[hi].map(x=>String(x||'').trim());
   const ix=n=>H.indexOf(n);
+  const ix2=(a,b)=>ix(a)>=0?ix(a):ix(b);
   const c={dt:ix('거래일시'),acct:ix('계좌번호'),alias:ix('계좌 별칭'),
-           inn:ix('입금액'),out:ix('출금액'),desc:ix('적요'),who:ix('거래자명'),memo:ix('메모')};
+           inn:ix2('입금액','입금'),out:ix2('출금액','출금'),desc:ix('적요'),who:ix('거래자명'),memo:ix('메모'),
+           /* 라벨 양식에만 있는 칸 — 「세 [26-09-30] …」 증빙(세금계산서 작성일자), 거래처 라벨, 잔액 */
+           evid:ix('증빙 연결'),label:ix('거래처 라벨'),bal:ix('거래후잔액')};
   const out=[];
   for(let i=hi+1;i<rows.length;i++){
     const r=rows[i]; if(!r||!String(r[c.dt]||'').trim())continue;
@@ -3515,8 +3520,12 @@ function parseCloveRows(rows, fileName){
     const who=String(r[c.who]||'').trim();
     const memo=String(r[c.memo]||'').trim();
     const desc=String(r[c.desc]||'').trim();
+    const evid=c.evid>=0?String(r[c.evid]||'').trim():'';
+    const label=c.label>=0?String(r[c.label]||'').trim():'';
     out.push({file:fileName,date:date,amount:amt,acct:acct,
-              alias:String(r[c.alias]||'').trim(),payer:who||desc,desc:desc,memo:memo});
+              alias:String(r[c.alias]||'').trim(),payer:who||desc,desc:desc,memo:memo,evid:evid,label:label,
+              /* 한 거래를 가리키는 값 — 통합 시트와 계좌별 시트에 같은 거래가 두 번 들어 있습니다 */
+              uid:[acct,String(r[c.dt]),amt,c.bal>=0?String(r[c.bal]):''].join('|')});
   }
   return out;
 }
@@ -3524,7 +3533,7 @@ function parseCloveRows(rows, fileName){
 function depChannelOf(row){
   const b=BANKS.filter(x=>x.no===row.acct)[0];
   if(b&&b.fixed) return b.fixed;
-  const t=row.payer+' '+row.memo+' '+row.desc;
+  const t=row.payer+' '+row.memo+' '+row.desc+' '+(row.label||'')+' '+(row.evid||'');
   for(const m of DEP_MATCH) if(m.re.test(t)) return m.id;
   return null;
 }
@@ -3551,15 +3560,38 @@ function depMonthOf(row){
       return y+'-'+(m<10?'0':'')+m;
     }
   }
+  /* 메모가 없으면 클로브가 이어 둔 세금계산서 작성일자 — 「세 [26-09-30] 레디영약국」 = 9월분 */
+  const ev=String(row.evid||'').match(/\[(\d{2})-(\d{2})-\d{2}\]/);
+  if(ev) return '20'+ev[1]+'-'+ev[2];
+  /* 바로팜은 주 단위 정산이라 「전월」이 아니라 입금 열흘쯤 전 주문분입니다 (9/4 입금 = 8/27·28 주문) */
+  if(/바로팜|baroph/i.test(row.payer+' '+row.memo+' '+row.desc)){
+    const b=new Date(Date.parse(row.date)-10*86400000);
+    return b.getFullYear()+'-'+(b.getMonth()+1<10?'0':'')+(b.getMonth()+1);
+  }
   const d=new Date(y0,m0-2,1);
   return d.getFullYear()+'-'+(d.getMonth()+1<10?'0':'')+(d.getMonth()+1);
 }
 /* 자사몰 입금자명 → 약국 매칭 */
 function depStoreOf(id,row){
   if(id!=='pharmmall') return '';
-  const p=depNorm(row.payer);
   const list=mallStores();
-  for(const s of list){ const n=depNorm(s); if(n&&(p.indexOf(n)>=0||n.indexOf(p)>=0)) return s; }
+  /* 클로브 라벨 양식은 거래자명에 약사 실명만 있고(「김종환」) 약국 이름은 적요·메모에 있습니다
+     (「김종환(베러미약국)」). 은행이 글자 수로 잘라 「이상곤(신사스퀘어약」처럼 끝이 빠지기도 합니다. */
+  const texts=[row.payer,row.desc,row.memo].map(function(t){ return String(t||''); });
+  const parts=[];
+  texts.forEach(function(t){
+    const pn=t.match(/[(（]([^)）]+)[)）]?\s*$/);
+    if(pn) parts.push(depNorm(pn[1]));
+    parts.push(depNorm(t));
+  });
+  for(const s of list){
+    const n=depNorm(s); if(!n) continue;
+    for(const p of parts){
+      if(!p) continue;
+      if(p.indexOf(n)>=0||n.indexOf(p)>=0) return s;
+      if(p.length>=4&&n.indexOf(p)===0) return s;      /* 잘린 약국명 */
+    }
+  }
   return '';
 }
 async function importDeposits(files, logEl, onDone){
@@ -3571,9 +3603,14 @@ async function importDeposits(files, logEl, onDone){
   for(const f of arr){
     try{
       const wb=XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:'array'});
-      let raw=[];
+      let raw=[];const uids={};
       wb.SheetNames.forEach(sn=>{
-        try{raw=raw.concat(parseCloveRows(XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}),f.name));}catch(e){}
+        try{
+          parseCloveRows(XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}),f.name).forEach(function(r){
+            if(uids[r.uid]) return;        /* 다른 시트에 이미 있는 같은 거래 */
+            uids[r.uid]=1; raw.push(r);
+          });
+        }catch(e){}
       });
       if(!raw.length)throw new Error('입금 행이 없습니다');
       const seen={};
@@ -3586,7 +3623,7 @@ async function importDeposits(files, logEl, onDone){
         const have=list.filter(x=>x.key===key).length;
         if(have>=seen[key]){dup++;return;}                       // 이미 그만큼 있으면 중복
         list.push({id:uid('dep'),key:key,date:row.date,amount:row.amount,
-                   acct:row.acct,payer:row.payer,memo:row.memo||row.desc,
+                   acct:row.acct,payer:row.payer,memo:row.memo||row.evid||row.desc,
                    mk:depMonthOf(row),store:depStoreOf(id,row),src:'클로브'});
         ok++;
         log.push('✓ '+row.date+' '+(CH_LABEL[id]||id)+' '+fmt(row.amount)+'원 · '+row.payer);
