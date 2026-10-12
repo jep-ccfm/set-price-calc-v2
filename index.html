@@ -6458,6 +6458,8 @@ const RV_TODO={miss:1,diff:1,extra:1};
    한 칸만 보면 어긋납니다. 발주일자만 봤더니 명동 9/07·9/08 두 묶음이 한 바구니로
    들어가 9/07 은 출고가 두 배로, 9/08 은 통째로 누락으로 잡혔습니다.
    그래서 두 칸을 다 열쇠로 잡아 두고, 「날짜」가 맞는 것을 먼저 씁니다. */
+/* 레디영 발주 → 출고까지 걸리는 날 (주말 끼면 사나흘) */
+const RY_SHIP_LAG=5;
 async function ryVerifyRows(got0){
   const got=got0||await fetchEntryRows();
   const {rows,c}=got;
@@ -6589,30 +6591,46 @@ async function ryVerifyRows(got0){
       if(left[store].length<2) return;
       groups.forEach(function(g){
         if(g.used||g.store!==store) return;
+        /* 사방넷은 며칠 치 발주를 모아 한 번에 내보냅니다 (10/6·10/7 부산 → 10/8 한 송장).
+           출고일 기준 앞으로 닷새 · 뒤로 하루 안의 발주를 봅니다 */
         const near=left[store].filter(function(i){
           if(picked[i]&&picked[i].hit.length) return false;
           const d=String(orders[i].date||'');
-          return d===g.d1||d===g.d2||d===dayShift(g.d1,1)||d===dayShift(g.d1,-1);
+          return d===g.d2||(d>=dayShift(g.d1,-RY_SHIP_LAG)&&d<=dayShift(g.d1,1));
         });
         if(near.length<2) return;
-        const sum={};
-        near.forEach(function(i){
-          (orders[i].items||[]).forEach(function(it){
-            const m=matchItem(it.name);
-            const ik=itemKey(m?m.name:it.name);
-            sum[ik]=(sum[ik]||0)+(it.qty||0);
+        /* 묶음과 품목·수량이 딱 맞는 조합 — 오래 묵은 다른 발주가 끼어 있어도 찾습니다 */
+        const sumOf=function(ids){
+          const sum={};
+          ids.forEach(function(i){
+            (orders[i].items||[]).forEach(function(it){
+              const m=matchItem(it.name);
+              const ik=itemKey(m?m.name:it.name);
+              sum[ik]=(sum[ik]||0)+(it.qty||0);
+            });
           });
-        });
-        const sk=Object.keys(sum);
-        if(sk.length!==Object.keys(g.items).length) return;
-        const all=sk.every(function(ik){
-          const q=g.items[ik]; if(q==null) return false;
-          const fr=g.free[ik]||0;
-          return q===sum[ik]||q-fr===sum[ik];
-        });
-        if(!all) return;
+          return sum;
+        };
+        const same=function(sum){
+          const sk=Object.keys(sum);
+          if(sk.length!==Object.keys(g.items).length) return false;
+          return sk.every(function(ik){
+            const q=g.items[ik]; if(q==null) return false;
+            const fr=g.free[ik]||0;
+            return q===sum[ik]||q-fr===sum[ik];
+          });
+        };
+        const cand=near.slice(0,10);
+        let best=null;
+        for(let mask=(1<<cand.length)-1;mask>0;mask--){
+          const ids=cand.filter(function(_,b){ return mask&(1<<b); });
+          if(ids.length<2) continue;
+          if(best&&ids.length<=best.length) continue;
+          if(same(sumOf(ids))) best=ids;
+        }
+        if(!best) return;
         g.used=true;
-        near.forEach(function(i){ picked[i]={hit:[g],shift:0,share:true}; });
+        best.forEach(function(i){ picked[i]={hit:[g],shift:0,share:true}; });
       });
     });
   })();
@@ -6625,9 +6643,11 @@ async function ryVerifyRows(got0){
     /* 지점 건은 하루 차이까지만 봅니다. 담당자 이름으로 이어 둔 수취처(창고·온라인몰)는
        발주일과 출고일이 며칠씩 벌어지므로(7/10 G마켓 발주 → 7/14 출고) 2주까지 봅니다.
        어느 쪽이든 품목·수량이 똑같을 때만 잇습니다. */
-    const span=aliasTo[store]?14:1;
+    /* 사방넷 출고는 발주 뒤 며칠 지나 나가기도 합니다 (10/6 홍대2호점 → 10/8 출고).
+       뒤로는 RY_SHIP_LAG 일까지, 앞으로는(출고가 발주보다 빠른 경우) 하루까지만 봅니다. */
+    const span=aliasTo[store]?14:RY_SHIP_LAG;
     for(let k=1;k<=span;k++){
-      const ks=[k,-k];
+      const ks=(aliasTo[store]||k<=1)?[k,-k]:[k];
       for(let j=0;j<ks.length;j++){
         const d2=dayShift(o.date,ks[j]);
         const c=groups.filter(function(g){
