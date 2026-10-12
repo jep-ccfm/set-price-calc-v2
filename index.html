@@ -5777,7 +5777,8 @@ function sboMerge(store,lines,oldInv){
     if(!ch) w('발주타입 「'+type+'」 을 어느 채널로 볼지 모릅니다');
     const tel=L['전화번호1']||L['전화번호2']||'';
     const tl=sboDigits_(tel).length;
-    if(tel&&(tl<9||tl>11)) w(who+' — 전화번호 「'+tel+'」 자릿수가 이상합니다 (사방넷 입력 확인)');
+    /* 이미 담아 둔 줄은 다시 알리지 않습니다 — 올릴 때마다 같은 경고가 떠 새 문제가 묻혔습니다 */
+    if(tel&&(tl<9||tl>11)&&!(k in at)) w(who+' — 전화번호 「'+tel+'」 자릿수가 이상합니다 (사방넷 입력 확인)');
     const done=/완료/.test(L['진행상태']||'');
     const rec={k:k,
       d:entryDate_(L['출고희망일'])||entryDate_(L['발주일자']), od:entryDate_(L['발주일자']),
