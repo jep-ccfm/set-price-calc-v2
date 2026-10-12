@@ -2266,7 +2266,16 @@ function docTwin_(id,doc){
 async function importPdfs(id,files,logEl,onDone){
   const led=ledgerOf(id);let ok=0,fail=0,dup=0;const log=[];
   const arr=[].slice.call(files).filter(f=>/\.pdf$/i.test(f.name));
-  if(!arr.length){showToast('PDF 파일이 없습니다');return;}
+  /* 사진(사업자등록증·계약서 등)을 명세서 칸에 올리면 예전엔 「PDF 파일이 없습니다」만 뜨고 사라졌습니다.
+     약국 화면에서는 「첨부 서류」로 받아 둡니다 (2026-10-12 에이트뷰티) */
+  const pics=[].slice.call(files).filter(f=>!/\.pdf$/i.test(f.name)&&(/^image\//.test(f.type||'')||/\.(png|jpe?g|gif|webp|heic|bmp)$/i.test(f.name)));
+  if(pics.length&&pharmInfoOf(id)&&(aquaIds().indexOf(id)>=0)){
+    let up=0;
+    for(const f of pics){ try{ pharmInfoOf(id).files.push(await uploadPharmFile(id,f)); up++; }catch(e){ showToast(f.name+' — '+e.message); } }
+    if(up){ persistLib(); showToast('사진 '+up+'장을 「첨부 서류」에 올렸습니다 (③ 약국 정보 · 서류)'); }
+    if(!arr.length){ if(onDone)onDone(); return; }
+  }
+  if(!arr.length){showToast(pics.length?'거래명세서는 PDF만 읽습니다 — 사진은 ③ 약국 정보·서류의 「＋ 파일 첨부」로 올려주세요':'PDF 파일이 없습니다');return;}
   logEl.classList.add('show');logEl.textContent='0 / '+arr.length+' 처리 중…';
   for(let i=0;i<arr.length;i++){
     const f=arr[i];
@@ -11848,7 +11857,9 @@ function renderPharm(view){
   const nFile=(info.files||[]).length;
   const gInfo=groupBox(3,'🏥 약국 정보 · 서류',
     (info.biz?'':'<span style="color:var(--warn);">사업자 정보 미입력</span> · ')+
-    '서류 '+nFile+'건','setPriceCalc:grpPh3:'+pid,false);
+    '서류 '+nFile+'건','setPriceCalc:grpPh3:'+pid,
+    /* 정보·서류가 비어 있으면 펼쳐 둡니다 — 접혀 있어 「＋ 파일 첨부」를 못 찾았습니다 */
+    !info.biz||!nFile);
   box=gInfo.body;
 
   const sh=document.createElement('div');sh.className='sec-h';sh.style.marginTop='0';
