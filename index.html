@@ -1330,6 +1330,7 @@
       <div><label>공급가액</label><input type="number" id="txSupply" placeholder="0"></div>
       <div><label>세액</label><input type="number" id="txVat" placeholder="0"></div>
       <div><label>합계</label><input type="number" id="txTotal" placeholder="0"></div>
+      <div class="fg-full"><label>포함 월 <span style="font-weight:500;color:var(--ink-mute);">· 비우면 작성일자의 월 · 합산 발행이면 쉼표로 (예: 2026-08, 2026-09)</span></label><input type="text" id="txCover" placeholder="2026-08, 2026-09"></div>
       <div class="fg-full"><label>비고</label><input type="text" id="txNote" placeholder="예: 8월분 정산"></div>
     </div>
     <label class="flabel">첨부 파일</label>
@@ -8690,6 +8691,7 @@ function openTaxModal(id,recId){
   document.getElementById('txVat').value=ex?(ex.vat||''):'';
   document.getElementById('txTotal').value=ex?(ex.total||''):'';
   document.getElementById('txNote').value=ex?(ex.note||''):'';
+  document.getElementById('txCover').value=ex&&ex.coverMks?ex.coverMks.join(', '):'';
   renderTxFile();
   document.getElementById('taxModal').hidden=false;
 }
@@ -8743,8 +8745,11 @@ document.getElementById('txSave').addEventListener('click',()=>{
   const supply=parseInt(g('txSupply'),10)||0, vat=parseInt(g('txVat'),10)||0;
   const total=parseInt(g('txTotal'),10)||(supply+vat);
   const list=taxDocsOf(txDraft.id);
-  if(txDraft.recId){const r=list.find(x=>x.id===txDraft.recId);if(r){r.date=date;r.supply=supply;r.vat=vat;r.total=total;r.note=g('txNote').trim();r.file=txDraft.file;}}
-  else list.push({id:uid('tax'),date,supply,vat,total,note:g('txNote').trim(),file:txDraft.file});
+  /* 포함 월 — 지난달 거래를 이번 달 계산서에 합쳐 끊은 경우 (9/30 신사스퀘어 8·9월분) */
+  const cov=(String(g('txCover')||'').match(/20\d{2}-\d{2}/g)||[]).filter(function(x,i,a){ return a.indexOf(x)===i; }).sort();
+  const setCov=function(r){ if(cov.length&&!(cov.length===1&&cov[0]===date.slice(0,7))) r.coverMks=cov; else delete r.coverMks; };
+  if(txDraft.recId){const r=list.find(x=>x.id===txDraft.recId);if(r){r.date=date;r.supply=supply;r.vat=vat;r.total=total;r.note=g('txNote').trim();r.file=txDraft.file;setCov(r);}}
+  else{ const r={id:uid('tax'),date,supply,vat,total,note:g('txNote').trim(),file:txDraft.file}; setCov(r); list.push(r); }
   list.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
   persistLib();
   const kid=txDraft.id;txDraft=null;
@@ -9043,13 +9048,29 @@ function branchOfTaxItem(name){
   return m?m[1].trim():String(name||'').trim();
 }
 function isAggTaxItem(name){return /외\s*\d+\s*건/.test(String(name||''));}
+/* 계산서가 담은 월 — 포함 월을 적었으면 그 월들, 아니면 작성일자의 월 */
+function taxCoverOf(t){ return (t.coverMks&&t.coverMks.length)?t.coverMks:[String(t.date||'').slice(0,7)]; }
 function reconcile(id,mk){
-  const led=ledgerOf(id);
+  let led=ledgerOf(id);
+  /* 바로팜은 계산서를 출고일로 끊습니다 — 주문월로 견주면 8/31 주문(9/1 출고)이 어긋납니다 */
+  if(id==='barofarm'){
+    const all=[]; Object.keys(led.months||{}).forEach(function(m){ (led.months[m].docs||[]).forEach(function(d){ all.push(d); }); });
+    led={months:{}};
+    all.forEach(function(d){ const k=String(d.shipDate||d.date||'').slice(0,7)||'기타'; (led.months[k]=led.months[k]||{docs:[]}).docs.push(d); });
+  }
+  let taxes=taxDocsOf(id).filter(t=>taxCoverOf(t).indexOf(mk)>=0);
+  /* 여러 달을 한 장에 담은 계산서가 있으면 그 달들을 묶어서 견줍니다 */
+  const group=[mk];
+  taxes.forEach(function(t){ taxCoverOf(t).forEach(function(m){ if(group.indexOf(m)<0) group.push(m); }); });
+  if(group.length>1){
+    taxes=taxDocsOf(id).filter(function(t){ return taxCoverOf(t).some(function(m){ return group.indexOf(m)>=0; }); });
+    const docs=[]; group.forEach(function(m){ ((led.months[m]||{}).docs||[]).forEach(function(d){ docs.push(d); }); });
+    const one={}; one[mk]={docs:docs}; led={months:one};
+  }
   const ag=aggLedger(led,mk);
-  const taxes=taxDocsOf(id).filter(t=>String(t.date||'').slice(0,7)===mk);
   const taxSupply=taxes.reduce((a,b)=>a+(b.supply||0),0);
   const taxTotal=taxes.reduce((a,b)=>a+(b.total||0),0);
-  const r={mk,taxes,hasTax:taxes.length>0,
+  const r={mk,taxes,hasTax:taxes.length>0,group:group.sort(),
     ledSupply:ag.supply,ledTotal:ag.total,ledDocs:ag.docs.length,
     taxSupply,taxTotal,
     diffSupply:ag.supply-taxSupply,diffTotal:ag.total-taxTotal,
