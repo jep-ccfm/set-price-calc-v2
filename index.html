@@ -5573,7 +5573,7 @@ const SBO_CODES=[
   ['M300KR','비타터닝 나노샷 앰플 30ml'],['M301KR','비타터닝 액티브 캡슐 크림 30ml'],['M302KR','비타터닝 UV쉴드 선크림 30ml'],
   ['M401KR','메라블 클리어 클렌징 패드(15매입)']
 ];
-const SBO_TYPE={ready:'오프라인B2B_레디영', pharmmall:'온라인B2B_자사몰 약사전용관'};
+const SBO_TYPE={ready:'오프라인B2B_레디영', pharmmall:'온라인B2B_자사몰 약사전용관', barofarm:'온라인B2B_바로팜'};
 /* 우리 품목명 → [상품코드, 사방넷 상품명] */
 function sboCodeMap_(so){
   const m={};
@@ -5639,7 +5639,7 @@ async function sboOrderXlsx(chId,rows){
   Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]) ws[k].t='s'; });
   ws['!cols']=SBO_ORDER_HEAD.map(function(h){ return {wch:/주소|상품명/.test(h)?36:/메모/.test(h)?12:14}; });
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'발주등록');
-  const tag=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId;
+  const tag=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId;
   XLSX.writeFile(wb,'사방넷_발주등록_'+tag+'_'+ship.replace(/-/g,'')+'.xlsx');
   const warn=[];
   const nc=Object.keys(noCode), nz=Object.keys(noZip);
@@ -5863,7 +5863,7 @@ async function refreshShipped(got0){
   /* 배송요청시트 전체는 3천 건이 넘습니다. 그대로 담아두면 팀 공용 데이터가
      쓸데없이 무거워지므로, 자사몰 주문에 해당하는 것만 남깁니다. */
   const need={};
-  mallOrderRows(null,true).forEach(function(r){ need[shipKey_(r.store,r.item,r.qty)]=1; });
+  mallOrderRows(null,true).concat(bfOrderRows(null,true)).forEach(function(r){ need[shipKey_(r.store,r.item,r.qty)]=1; });
   const slim={};
   Object.keys(need).forEach(function(k){ if(map[k]) slim[k]=map[k]; });
   const S=shippedOf(); S.map=slim; S.at=new Date().toISOString();
@@ -5932,9 +5932,12 @@ async function importEntryOrders(logEl,onDone){
       addr:String(r[c.addr]||'').trim(),tel:String(r[c.tel]||'').trim(),items:[]};
     groups[key].items.push({name:String(r[c.item]||'').trim(),
       qty:parseInt(String(r[c.qty]||'').replace(/[^0-9]/g,''),10)||0});
+    /* 묶음의 모든 줄에 송장이 찍혀야 나간 것 */
+    const hasInv=c.inv>=0&&!!String(r[c.inv]||'').trim();
+    groups[key].shipped=(groups[key].shipped!==false)&&hasInv;
   });
 
-  let added=0,dup=0,fixed=0;
+  let added=0,dup=0,fixed=0,shipSet=0;
   const byCh={};
   Object.keys(groups).forEach(function(k){
     const g=groups[k];
@@ -5948,9 +5951,12 @@ async function importEntryOrders(logEl,onDone){
     if(prev){
       /* 예전에 약국명 없이 들어간 건을 채워 줍니다 (자사몰 「미상」 행 방지) */
       if(g.store && !prev.store){ prev.store=g.store; fixed++; }
+      /* 사방넷에 송장이 찍혔으면 「출고」 — 하나하나 손으로 바꾸던 일입니다 */
+      if(g.shipped&&(prev.status||'접수')==='접수'){ prev.status='출고'; shipSet++; }
       dup++; return;
     }
-    list.push({id:uid('ord'),date:g.date,status:'접수',
+    if(g.shipped) shipSet++;
+    list.push({id:uid('ord'),date:g.date,status:g.shipped?'출고':'접수',
       note:g.recv+(g.addr?' · '+g.addr:''),items:g.items,
       store:g.store||'',
       src:'배송요청시트',srcKey:k});
@@ -5971,6 +5977,7 @@ async function importEntryOrders(logEl,onDone){
   mailLog.forEach(function(x){ lines.push(x); });
   if(adopt.made||adopt.moved) lines.push('   아쿠아메디 소속 약국 새로 '+adopt.made+'곳'+(adopt.names.length?' ('+adopt.names.join(', ')+')':'')+
     (adopt.moved?' · 약국 장부로 옮기거나 겹쳐 지운 발주·명세서 '+adopt.moved+'건':''));
+  if(shipSet) lines.push('   송장이 찍혀 「출고」로 바꾼 발주 '+shipSet+'건 (바로팜·아쿠아메디 등)');
   lines.push('   레디영 — '+(ryN?'발주 '+ryN+'건을 「출고」로 바꿨습니다':'새로 출고된 발주 없음')+(ryErr?' (대조 실패: '+ryErr+')':''));
   lines.push('   자사몰 — 송장 찍힌 출고 '+shipN+'종 확인');
   const uk=Object.keys(unknown);
@@ -6058,10 +6065,11 @@ function buildEntrySync(){
 /* showShipped 를 켜면 출고 완료된 줄도 같이 보여줍니다 */
 /* 주문의 출고일 = 품목이 모두 나간 날 가운데 마지막 날. 통합 매출 시트의 「출고일·출고월」로 갑니다.
    (재무팀 요청 2026-10-08 — 주문일과 출고일을 같이) */
-function mallStampShipDates_(){
-  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+function mallStampShipDates_(){ return stampShipDates_('pharmmall')+stampShipDates_('barofarm'); }
+function stampShipDates_(ch){
+  const led=(lib.ledger&&lib.ledger[ch])||{months:{}};
   const by={};
-  mallOrderRows(null,true).forEach(function(r){
+  shipOrderRows_(ch,null,true).forEach(function(r){
     const b=by[r.serial]=by[r.serial]||{all:true,last:''};
     if(!r.shipped||!r.shipDate) b.all=false;
     else if(r.shipDate>b.last) b.last=r.shipDate;
@@ -6070,13 +6078,17 @@ function mallStampShipDates_(){
   Object.keys(led.months||{}).forEach(function(mk){
     (led.months[mk].docs||[]).forEach(function(d){
       const b=by[d.serial]; const v=(b&&b.all)?b.last:'';
+      if(ch==='barofarm'){ if(!d.shipDate&&v){ d.shipDate=v; n++; } return; }
       if((d.shipDate||'')!==v){ if(v) d.shipDate=v; else delete d.shipDate; n++; }
     });
   });
   return n;
 }
-function mallOrderRows(storeName,showShipped){
-  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+function mallOrderRows(storeName,showShipped){ return shipOrderRows_('pharmmall',storeName,showShipped); }
+/* 바로팜도 자사몰처럼 — 파트너센터 주문내역(상품별)이 「받은 주문」, 사방넷 출고가 「내보낸 것」 (2026-10-12) */
+function bfOrderRows(storeName,showShipped){ return shipOrderRows_('barofarm',storeName,showShipped); }
+function shipOrderRows_(ch,storeName,showShipped){
+  const led=(lib.ledger&&lib.ledger[ch])||{months:{}};
   const out=[];
   Object.keys(led.months||{}).forEach(mk=>{
     (led.months[mk].docs||[]).forEach(d=>{
@@ -6084,9 +6096,11 @@ function mallOrderRows(storeName,showShipped){
       const m=d.meta||{};
       (d.items||[]).forEach(it=>{
         out.push({date:d.date||'', store:d.branch||'미상',
-          addr:m['약국주소']||'', tel:telFix_(m['전화']),
+          addr:(ch==='barofarm'?m['배송지']:m['약국주소'])||'', tel:telFix_(m['전화']),
           item:it.name||'', qty:Number(it.qty)||0,
-          total:(Number(it.supply)||0)+(Number(it.vat)||0), serial:d.serial||''});
+          total:(Number(it.supply)||0)+(Number(it.vat)||0), serial:d.serial||'',
+          /* 바로팜은 파트너센터가 「출하일」을 찍어 주면 그걸로도 나간 것으로 봅니다 */
+          bfShip:(ch==='barofarm'?String(d.shipDate||''):'')});
       });
     });
   });
@@ -6114,6 +6128,7 @@ function mallOrderRows(storeName,showShipped){
         r.shipped=true; r.shipDate=String(v[bi]||''); v.splice(bi,1);
       } else if(v>0){ r.shipped=true; left[k]=v-1; }  /* 예전에 개수만 담아 둔 기록 */
     });
+  out.forEach(function(r){ if(!r.shipped&&r.bfShip){ r.shipped=true; r.shipDate=r.bfShip; } });
   out.hiddenShipped=out.filter(r=>r.shipped).length;
   if(showShipped) return out;
   const kept=out.filter(r=>!r.shipped);
@@ -6124,34 +6139,39 @@ const MALL_COLS=[['date','날짜',95],['store','약국명',140],['addr','주소'
   ['tel','전화번호',125],['item','품목',230],['qty','수량',60]];
 
 let mallShowShipped=false;
-function buildMallOrderList(storeName){
-  const rows=mallOrderRows(storeName,mallShowShipped);
+function buildMallOrderList(storeName){ return buildShipOrderList_('pharmmall',storeName); }
+const shipShowOf={};
+function buildShipOrderList_(ch,storeName){
+  const isBf=ch==='barofarm';
+  const showS=isBf?!!shipShowOf[ch]:mallShowShipped;
+  const rows=shipOrderRows_(ch,storeName,showS);
   const hid=rows.hiddenShipped||0;
   const wrap=document.createElement('div');
   const h=document.createElement('div');h.className='sec-h';
   const hs=document.createElement('span');
   const gN2=rows.length?shipGroups(rows).length:0;
-  hs.textContent='📋 출고할 주문'+(rows.length?' ('+gN2+'곳 · '+rows.length+'줄)':'');
+  hs.textContent='📋 출고할 주문'+(isBf?' (바로팜)':'')+(rows.filter(function(r){ return !r.shipped; }).length?' ('+gN2+'곳 · '+rows.filter(function(r){ return !r.shipped; }).length+'줄)':'');
   h.appendChild(hs);
   /* 「표 복사」(배송요청시트용)·「출고 상태 새로고침」은 뺐습니다 — 사방넷 발주 엑셀 · 홈 출고 엑셀로 대신합니다 */
   {
     const tools=document.createElement('div');tools.className='sh-tools';h.appendChild(tools);
-    tools.appendChild(sboOrderBtn_('pharmmall',function(){
-      return mallOrderRows(storeName,false).map(function(r){ return Object.assign({ono:r.serial},r); });
+    tools.appendChild(sboOrderBtn_(ch,function(){
+      return shipOrderRows_(ch,storeName,false).map(function(r){ return Object.assign({ono:(isBf?'BF':'')+r.serial},r); });
     }));
     if(hid){
       const tg=document.createElement('button');tg.className='icon-btn';
-      tg.textContent=mallShowShipped?'출고 완료 숨기기':'출고 완료도 보기 ('+hid+')';
-      tg.addEventListener('click',()=>{mallShowShipped=!mallShowShipped;ledgerRefresh();});
+      tg.textContent=showS?'출고 완료 숨기기':'출고 완료도 보기 ('+hid+')';
+      tg.addEventListener('click',()=>{ if(isBf) shipShowOf[ch]=!showS; else mallShowShipped=!mallShowShipped; ledgerRefresh(); });
       tools.appendChild(tg);
     }
   }
   wrap.appendChild(h);
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
   const S=shippedOf();
-  nt.innerHTML='<b>송장번호가 찍히면 목록에서 사라집니다</b> — 홈에 사방넷 출고 엑셀을 올리면 자동으로 맞춰집니다. 남은 줄이 아직 못 보낸 주문입니다.<br>'+
-    '사업자 정보·서류는 <b>약국 이름</b>을 누르세요.'+
-    (hid&&!mallShowShipped?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
+  nt.innerHTML=(isBf?'<b>「📤 사방넷 발주 엑셀」</b>로 받아 사방넷 발주등록 → 엑셀등록에 올리세요. ':'')+
+    '<b>송장번호가 찍히면 목록에서 사라집니다</b> — 홈에 사방넷 출고 엑셀을 올리면 자동으로 맞춰집니다. 남은 줄이 아직 못 보낸 주문입니다.<br>'+
+    (isBf?'주소·전화는 파트너센터 주문의 배송지입니다.':'사업자 정보·서류는 <b>약국 이름</b>을 누르세요.')+
+    (hid&&!showS?'<br><span style="color:var(--good);">출고 완료 '+hid+'줄은 감췄습니다.</span>':'')+
     (S.at?'<br><span style="color:var(--ink-mute);">출고 확인 '+String(S.at).slice(0,16).replace('T',' ')+'</span>'
         :'<br><span style="color:var(--warn);">아직 출고 상태를 안 읽었습니다 — 홈에 사방넷 출고 엑셀을 올려주세요.</span>');
   wrap.appendChild(nt);
@@ -6159,7 +6179,8 @@ function buildMallOrderList(storeName){
     const e=document.createElement('div');e.className='hint';
     e.innerHTML=hid
       ? '✅ 출고할 주문이 없습니다 — '+hid+'줄 모두 송장이 찍혔습니다.'
-      : '아직 가져온 주문이 없습니다. 위 <b>「시트에서 주문 가져오기」</b>를 눌러주세요.';
+      : (isBf?'아직 올린 주문이 없습니다. 위에 <b>파트너센터 주문내역(상품별) 엑셀</b>을 올려주세요.'
+             :'아직 가져온 주문이 없습니다. 위 <b>「시트에서 주문 가져오기」</b>를 눌러주세요.');
     wrap.appendChild(e);return wrap;
   }
   const t=document.createElement('table');t.className='led-table';t.style.minWidth='950px';
@@ -7294,8 +7315,10 @@ function renderChannel(view){
     box.appendChild(nt);
     /* ① 주문 → ② 정산 점검 → ③ 돈 → ④ 자료 */
     const bOrd=(ordersOf('barofarm')||[]).length;
-    const g1=groupBox(1,'📦 주문 받고 내보내기','발주 '+bOrd+'건','setPriceCalc:grpBf1',true);
+    let bLeft=0; try{ bLeft=bfOrderRows(null,false).length; }catch(e){}
+    const g1=groupBox(1,'📦 주문 받고 내보내기',(bLeft?'<span style="color:var(--warn);">출고할 '+bLeft+'줄</span> · ':'')+'발주 '+bOrd+'건','setPriceCalc:grpBf1',true);
     g1.body.appendChild(buildBarofarmUploader(meta.id));
+    g1.body.appendChild(buildShipOrderList_('barofarm',null));
     g1.body.appendChild(entrySyncLink());
     g1.body.appendChild(buildOrders(meta.id,view));
     box.appendChild(g1.group);
@@ -8460,7 +8483,9 @@ function buildBarofarmUploader(id){
   const uz=document.createElement('div');uz.className='up-zone';
   const t1=document.createElement('div');t1.className='uz-title';t1.textContent='📊 바로팜 주문내역 업로드 (.xlsx)';
   const t2=document.createElement('div');t2.className='uz-desc';
-  t2.innerHTML='바로팜 파트너센터 → 주문 관리 → 주문 내역에서 <b>「다운로드(상품별)」</b> 받은 엑셀을 올리세요.<br>약국·상품·금액을 자동으로 읽어 월별로 집계합니다. <span style="color:var(--warn)">주문별 파일은 수량 정보가 없어 금액만 집계됩니다.</span>';
+  t2.innerHTML='바로팜 파트너센터 → 주문 관리 → 주문 내역에서 <b>「다운로드(상품별)」</b> 받은 엑셀을 올리세요.<br>'+
+    '아래 <b>「출고할 주문」</b>에 뜨고, 거기서 사방넷 발주 엑셀을 받습니다. 매출도 월별로 집계합니다. '+
+    '<span style="color:var(--warn)">주문별 파일은 수량 정보가 없어 금액만 집계됩니다.</span>';
   uz.append(t1,t2);
   const btns=document.createElement('div');btns.className='up-btns';
   const fi=document.createElement('input');fi.type='file';fi.accept='.xlsx,.xls';fi.multiple=true;fi.hidden=true;
