@@ -5665,7 +5665,20 @@ function sboOrderBtn_(chId,getRows){
         await importMailOrders_();
         got=before!==JSON.stringify([(lib.orders&&lib.orders.ready||[]).length,mallOrderRows(null,true).length]);
       }
-      await sboOrderXlsx(chId,getRows());
+      let rows=getRows();
+      /* 레디영 지점 자체(ready)는 2km 대상이 아닙니다 */
+      if(chId!=='ready'){
+        b.textContent='2km 판정 중…';
+        const jr=await autoJudge_(rows.map(function(r){ return r.addr; }));
+        if(jr.done) got=true;
+        const ng=geoNgText_(rows);
+        if(ng.length&&confirm('⛔ 레디영 2km 이내 약국이 있습니다'+String.fromCharCode(10)+ng.join(String.fromCharCode(10))+
+            String.fromCharCode(10,10)+'[확인] 이 약국은 빼고 받기   [취소] 그대로 넣기')){
+          rows=rows.filter(function(r){ const j=geoJudgeOf_(r.addr); return !(j&&j.ok===false); });
+        }
+        if(jr.nokey) showToast('이 PC엔 VWorld 키가 없어 2km 판정을 못 했습니다');
+      }
+      await sboOrderXlsx(chId,rows);
     }finally{ b.disabled=false; b.textContent=t0; }
     if(got) refreshCurrentView();
   });
@@ -5892,6 +5905,15 @@ async function importMailOrders_(){
   catch(e){ out.push('   레디영 발주 메일 — 읽지 못했습니다 ('+(e.message||'')+')'); }
   try{ await importMallSheet(l2,null); out.push('   자사몰 주문 메일 — '+first(l2)); }
   catch(e){ out.push('   자사몰 주문 메일 — 읽지 못했습니다 ('+(e.message||'')+')'); }
+  /* 레디영 2km — 아직 안 나간 자사몰·바로팜 주문 약국과 아쿠아메디 소속 약국 */
+  try{
+    const left=mallOrderRows(null,false).concat(bfOrderRows(null,false));
+    const aq=aquaAdded().map(function(x){ const inf=pharmInfoOf(x.pid); return inf.ship||inf.addr||''; });
+    const jr=await autoJudge_(left.map(function(r){ return r.addr; }).concat(aq));
+    const ng=geoNgText_(left);
+    if(jr.nokey) out.push('   2km 판정 — 이 PC에 VWorld 키가 없어 못 했습니다');
+    else if(jr.done||ng.length) out.push('   2km 판정 '+jr.done+'곳'+(ng.length?' · ⛔ 2km 이내: '+ng.join(', '):''));
+  }catch(e){}
   return out;
 }
 async function importEntryOrders(logEl,onDone){
@@ -6168,6 +6190,19 @@ function buildShipOrderList_(ch,storeName){
     }
   }
   wrap.appendChild(h);
+  {
+    const ng=geoNgText_(rows.filter(function(r){ return !r.shipped; }));
+    const un=[...new Set(rows.filter(function(r){ return !r.shipped&&r.addr&&!geoJudgeOf_(r.addr); }).map(function(r){ return r.store; }))];
+    if(ng.length||un.length){
+      const gw=document.createElement('div');
+      gw.style.cssText='margin:-2px 0 10px;padding:8px 11px;border-radius:8px;font-size:12.5px;'+
+        (ng.length?'background:#FDECEA;border:1.5px solid #E57373;color:#B71C1C;':'background:#F6F4EF;color:var(--ink-soft);');
+      gw.innerHTML=(ng.length?'⛔ <b>레디영 2km 이내</b> — '+ng.join(', ')+'. 출고 전에 판매 가능 여부를 확인하세요.':'')+
+        (un.length?(ng.length?'<br>':'')+'2km 미판정 '+un.length+'곳 — 「📤 사방넷 발주 엑셀」을 누르면 먼저 판정합니다'+
+          (mapsKey()?'':' <span style="color:var(--warn);">(이 PC엔 VWorld 키가 없어 판정을 못 합니다 — 2km 규약 검사 화면에서 키를 넣어주세요)</span>'):'');
+      wrap.appendChild(gw);
+    }
+  }
   const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
   const S=shippedOf();
   nt.innerHTML=(isBf?'<b>「📤 사방넷 발주 엑셀」</b>로 받아 사방넷 발주등록 → 엑셀등록에 올리세요. ':'')+
@@ -6196,7 +6231,7 @@ function buildShipOrderList_(ch,storeName){
       if(i===0){
         tr.innerHTML=
           '<td rowspan="'+g.items.length+'" style="white-space:nowrap;vertical-align:top;">'+(g.date||'-')+'</td>'+
-          '<td rowspan="'+g.items.length+'" style="vertical-align:top;"><b>'+g.store+'</b></td>'+
+          '<td rowspan="'+g.items.length+'" style="vertical-align:top;'+((geoJudgeOf_(g.addr)||{}).ok===false?'background:#FDECEA;':'')+'"><b>'+g.store+'</b>'+geoBadge_(g.addr)+'</td>'+
           '<td rowspan="'+g.items.length+'" style="font-size:12px;color:var(--ink-soft);vertical-align:top;">'+(g.addr||'-')+'</td>'+
           '<td rowspan="'+g.items.length+'" style="white-space:nowrap;vertical-align:top;">'+(g.tel||'-')+'</td>';
       }
@@ -7860,8 +7895,18 @@ async function importBarofarm(id,files,logEl,onDone){
   const months=Object.keys(led.months).sort();
   if(months.length&&(!led.activeMonth||!led.months[led.activeMonth]))led.activeMonth=months[months.length-1];
   persistLib();
-  logEl.textContent='완료 — 등록 '+ok+'건'+(dup?' · 중복 '+dup+'건':'')+(fail?' · 실패 '+fail+'건':'')+'\n'+log.join('\n');
-  showToast('바로팜 주문 '+ok+'건이 등록되었습니다');
+  /* 새로 들어온 약국 주소 — 레디영 2km 판정 */
+  let geoTxt='';
+  try{
+    const addrs=[];
+    Object.keys(led.months).forEach(function(m){ (led.months[m].docs||[]).forEach(function(d){ if(d.meta&&d.meta.배송지) addrs.push(d.meta.배송지); }); });
+    const jr=await autoJudge_(addrs);
+    const ng=geoNgText_(bfOrderRows(null,false));
+    geoTxt=(jr.nokey?'\n· 2km 판정 못 함 — 이 PC에 VWorld 키 없음':(jr.done?'\n· 2km 판정 '+jr.done+'곳':''))+
+      (ng.length?'\n⛔ 출고할 주문 중 레디영 2km 이내: '+ng.join(', '):'');
+  }catch(e){}
+  logEl.textContent='완료 — 등록 '+ok+'건'+(dup?' · 중복 '+dup+'건':'')+(fail?' · 실패 '+fail+'건':'')+geoTxt+'\n'+log.join('\n');
+  showToast('바로팜 주문 '+ok+'건이 등록되었습니다'+(geoTxt.indexOf('⛔')>=0?' — ⛔ 2km 이내 약국 있음':''));
   if(onDone)onDone();
 }
 /* ---------- 바로팜 정산서(XLSX) 대사 ----------
@@ -9248,6 +9293,45 @@ async function judgeAddress(addr){
   return{...g.checks[key],...j,cached:false};
 }
 const distLabel=m=>m>=1000?(m/1000).toFixed(2)+'km':m+'m';
+/* ---------- 레디영 2km 자동 판정 (2026-10-12) ----------
+   판정은 각 채널 「참고자료」의 단추를 눌러야만 돌아서, 새 주문 약국이 판정 없이
+   출고 목록에 올라갔습니다. 주문이 들어올 때 · 사방넷 발주 엑셀을 받을 때 저절로 돌립니다.
+   VWorld 키는 브라우저마다 따로 저장돼 있어 키가 없는 PC에서는 건너뜁니다. */
+function geoJudgeOf_(addr){
+  const k=String(addr||'').trim(); if(!k) return null;
+  const c=geoStore().checks[k];
+  if(!c||typeof c.lat!=='number') return null;
+  return judgePoint(c);
+}
+async function autoJudge_(addrs){
+  const res={done:0,fail:0,ng:[],nokey:false};
+  const todo=[...new Set((addrs||[]).map(function(a){ return String(a||'').trim(); }).filter(Boolean))]
+    .filter(function(a){ return !geoJudgeOf_(a); });
+  if(!todo.length) return res;
+  if(!mapsKey()){ res.nokey=true; return res; }
+  for(const a of todo.slice(0,30)){
+    try{ await judgeAddress(a); res.done++; }catch(e){ res.fail++; }
+  }
+  return res;
+}
+/* 약국 이름 아래 붙이는 한 줄 */
+function geoBadge_(addr){
+  if(!String(addr||'').trim()) return '<div style="font-size:11px;color:var(--warn);">주소 없음 — 2km 판정 불가</div>';
+  const j=geoJudgeOf_(addr);
+  if(!j) return '<div style="font-size:11px;color:var(--ink-mute);">2km 미판정</div>';
+  if(j.ok===null) return '<div style="font-size:11px;color:var(--warn);">레디영 지점 좌표 필요</div>';
+  return j.ok
+    ?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 2km 밖 · '+j.nearest+' '+distLabel(j.dist)+'</div>'
+    :'<div style="font-size:11.5px;color:#C62828;font-weight:800;">⛔ 레디영 2km 이내 · '+j.nearest+' '+distLabel(j.dist)+'</div>';
+}
+function geoNgText_(rows){
+  const seen={}, out=[];
+  rows.forEach(function(r){
+    const j=geoJudgeOf_(r.addr);
+    if(j&&j.ok===false&&!seen[r.store]){ seen[r.store]=1; out.push(r.store+'('+j.nearest+' '+distLabel(j.dist)+')'); }
+  });
+  return out;
+}
 
 /* ============================================================
    휴지통 — 삭제한 항목을 보관하고 되돌립니다 (팀 공용)
