@@ -9224,9 +9224,12 @@ function loadMaps(){
 }
 /* 상세주소가 붙으면 검색이 실패하므로 단계적으로 줄여가며 재시도 */
 function addrVariants(addr){
-  const base=String(addr||'').trim();
+  const raw=String(addr||'').trim();
   const out=[];
   const push=v=>{v=String(v||'').replace(/\s{2,}/g,' ').trim();if(v&&out.indexOf(v)<0)out.push(v);};
+  push(raw);
+  /* 「중앙대로694」처럼 도로명과 번지가 붙어 있으면 못 찾습니다 (서면짱약국) — 띄워서 */
+  const base=raw.replace(/([가-힣](?:로|길))(\d)/g,'$1 $2');
   push(base);
   push(base.replace(/[(（][^)）]*[)）]/g,' '));
   push(base.split(',')[0]);
