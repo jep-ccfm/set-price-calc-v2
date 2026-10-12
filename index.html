@@ -5621,7 +5621,9 @@ async function sboOrderXlsx(chId,rows){
   const ship=sboToday_();
   const aoa=[SBO_ORDER_HEAD.slice()];
   rows.forEach(function(r){
-    const c=codes[itemKey(r.item)]||null;
+    /* 바로팜 상품명은 「메라블 유쎄라블 …」처럼 브랜드가 붙어 옵니다 — 우리 품목명으로 맞춰 찾습니다 */
+    const mi=matchItem(r.item);
+    const c=codes[itemKey(r.item)]||codes[itemKey(itemLabel(r.item))]||(mi?codes[itemKey(mi.name)]:null)||null;
     if(!c) noCode[r.item]=1;
     const pl=sboPlaceOf_(so,r.store,r.addr);
     if(!pl) noZip[r.store]=1;
