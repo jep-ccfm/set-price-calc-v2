@@ -3694,6 +3694,28 @@ function groupBox(no,title,sub,lsKey,openDefault){
 /* 미수금 한 줄 요약 — 채널 화면·아쿠아메디·입금 칸이 같은 값을 쓰게 합니다.
    바로팜은 주간 정산이라 미수 개념이 없고(홈 마감 체크와 같은 규칙),
    결제 기한 전인 이번 달 돈까지 빨갛게 세우면 홈 알림과 어긋나 보입니다. */
+/* ---------- 입금 기한 협의 ----------
+   약국과 입금 날짜를 따로 정하면(10월 입금 협의 — 생생온누리 8월분) 계약상 기한으로 보면 연체가 됩니다.
+   약국·월마다 협의한 기한을 적어 두고, 미수금·연체 판정은 그 날짜를 씁니다. 통합 매출 시트도 읽습니다. */
+function payDueAdjOf(){ lib.payDueAdj=lib.payDueAdj||{}; return lib.payDueAdj; }
+function payDueKey_(pid,store,mk){ return pid+'|'+(store||'')+'|'+mk; }
+function payDueAdj_(pid,store,mk){
+  const A=payDueAdjOf();
+  const hit=A[payDueKey_(pid,store,mk)];
+  if(hit) return hit;
+  /* 아쿠아메디 합계 줄 — 소속 약국에 협의가 있으면 그중 늦은 날 */
+  if(pid==='aquamedi'&&!store){
+    let best=null;
+    aquaIds().forEach(function(x){ const h=A[payDueKey_(x,'',mk)]; if(h&&(!best||h.due>best.due)) best=h; });
+    return best;
+  }
+  return null;
+}
+function payDueOf(pid,mk,store){
+  const adj=payDueAdj_(pid,store,mk);
+  if(adj&&/^\d{4}-\d{2}-\d{2}$/.test(adj.due)) return new Date(adj.due+'T00:00:00');
+  return b2bDue(mk,pid).pay;
+}
 function arOf(pid,store){
   let over=0,soon=0;
   if(pid==='barofarm') return {over:0,soon:0,weekly:true};
@@ -3701,7 +3723,7 @@ function arOf(pid,store){
     depMonths(pid,store||'').forEach(function(m){
       const sv=salesOf(pid,m,store||''); const d=sv-depSum(pid,m,store||'');
       if(!sv||d<=0) return;
-      let due=null; try{ due=b2bDue(m,pid).pay; }catch(e){}
+      let due=null; try{ due=payDueOf(pid,m,store||''); }catch(e){}
       if(due&&!pastDue(due)) soon+=d; else over+=d;
     });
   }catch(e){}
@@ -3886,11 +3908,39 @@ function buildDeposits(id, opts){
     tr.innerHTML='<td style="white-space:nowrap;font-weight:700;">'+mkLabel(mk)+'</td>'+
       '<td style="text-align:right;">'+fmt(sale)+'</td>'+
       '<td style="text-align:right;'+(paid?'':'color:var(--ink-soft);')+'">'+fmt(paid)+'</td>'+
-      '<td style="text-align:right;'+(!sale?'color:var(--ink-soft);':(ar>0?'color:#C62828;font-weight:800;':(ar<0?'color:var(--warn);font-weight:700;':'color:var(--ink-soft);')))+'">'+
+      '<td class="dep-ar" style="text-align:right;'+(!sale?'color:var(--ink-soft);':(ar>0?'color:#C62828;font-weight:800;':(ar<0?'color:var(--warn);font-weight:700;':'color:var(--ink-soft);')))+'">'+
         (!sale?'입금만':(ar===0?'—':fmt(ar)))+'</td>'+
       '<td style="white-space:nowrap;font-size:12px;">'+depCell(ds.map(d=>d.date))+'</td>'+
       '<td style="font-size:12px;">'+depCell(ds.map(d=>d.payer))+'</td>'+
       '<td style="font-size:11.5px;color:var(--ink-soft);">'+depCell(ds.map(d=>bankLabel(d.acct)))+'</td>';
+    /* 미수가 있으면 입금 기한 협의 — 날짜를 정해 두면 그때까지 연체로 안 봅니다 */
+    {
+      const adj=payDueAdj_(id,store,mk);
+      const td=tr.querySelector('.dep-ar');
+      if(adj){
+        const t=document.createElement('div');t.style.cssText='font-size:11px;color:var(--ink-soft);font-weight:600;';
+        t.textContent='📅 협의 기한 '+adj.due+(adj.note?' · '+adj.note:'');td.appendChild(t);
+      }
+      if((ar>0||adj)&&canEdit()&&(id!=='aquamedi'||adj)){
+        const b=document.createElement('button');b.className='icon-btn';b.style.cssText='font-size:11px;padding:2px 6px;margin-top:3px;';
+        b.textContent=adj?'📅 기한 수정':'📅 기한 협의';
+        b.title='약국과 입금 날짜를 따로 정했으면 적어 두세요 — 그날까지 연체로 보지 않습니다 (비우면 계약 기한으로 돌아갑니다)';
+        b.addEventListener('click',function(){
+          const now=new Date(); const last=new Date(now.getFullYear(),now.getMonth()+1,0);
+          const z=function(x){ return String(x).padStart(2,'0'); };
+          const def=adj?adj.due:(last.getFullYear()+'-'+z(last.getMonth()+1)+'-'+z(last.getDate()));
+          const v=prompt(mkLabel(mk)+' 입금 기한 (예: 2026-10-31) — 비우면 계약 기한으로 되돌립니다',def);
+          if(v===null) return;
+          const k=payDueKey_(id,store,mk);
+          if(!String(v).trim()){ delete payDueAdjOf()[k]; persistLib(); showToast('계약 기한으로 되돌렸습니다'); ledgerRefresh(); return; }
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(String(v).trim())){ showToast('날짜는 2026-10-31 처럼 적어주세요'); return; }
+          const note=prompt('메모 (예: 10월 입금으로 협의)',adj?adj.note||'':'')||'';
+          payDueAdjOf()[k]={due:String(v).trim(),note:note.trim(),at:new Date().toISOString()};
+          persistLib(); showToast(mkLabel(mk)+' 입금 기한을 '+String(v).trim()+'로 적었습니다'); ledgerRefresh();
+        });
+        td.appendChild(b);
+      }
+    }
     tb.appendChild(tr);
   });
   t.appendChild(tb);wrap.appendChild(t);
@@ -11452,7 +11502,7 @@ function renderHome(){
       const sale=salesOf(id,m2), paid=depSum(id,m2), ar=sale-paid;
       if(ar<=0||!sale)return;
       const y=parseInt(m2.slice(0,4),10), mo=parseInt(m2.slice(5,7),10);
-      const due=b2bDue(m2,id).pay;
+      const due=payDueOf(id,m2,'');
       if(!pastDue(due))return;                       // 결제일(당일 포함) 전이면 알리지 않음
       alerts.push({t:'🔴 '+label+' '+mkLabel(m2)+' 미수금 '+fmt(ar)+'원',
         s:'결제 기한 '+ymdText(due)+' 경과 — 입금 확인 필요',view,kind:'warn'});
