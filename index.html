@@ -3354,12 +3354,28 @@ function branchStockLive(){
   });
   return {cols:cols,rows:rows,newCols:newCols,newRows:newRows,dropped:dropped};
 }
+/* 지점별 취급 품목을 공용 저장소에 남깁니다 — 중국 인플루언서 체험단 시트의 「지점별 판매품목」 탭이
+   이걸 읽어 그립니다 (2026-10-13 연결). 바뀐 때만 저장합니다. */
+function saveBranchSnap_(L){
+  try{
+    L=L||branchStockLive();
+    const snap={cols:L.cols.slice(),rows:L.rows.map(function(r){
+      return {line:r.line,name:r.name,marks:r.cells.map(function(x){ return x.n?'●':(x.ent?'○':'·'); }),
+        n:r.cells.map(function(x){ return x.n||0; }),last:r.cells.map(function(x){ return x.last||''; })};
+    })};
+    const old=lib.branchStock?JSON.stringify({cols:lib.branchStock.cols,rows:lib.branchStock.rows}):'';
+    if(old===JSON.stringify(snap)) return false;
+    snap.at=new Date().toISOString();
+    lib.branchStock=snap;
+    return true;
+  }catch(e){ return false; }
+}
 function buildBranchStock(){
   const lsKey='setPriceCalc:branchOpen';
   const open=localStorage.getItem(lsKey)==='1';   /* 기본 접힘 — 세로로 길어 월별 화면을 밀어낸다 */
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   let L;
-  try{ L=branchStockLive(); }
+  try{ L=branchStockLive(); if(canEdit()&&saveBranchSnap_(L)) persistLib(); }
   catch(e){ L={cols:BRANCH_LIST.slice(),newCols:[],newRows:[],dropped:0,
     rows:BRANCH_STOCK.map(function(r){ return {line:r[0],name:r[1],base:r[2].slice(),isNew:false,
       cells:r[2].map(function(v){ return {ent:v?1:0,n:0,last:''}; })}; })}; }
@@ -6211,6 +6227,7 @@ async function importEntryOrders(logEl,onDone){
      예전엔 채널 화면에서 「출고 상태 새로고침」「출고 반영 확인」을 따로 눌러야 했습니다 */
   let shipN=0, ryN=0, ryErr='';
   try{ shipN=await refreshShipped(got); mallStampShipDates_(); }catch(e){}
+  try{ saveBranchSnap_(); }catch(e){}
   try{ const rv=await ryVerifyRows(got); saveRyVerify(rv); ryN=applyVerifyToOrders(rv); }catch(e){ ryErr=e.message||''; }
   persistLib();
 
