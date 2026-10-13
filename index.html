@@ -5915,6 +5915,7 @@ function telFix_(v){
   if(d.length>=8&&d.length<=10) return '0'+d;
   return d;
 }
+function shipQKey_(recv,item){ return entryKey_(canonStore(recv))+'|'+itemKey(itemLabel(item)); }
 function shipKey_(recv,item,qty){
   /* 대소문자·어순까지 다릅니다 (「유쎄라블 4d 실프팅 크림」 ↔ 「유쎄라블 실프팅 4D 크림」)
      — 공백만 지워서는 안 맞아 우리 품목명으로 맞춘 뒤 견줍니다 */
@@ -5928,12 +5929,16 @@ async function refreshShipped(got0){
   const got=got0||await fetchEntryRows();
   /* 개수만 세면 같은 약국이 같은 품목·수량을 두 번 시키면 어느 쪽이 나갔는지
      모릅니다 — 송장이 찍힌 날짜를 같이 적어 둡니다. */
-  const map={};
+  const map={}, qmap={};
   got.rows.forEach(function(r){
     if(got.c.inv<0) return;
     if(!String(r[got.c.inv]||'').trim()) return;
     const k=shipKey_(r[got.c.recv],r[got.c.item],r[got.c.qty]);
     (map[k]=map[k]||[]).push(entryDate_(r[got.c.date])||'');
+    /* 사방넷은 같은 약국 주문 몇 건을 한 송장으로 합칩니다 — 리프팅샷 5+5 가 「10」 한 줄 (10/6 마린).
+       줄 수량이 아니라 약국·품목별 수량으로도 담아 둡니다 */
+    const q=parseInt(String(r[got.c.qty]||'').replace(/[^0-9]/g,''),10)||0;
+    if(q>0) (qmap[shipQKey_(r[got.c.recv],r[got.c.item])]=qmap[shipQKey_(r[got.c.recv],r[got.c.item])]||[]).push([entryDate_(r[got.c.date])||'',q]);
   });
   Object.keys(map).forEach(function(k){ map[k].sort(); });
   /* 배송요청시트 전체는 3천 건이 넘습니다. 그대로 담아두면 팀 공용 데이터가
@@ -5942,7 +5947,10 @@ async function refreshShipped(got0){
   mallOrderRows(null,true).concat(bfOrderRows(null,true)).forEach(function(r){ need[shipKey_(r.store,r.item,r.qty)]=1; });
   const slim={};
   Object.keys(need).forEach(function(k){ if(map[k]) slim[k]=map[k]; });
-  const S=shippedOf(); S.map=slim; S.at=new Date().toISOString();
+  const qneed={}, qslim={};
+  mallOrderRows(null,true).concat(bfOrderRows(null,true)).forEach(function(r){ qneed[shipQKey_(r.store,r.item)]=1; });
+  Object.keys(qneed).forEach(function(k){ if(qmap[k]) qslim[k]=qmap[k].sort(function(a,b){ return String(a[0]).localeCompare(String(b[0])); }); });
+  const S=shippedOf(); S.map=slim; S.qmap=qslim; S.at=new Date().toISOString();
   return Object.keys(slim).length;
 }
 /* 자사몰은 통합 매출 시트에서 약국별로 행이 나뉩니다.
@@ -6198,7 +6206,30 @@ function shipOrderRows_(ch,storeName,showShipped){
      송장 가운데 가장 이른 것과 잇습니다. */
   const left={}; const S=shippedOf().map||{};
   Object.keys(S).forEach(k=>{ left[k]=Array.isArray(S[k])?S[k].slice():S[k]; });
-  out.slice().sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)))
+  /* 수량으로 맞추기 (2026-10-13) — 오래된 주문부터, 주문일 이후에 나간 송장 수량을 차례로 씁니다.
+     합쳐 나간 송장(5+5→10)도, 나눠 나간 송장도 맞습니다. 모자라면 그 줄은 남겨 둡니다. */
+  const QM=shippedOf().qmap;
+  if(QM){
+    const ql={};
+    Object.keys(QM).forEach(function(k){ ql[k]=QM[k].map(function(x){ return [x[0],x[1]]; }); });
+    const back3=function(d){ const t=new Date(String(d||'')+'T00:00:00Z'); if(isNaN(t)) return ''; t.setUTCDate(t.getUTCDate()-3); return t.toISOString().slice(0,10); };
+    out.slice().sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial))).forEach(function(r){
+      const list=ql[shipQKey_(r.store,r.item)]; const need=r.qty||0;
+      if(!list||!need) return;
+      /* 주문일 이후 송장 → 모자라면 사흘 앞 것까지 (주문 시트 날짜가 하루 이틀 늦게 찍히기도 합니다) */
+      const pick=function(from){
+        const idx=[]; let have=0;
+        list.forEach(function(x,i){ if(have>=need||x[1]<=0) return; if(r.date&&x[0]&&x[0]<from) return; idx.push(i); have+=x[1]; });
+        return have>=need?idx:null;
+      };
+      const idx=pick(r.date||'')||pick(back3(r.date));
+      if(!idx) return;
+      let rest=need, last='';
+      idx.forEach(function(i){ if(rest<=0) return; const use=Math.min(rest,list[i][1]); list[i][1]-=use; rest-=use; if(String(list[i][0])>last) last=String(list[i][0]); });
+      r.shipped=true; r.shipDate=last;
+    });
+  }
+  if(!QM) out.slice().sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial)))
     .forEach(r=>{
       const k=shipKey_(r.store,r.item,r.qty);
       const v=left[k];
