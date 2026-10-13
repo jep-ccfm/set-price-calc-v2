@@ -3733,6 +3733,63 @@ function mallArRows_(){
   out.sort(function(a,b){ return (b.over-a.over)||(b.days-a.days)||(b.ar-a.ar); });
   return out;
 }
+/* ---------- 미납 안내 문자 (2026-10-13) ----------
+   정산서를 보낸 뒤 기한까지 입금이 없으면 문자로 다시 알립니다. 문안은 정원님 양식 그대로이고
+   약국·기간·금액·기한·계좌만 채웁니다. 창에서 고친 뒤 복사할 수 있습니다. */
+function mallDunText_(store){
+  const rows=mallArRows_().filter(function(r){ return r.store===store&&r.over; })
+    .sort(function(a,b){ return a.mk.localeCompare(b.mk); });
+  if(!rows.length) return '';
+  /* 정산서를 앞달과 합쳐 보낸 차수 — 9월 정산서는 8·9월분으로 보냈습니다 (2026-10-06) */
+  const SETTLE_FROM={'2026-09':'2026-08'};
+  const t=rows[rows.length-1].mk;
+  let f=rows[0].mk; if(SETTLE_FROM[f]&&SETTLE_FROM[f]<f) f=SETTLE_FROM[f];
+  const per=settlePerLong_(f,t);
+  const amt=rows.reduce(function(a,r){ return a+r.ar; },0);
+  const y=parseInt(t.slice(0,4),10), m=parseInt(t.slice(5,7),10);
+  /* 정산서 보낸 날 = 익월 5일(영업일로 미룸) · 입금 기한 = 협의 기한이 있으면 그 날, 없으면 익월 10일 */
+  let sent=null; try{ sent=bizDay(new Date(y,m,B2B_TAX_DAY)); }catch(e){ sent=new Date(y,m,5); }
+  const adj=rows[rows.length-1].adj;
+  const due=adj&&adj.due?new Date(adj.due+'T00:00:00'):new Date(y,m,B2B_PAY_DAY);
+  const z=function(x){ return String(x).padStart(2,'0'); };
+  const bank=SETTLE_BANK['54106474904042']||{};
+  return [
+    '메라블 약사전용관 정산의 건','',
+    '안녕하세요. 메라블입니다.','',
+    per+' '+store+' 거래분 정산서 '+z(sent.getMonth()+1)+'/'+z(sent.getDate())+'일 메일로 송부드렸습니다.',
+    '금 월 정산이 완료되지 않아 확인 부탁드리겠습니다.','',
+    '■ 정산 기간 : '+per,
+    '■ 청구 금액 : '+fmt(amt)+'원 (부가세 포함)',
+    '■ 입금 기한 : '+settleKDate_(due)+' 연체',
+    '■ 입금 계좌 : '+(bank.bank||'IBK기업은행')+' '+(bank.disp||'541-064749-04-042')+' (예금주 '+(bank.holder||'(주)고지식바이오')+')','',
+    '첨부한 정산서 확인 부탁드리며, 세금계산서는 홈택스에서 확인 가능합니다.',
+    '내용이 다르거나 궁금하신 점이 있으면 이 메일에 회신해 주시거나 고객센터('+SETTLE_SUPPLIER.tel+')로 연락 주세요.','',
+    '감사합니다.','메라블 드림'
+  ].join('\n');
+}
+function mallDunModal_(store){
+  const c=mallContact_(store);
+  const tel=sboTel_(c.tel)||c.tel;
+  docModalOpen('✉ 미납 안내 문자 — '+store,function(b){
+    const top=document.createElement('div');top.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;';
+    const lb=document.createElement('b');lb.textContent='받는 번호';
+    const tb=document.createElement('button');tb.className='icon-btn';tb.textContent=tel?('📋 '+tel):'번호 없음';tb.disabled=!tel;
+    tb.addEventListener('click',function(){ settleCopy_(tel,'전화번호를 복사했습니다 — '+tel); });
+    top.append(lb,tb);
+    if(c.email){ const eb=document.createElement('span');eb.className='hint';eb.textContent='메일 '+c.email;top.appendChild(eb); }
+    b.appendChild(top);
+    const ta=document.createElement('textarea');
+    ta.value=mallDunText_(store);
+    ta.style.cssText='width:100%;box-sizing:border-box;min-height:340px;font:inherit;font-size:13px;line-height:1.6;padding:10px;border:1px solid var(--line);border-radius:8px;';
+    b.appendChild(ta);
+    const nt=document.createElement('div');nt.className='hint';nt.style.margin='6px 0 10px';
+    nt.textContent='정산 기간·보낸 날짜가 다르면 위에서 고친 뒤 복사하세요 (예: 8·9월을 합쳐 정산서를 보냈으면 「8~9월」).';
+    b.appendChild(nt);
+    const cb=document.createElement('button');cb.className='up-btn';cb.textContent='📋 문자 내용 복사';
+    cb.addEventListener('click',function(){ settleCopy_(ta.value,'문자 내용을 복사했습니다'); });
+    b.appendChild(cb);
+  });
+}
 /* 약국 연락처 — 사업자 정보 → 가입 신청서 → 최근 주문 */
 function mallContact_(st){
   const si=(lib.storeInfo||{})[st]||{};
@@ -3988,7 +4045,7 @@ function buildDeposits(id, opts){
     if(rows.length){
       const t3=document.createElement('table');t3.className='led-table';
       t3.innerHTML='<thead><tr><th>약국</th><th>월</th><th style="text-align:right;">매출</th><th style="text-align:right;">입금</th>'+
-        '<th style="text-align:right;">미수금</th><th>입금 기한</th><th>연락처</th></tr></thead>';
+        '<th style="text-align:right;">미수금</th><th>입금 기한</th><th>연락처 <span style="font-weight:500;color:var(--ink-mute);">· 누르면 복사</span></th></tr></thead>';
       const tb3=document.createElement('tbody');
       rows.forEach(function(r){
         const c=mallContact_(r.store);
@@ -4000,7 +4057,28 @@ function buildDeposits(id, opts){
           '<td style="white-space:nowrap;font-size:12px;">'+(r.due?ymdText(r.due):'-')+
             (r.over?' <b style="color:#C62828;">'+r.days+'일 지남</b>':' <span style="color:var(--ink-soft);">기한 전</span>')+
             (r.adj?'<div style="color:var(--ink-soft);">📅 협의'+(r.adj.note?' · '+r.adj.note:'')+'</div>':'')+'</td>'+
-          '<td style="font-size:12px;">'+(c.tel||'-')+(c.email?'<div style="color:var(--ink-soft);word-break:break-all;">'+c.email+'</div>':'')+'</td>';
+          '<td class="ar-contact" style="font-size:12px;"></td>';
+        {
+          const cell=tr.querySelector('.ar-contact');
+          const tel=sboTel_(c.tel)||c.tel;
+          const bar=document.createElement('div');bar.style.cssText='display:flex;gap:5px;flex-wrap:wrap;align-items:center;';
+          if(tel){
+            const tb=document.createElement('button');tb.type='button';
+            tb.style.cssText='font:inherit;font-size:12.5px;background:none;border:1px dashed var(--line);border-radius:6px;padding:3px 8px;cursor:pointer;color:var(--ink);';
+            tb.textContent=tel;tb.title='눌러서 복사';
+            tb.addEventListener('click',function(){ settleCopy_(tel,'전화번호를 복사했습니다 — '+tel); });
+            bar.appendChild(tb);
+          } else { const sp=document.createElement('span');sp.style.color='var(--warn)';sp.textContent='번호 없음';bar.appendChild(sp); }
+          /* 기한이 지난 줄 — 그 약국 미납 전체로 안내 문자를 만듭니다 */
+          if(r.over){
+            const mb=document.createElement('button');mb.className='icon-btn';mb.style.cssText='font-size:12px;padding:3px 8px;';
+            mb.textContent='✉ 독촉 문자';mb.title='미납 안내 문자를 만들어 복사합니다';
+            mb.addEventListener('click',function(){ mallDunModal_(r.store); });
+            bar.appendChild(mb);
+          }
+          cell.appendChild(bar);
+          if(c.email){ const em=document.createElement('div');em.style.cssText='color:var(--ink-soft);word-break:break-all;margin-top:3px;';em.textContent=c.email;cell.appendChild(em); }
+        }
         tb3.appendChild(tr);
       });
       t3.appendChild(tb3);
