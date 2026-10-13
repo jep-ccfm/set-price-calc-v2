@@ -5672,6 +5672,12 @@ function sboToday_(){
   const d=new Date(Date.now()+9*3600*1000);
   return d.toISOString().slice(0,10);
 }
+/* ---------- 바로팜 프로모션 (2026-10-13 · 전 제품 5+1) ----------
+   주문 5개마다 1개를 더 보냅니다 (10개 → 12개, 20개 → 24개). 사방넷 발주 엑셀 수량에 더하고
+   관리메모에 적습니다. 출고 대조도 「주문 + 증정」 수량으로 맞춰, 남는 증정분이 다른 주문 출고로
+   잡히지 않게 합니다. 끝나면 「출고할 주문」의 단추로 끕니다 (매출·정산은 주문 수량 그대로). */
+function bfPromo_(){ const v=lib.bfPromo; return (v&&typeof v==='object')?v:{on:true,buy:5,get:1,label:'바로팜 프로모션 5+1'}; }
+function bfBonus_(q){ const P=bfPromo_(); if(!P.on||!P.buy) return 0; return Math.floor((Number(q)||0)/P.buy)*(P.get||1); }
 /* rows: [{store, addr, tel, item, qty, ono(주문번호), date}] */
 async function sboOrderXlsx(chId,rows){
   if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return; }
@@ -5690,9 +5696,12 @@ async function sboOrderXlsx(chId,rows){
     /* 예전 출고와 같은 곳이면 사방넷에 적혀 있던 주소1·주소2를 그대로 씁니다 */
     const sp=(pl&&pl.a1)?{a1:pl.a1,a2:pl.a2}:sboSplitAddr_(r.addr);
     const a1=sp.a1, a2=sp.a2;
-    const v={'상품고유코드':c?c[0]:'','판매상품명':c?c[1]:r.item,'수량':String(r.qty||''),'배송방식':'택배',
+    const bonus=(chId==='barofarm')?bfBonus_(r.qty):0;
+    const v={'상품고유코드':c?c[0]:'','판매상품명':c?c[1]:r.item,'수량':String((r.qty||0)+bonus||''),'배송방식':'택배',
       '주문자 이름':r.store,'받는분 이름':r.store,'전화번호1':sboTel_(r.tel)||'','우편번호':pl?pl.z:'',
-      '주소1':a1,'주소2':a2,'주문번호':r.ono||'','관리메모1':(r.date?'발주 '+r.date:''),
+      '주소1':a1,'주소2':a2,'주문번호':r.ono||'',
+      '관리메모1':bonus?bfPromo_().label:(r.date?'발주 '+r.date:''),
+      '관리메모2':bonus?((r.date?'발주 '+r.date+' · ':'')+'주문 '+r.qty+' + 증정 '+bonus):'',
       '발주 타입':SBO_TYPE[chId]||'','출고희망일':ship};
     aoa.push(SBO_ORDER_HEAD.map(function(h){ return v[h]==null?'':String(v[h]); }));
   });
@@ -6214,15 +6223,19 @@ function shipOrderRows_(ch,storeName,showShipped){
     Object.keys(QM).forEach(function(k){ ql[k]=QM[k].map(function(x){ return [x[0],x[1]]; }); });
     const back3=function(d){ const t=new Date(String(d||'')+'T00:00:00Z'); if(isNaN(t)) return ''; t.setUTCDate(t.getUTCDate()-3); return t.toISOString().slice(0,10); };
     out.slice().sort((a,b)=>String(a.date+a.serial).localeCompare(String(b.date+b.serial))).forEach(function(r){
-      const list=ql[shipQKey_(r.store,r.item)]; const need=r.qty||0;
-      if(!list||!need) return;
+      const list=ql[shipQKey_(r.store,r.item)]; const base=r.qty||0;
+      if(!list||!base) return;
+      /* 바로팜 5+1 — 「주문 + 증정」 수량으로 먼저 맞춰 봅니다 */
+      const tries=(ch==='barofarm'&&bfBonus_(base))?[base+bfBonus_(base),base]:[base];
+      let need=base;
       /* 주문일 이후 송장 → 모자라면 사흘 앞 것까지 (주문 시트 날짜가 하루 이틀 늦게 찍히기도 합니다) */
-      const pick=function(from){
+      const pick=function(from,nd){
         const idx=[]; let have=0;
-        list.forEach(function(x,i){ if(have>=need||x[1]<=0) return; if(r.date&&x[0]&&x[0]<from) return; idx.push(i); have+=x[1]; });
-        return have>=need?idx:null;
+        list.forEach(function(x,i){ if(have>=nd||x[1]<=0) return; if(r.date&&x[0]&&x[0]<from) return; idx.push(i); have+=x[1]; });
+        return have>=nd?idx:null;
       };
-      const idx=pick(r.date||'')||pick(back3(r.date));
+      let idx=null;
+      for(const nd of tries){ idx=pick(r.date||'',nd)||pick(back3(r.date),nd); if(idx){ need=nd; break; } }
       if(!idx) return;
       let rest=need, last='';
       idx.forEach(function(i){ if(rest<=0) return; const use=Math.min(rest,list[i][1]); list[i][1]-=use; rest-=use; if(String(list[i][0])>last) last=String(list[i][0]); });
@@ -6274,6 +6287,19 @@ function buildShipOrderList_(ch,storeName){
     tools.appendChild(sboOrderBtn_(ch,function(){
       return shipOrderRows_(ch,storeName,false).map(function(r){ return Object.assign({ono:(isBf?'BF':'')+r.serial},r); });
     }));
+    if(isBf){
+      const P=bfPromo_();
+      const pb=document.createElement('button');pb.className='icon-btn';
+      pb.textContent=P.on?'🎁 5+1 적용 중':'🎁 5+1 꺼짐';
+      if(P.on) pb.style.cssText='background:#FFF4E5;border-color:#F0B35A;color:#8A5300;font-weight:800;';
+      pb.title=P.on?'사방넷 발주 엑셀 수량에 5개당 1개를 더하고 관리메모에 적습니다 — 누르면 끕니다':'누르면 5+1 증정을 다시 켭니다';
+      pb.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다'); return; }
+        const Q=Object.assign({},bfPromo_()); Q.on=!Q.on; Q.at=new Date().toISOString(); lib.bfPromo=Q;
+        persistLib(); showToast(Q.on?'바로팜 5+1 증정을 켰습니다':'바로팜 5+1 증정을 껐습니다'); ledgerRefresh();
+      });
+      tools.appendChild(pb);
+    }
     if(hid){
       const tg=document.createElement('button');tg.className='icon-btn';
       tg.textContent=showS?'출고 완료 숨기기':'출고 완료도 보기 ('+hid+')';
