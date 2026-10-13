@@ -5676,8 +5676,12 @@ function sboToday_(){
    주문 5개마다 1개를 더 보냅니다 (10개 → 12개, 20개 → 24개). 사방넷 발주 엑셀 수량에 더하고
    관리메모에 적습니다. 출고 대조도 「주문 + 증정」 수량으로 맞춰, 남는 증정분이 다른 주문 출고로
    잡히지 않게 합니다. 끝나면 「출고할 주문」의 단추로 끕니다 (매출·정산은 주문 수량 그대로). */
-function bfPromo_(){ const v=lib.bfPromo; return (v&&typeof v==='object')?v:{on:true,buy:5,get:1,label:'바로팜 프로모션 5+1'}; }
-function bfBonus_(q){ const P=bfPromo_(); if(!P.on||!P.buy) return 0; return Math.floor((Number(q)||0)/P.buy)*(P.get||1); }
+/* 기간 — 2026년 10월 한 달 (주문일 기준). 끝나면 따로 끄지 않아도 증정이 빠집니다 */
+const BF_PROMO_DEF={on:true,buy:5,get:1,from:'2026-10-01',to:'2026-10-31',label:'바로팜 프로모션 5+1'};
+function bfPromo_(){ const v=lib.bfPromo; return Object.assign({},BF_PROMO_DEF,(v&&typeof v==='object')?v:{}); }
+function bfBonus_(q,date){ const P=bfPromo_(); if(!P.on||!P.buy) return 0;
+  const d=String(date||'').slice(0,10); if(d&&((P.from&&d<P.from)||(P.to&&d>P.to))) return 0;
+  return Math.floor((Number(q)||0)/P.buy)*(P.get||1); }
 /* rows: [{store, addr, tel, item, qty, ono(주문번호), date}] */
 async function sboOrderXlsx(chId,rows){
   if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return; }
@@ -5696,7 +5700,7 @@ async function sboOrderXlsx(chId,rows){
     /* 예전 출고와 같은 곳이면 사방넷에 적혀 있던 주소1·주소2를 그대로 씁니다 */
     const sp=(pl&&pl.a1)?{a1:pl.a1,a2:pl.a2}:sboSplitAddr_(r.addr);
     const a1=sp.a1, a2=sp.a2;
-    const bonus=(chId==='barofarm')?bfBonus_(r.qty):0;
+    const bonus=(chId==='barofarm')?bfBonus_(r.qty,r.date):0;
     const v={'상품고유코드':c?c[0]:'','판매상품명':c?c[1]:r.item,'수량':String((r.qty||0)+bonus||''),'배송방식':'택배',
       '주문자 이름':r.store,'받는분 이름':r.store,'전화번호1':sboTel_(r.tel)||'','우편번호':pl?pl.z:'',
       '주소1':a1,'주소2':a2,'주문번호':r.ono||'',
@@ -6226,7 +6230,7 @@ function shipOrderRows_(ch,storeName,showShipped){
       const list=ql[shipQKey_(r.store,r.item)]; const base=r.qty||0;
       if(!list||!base) return;
       /* 바로팜 5+1 — 「주문 + 증정」 수량으로 먼저 맞춰 봅니다 */
-      const tries=(ch==='barofarm'&&bfBonus_(base))?[base+bfBonus_(base),base]:[base];
+      const tries=(ch==='barofarm'&&bfBonus_(base,r.date))?[base+bfBonus_(base,r.date),base]:[base];
       let need=base;
       /* 주문일 이후 송장 → 모자라면 사흘 앞 것까지 (주문 시트 날짜가 하루 이틀 늦게 찍히기도 합니다) */
       const pick=function(from,nd){
@@ -6290,7 +6294,7 @@ function buildShipOrderList_(ch,storeName){
     if(isBf){
       const P=bfPromo_();
       const pb=document.createElement('button');pb.className='icon-btn';
-      pb.textContent=P.on?'🎁 5+1 적용 중':'🎁 5+1 꺼짐';
+      pb.textContent=P.on?('🎁 5+1 적용 중 (주문일 '+String(P.from).slice(5).replace('-','/')+'~'+String(P.to).slice(5).replace('-','/')+')'):'🎁 5+1 꺼짐';
       if(P.on) pb.style.cssText='background:#FFF4E5;border-color:#F0B35A;color:#8A5300;font-weight:800;';
       pb.title=P.on?'사방넷 발주 엑셀 수량에 5개당 1개를 더하고 관리메모에 적습니다 — 누르면 끕니다':'누르면 5+1 증정을 다시 켭니다';
       pb.addEventListener('click',function(){
