@@ -3716,6 +3716,32 @@ function payDueOf(pid,mk,store){
   if(adj&&/^\d{4}-\d{2}-\d{2}$/.test(adj.due)) return new Date(adj.due+'T00:00:00');
   return b2bDue(mk,pid).pay;
 }
+/* 자사몰 약국별 미수 — 약국·월마다 매출 − 입금, 기한(협의 기한 우선)과 함께 (2026-10-13) */
+function mallArRows_(){
+  const out=[];
+  mallStores().forEach(function(st){
+    depMonths('pharmmall',st).forEach(function(m){
+      const sale=salesOf('pharmmall',m,st), paid=depSum('pharmmall',m,st), ar=sale-paid;
+      if(!sale||ar<=0) return;
+      let due=null; try{ due=payDueOf('pharmmall',m,st); }catch(e){}
+      const over=!!(due&&pastDue(due));
+      const t0=new Date(); t0.setHours(0,0,0,0);   /* 오늘 0시 기준 — 기한 다음 날이 1일째 */
+      const days=over?Math.round((t0.getTime()-new Date(due.getFullYear(),due.getMonth(),due.getDate()).getTime())/86400000):0;
+      out.push({store:st,mk:m,sale:sale,paid:paid,ar:ar,due:due,over:over,days:days,adj:payDueAdj_('pharmmall',st,m)});
+    });
+  });
+  out.sort(function(a,b){ return (b.over-a.over)||(b.days-a.days)||(b.ar-a.ar); });
+  return out;
+}
+/* 약국 연락처 — 사업자 정보 → 가입 신청서 → 최근 주문 */
+function mallContact_(st){
+  const si=(lib.storeInfo||{})[st]||{};
+  const ap=(lib.applicants||[]).filter(function(a){ return storeKey_(a.name)===storeKey_(st); })[0]||{};
+  let tel='';
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  Object.keys(led.months||{}).sort().forEach(function(mk){ (led.months[mk].docs||[]).forEach(function(d){ if(d.branch===st&&d.meta&&d.meta['전화']) tel=telFix_(d.meta['전화']); }); });
+  return {tel:tel||si.tel||'', email:String(si.email||ap.email||'').trim(), ceo:si.ceo||''};
+}
 function arOf(pid,store){
   let over=0,soon=0;
   if(pid==='barofarm') return {over:0,soon:0,weekly:true};
@@ -3948,6 +3974,40 @@ function buildDeposits(id, opts){
     const n=document.createElement('div');n.className='hint';n.style.cssText='margin-top:8px;color:#C62828;font-weight:700;';
     n.textContent='⚠ 미수금 합계 '+fmt(arTotal)+'원';
     wrap.appendChild(n);
+  }
+  /* 자사몰은 약국마다 따로 입금합니다 — 월 합계만으로는 누가 안 냈는지 안 보입니다 */
+  if(id==='pharmmall'&&!store){
+    const rows=mallArRows_();
+    const sh=document.createElement('div');sh.className='sec-h';sh.style.marginTop='16px';
+    const overSum=rows.filter(function(r){ return r.over; }).reduce(function(a,r){ return a+r.ar; },0);
+    const soonSum=rows.filter(function(r){ return !r.over; }).reduce(function(a,r){ return a+r.ar; },0);
+    sh.innerHTML='<span>🏥 약국별 미수금</span><span style="font-size:12.5px;font-weight:800;">'+
+      (overSum?'<span style="color:#C62828;">기한 지남 '+fmt(overSum)+'원</span>':'<span style="color:var(--good);">기한 지난 미수 없음</span>')+
+      (soonSum?' · <span style="color:var(--ink-soft);">기한 전 '+fmt(soonSum)+'원</span>':'')+'</span>';
+    wrap.appendChild(sh);
+    if(rows.length){
+      const t3=document.createElement('table');t3.className='led-table';
+      t3.innerHTML='<thead><tr><th>약국</th><th>월</th><th style="text-align:right;">매출</th><th style="text-align:right;">입금</th>'+
+        '<th style="text-align:right;">미수금</th><th>입금 기한</th><th>연락처</th></tr></thead>';
+      const tb3=document.createElement('tbody');
+      rows.forEach(function(r){
+        const c=mallContact_(r.store);
+        const tr=document.createElement('tr');
+        if(r.over) tr.style.background='#FDECEA';
+        tr.innerHTML='<td><b>'+r.store+'</b></td><td style="white-space:nowrap;">'+mkLabel(r.mk)+'</td>'+
+          '<td style="text-align:right;">'+fmt(r.sale)+'</td><td style="text-align:right;">'+fmt(r.paid)+'</td>'+
+          '<td style="text-align:right;font-weight:800;'+(r.over?'color:#C62828;':'color:var(--ink-soft);')+'">'+fmt(r.ar)+'</td>'+
+          '<td style="white-space:nowrap;font-size:12px;">'+(r.due?ymdText(r.due):'-')+
+            (r.over?' <b style="color:#C62828;">'+r.days+'일 지남</b>':' <span style="color:var(--ink-soft);">기한 전</span>')+
+            (r.adj?'<div style="color:var(--ink-soft);">📅 협의'+(r.adj.note?' · '+r.adj.note:'')+'</div>':'')+'</td>'+
+          '<td style="font-size:12px;">'+(c.tel||'-')+(c.email?'<div style="color:var(--ink-soft);word-break:break-all;">'+c.email+'</div>':'')+'</td>';
+        tb3.appendChild(tr);
+      });
+      t3.appendChild(tb3);
+      const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t3);wrap.appendChild(bx);
+    } else {
+      const e=document.createElement('div');e.className='hint';e.textContent='✅ 약국별 미수금이 없습니다.';wrap.appendChild(e);
+    }
   }
   if(onlyPaid){
     const n2=document.createElement('div');n2.className='hint';n2.style.marginTop='6px';
@@ -11566,8 +11626,14 @@ function renderHome(){
       const y=parseInt(m2.slice(0,4),10), mo=parseInt(m2.slice(5,7),10);
       const due=payDueOf(id,m2,'');
       if(!pastDue(due))return;                       // 결제일(당일 포함) 전이면 알리지 않음
+      /* 자사몰은 약국마다 입금합니다 — 누가 얼마인지 바로 보이게 */
+      let who='';
+      if(id==='pharmmall'){
+        try{ who=mallArRows_().filter(function(r){ return r.mk===m2&&r.over; })
+          .map(function(r){ return r.store.replace(/약국$/,'')+' '+fmt(r.ar); }).join(' · '); }catch(e){}
+      }
       alerts.push({t:'🔴 '+label+' '+mkLabel(m2)+' 미수금 '+fmt(ar)+'원',
-        s:'결제 기한 '+ymdText(due)+' 경과 — 입금 확인 필요',view,kind:'warn'});
+        s:(who?who+' — ':'')+'결제 기한 '+ymdText(due)+' 경과 — 입금 확인 필요',view,kind:'warn'});
     });
   });
 
