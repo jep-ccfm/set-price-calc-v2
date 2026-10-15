@@ -7629,7 +7629,7 @@ const channelMeta=v=>CHANNELS.find(c=>c.key===v);
    ============================================================ */
 const INF_SHEET_ID='1geCOk7SrJ78iW8cdfHwsvxdy9hNtgzD3QSk3HJa87zI';
 const INF_TABS_DEF=[{gid:'956300216',label:'시행사2 (알파마케팅)'}];
-function infCfg_(){ return Object.assign({type:'인플루언서_체험단',tabs:INF_TABS_DEF},lib.infCfg||{}); }
+function infCfg_(){ return Object.assign({type:'무상출고',tabs:INF_TABS_DEF},lib.infCfg||{}); }
 function infOut_(){ lib.infOut=lib.infOut||{}; return lib.infOut; }   /* 주문번호 → {keys, store, at} */
 function infShip_(){ lib.infShip=lib.infShip||{}; return lib.infShip; } /* 사람 키 → {date, inv, carrier, ono} */
 function infNorm_(v){ return String(v||'').replace(/[\s()（）.,·\-]/g,'').toLowerCase(); }
@@ -7719,7 +7719,7 @@ function renderInfluencer_(box){
   const cf=document.createElement('div');cf.className='hint';cf.style.cssText='margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;';
   cf.innerHTML='사방넷 발주 타입 <span style="color:var(--ink-mute);">(사방넷에 만든 이름과 같게 · 관리메모에 「인플루언서」가 있으면 어떤 타입이든 인플루언서 건으로 봅니다)</span>';
   const ti=document.createElement('input');ti.className='cell-input';ti.value=infCfg_().type;ti.style.cssText='width:200px;padding:6px 8px;';
-  ti.addEventListener('change',function(){ if(!canEdit()){ showToast('보기 전용입니다'); return; } lib.infCfg=Object.assign({},lib.infCfg||{},{type:ti.value.trim()||'인플루언서_체험단'}); persistLib(); showToast('발주 타입을 저장했습니다'); });
+  ti.addEventListener('change',function(){ if(!canEdit()){ showToast('보기 전용입니다'); return; } lib.infCfg=Object.assign({},lib.infCfg||{},{type:ti.value.trim()||'무상출고'}); persistLib(); showToast('발주 타입을 저장했습니다'); });
   cf.appendChild(ti);wrap.appendChild(cf);
   (async function(){
     let list=[];
