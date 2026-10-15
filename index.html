@@ -1033,6 +1033,7 @@
       <button class="nav-item" data-view="ch_barofarm"><span class="ic">🛒</span>바로팜</button>
       <button class="nav-item" data-view="ch_pharmmall"><span class="ic">🏬</span>자사몰 약사 전용관</button>
       <button class="nav-item" data-view="ch_aquamedi"><span class="ic">💧</span>아쿠아메디</button>
+      <button class="nav-item" data-view="ch_influencer"><span class="ic">🎁</span>인플루언서</button>
       <div class="nav-section">부가기능</div>
       <button class="nav-item" data-view="geo"><span class="ic">📍</span>2km 규약 검사</button>
       <button class="nav-item" data-view="trash"><span class="ic">🗑️</span>휴지통<span class="badge" id="badge-trash">0</span></button>
@@ -5858,9 +5859,9 @@ async function sboOrderXlsx(chId,rows){
     const v={'상품고유코드':c?c[0]:'','판매상품명':c?c[1]:r.item,'수량':String((r.qty||0)+bonus||''),'배송방식':'택배',
       '주문자 이름':r.store,'받는분 이름':r.store,'전화번호1':sboTel_(r.tel)||'','우편번호':pl?pl.z:'',
       '주소1':a1,'주소2':a2,'주문번호':r.ono||'',
-      '관리메모1':bonus?bfPromo_().label:(r.date?'발주 '+r.date:''),
-      '관리메모2':bonus?((r.date?'발주 '+r.date+' · ':'')+'주문 '+r.qty+' + 증정 '+bonus):'',
-      '발주 타입':SBO_TYPE[chId]||'','출고희망일':ship};
+      '관리메모1':r.memo1||(bonus?bfPromo_().label:(r.date?'발주 '+r.date:'')),
+      '관리메모2':r.memo2||(bonus?((r.date?'발주 '+r.date+' · ':'')+'주문 '+r.qty+' + 증정 '+bonus):''),
+      '발주 타입':(chId==='influencer'?infCfg_().type:SBO_TYPE[chId])||'','출고희망일':ship};
     aoa.push(SBO_ORDER_HEAD.map(function(h){ return v[h]==null?'':String(v[h]); }));
   });
   const ws=XLSX.utils.aoa_to_sheet(aoa);
@@ -5868,7 +5869,7 @@ async function sboOrderXlsx(chId,rows){
   Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]) ws[k].t='s'; });
   ws['!cols']=SBO_ORDER_HEAD.map(function(h){ return {wch:/주소|상품명/.test(h)?36:/메모/.test(h)?12:14}; });
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'발주등록');
-  const tag=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId;
+  const tag=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId==='influencer'?'인플루언서':chId;
   XLSX.writeFile(wb,'사방넷_발주등록_'+tag+'_'+ship.replace(/-/g,'')+'.xlsx');
   const warn=[];
   const nc=Object.keys(noCode), nz=Object.keys(noZip);
@@ -5894,7 +5895,7 @@ function sboOrderBtn_(chId,getRows){
       }
       let rows=getRows();
       /* 레디영 지점 자체(ready)는 2km 대상이 아닙니다 */
-      if(chId!=='ready'){
+      if(chId!=='ready'&&chId!=='influencer'){
         b.textContent='2km 판정 중…';
         const jr=await autoJudge_(rows.map(function(r){ return r.addr; }));
         if(jr.done) got=true;
@@ -5926,13 +5927,16 @@ function sboMerge(store,lines,oldInv){
   lines.forEach(function(L){
     if(!L['오더코드']&&!L['상품코드']) return;
     const type=L['발주 타입']||'';
+    /* 인플루언서 체험단 제품 — 발주 타입이나 관리메모에 「인플루언서·체험단」이 있으면 그쪽 (매출 발주와 섞지 않습니다) */
+    const memoAll=['관리메모1','관리메모2','관리메모3','관리메모4','관리메모5'].map(function(x){ return L[x]||''; }).join(' ');
+    const isInf=/인플루언서|체험단/.test(type+' '+memoAll);
     /* 아쿠아메디는 발주타입 이름에 B2B 가 안 붙을 수도 있어 채널 이름으로도 받습니다 */
-    if(!/B2B/i.test(type)&&!/아쿠아|개인약국/.test(type)){ st.notB2B++; return; }
+    if(!isInf&&!/B2B/i.test(type)&&!/아쿠아|개인약국/.test(type)){ st.notB2B++; return; }
     const k=L['오더코드']+'|'+L['상품코드'];
     /* 받는분이 잘려 들어오기도 합니다 (「대학비타민약」 / 주문자 「대학비타민약국」) — 그럴 땐 주문자 이름 */
     let who=String(L['받는분 이름']||L['주문자 이름']||'').trim();
     const orderer=String(L['주문자 이름']||'').trim();
-    if(orderer.length>who.length&&orderer.replace(/s/g,'').indexOf(who.replace(/s/g,''))===0) who=orderer;
+    if(orderer.length>who.length&&orderer.replace(/\s/g,'').indexOf(who.replace(/\s/g,''))===0) who=orderer;
     if(/취소/.test(L['진행상태']||'')){
       st.cancel++;
       if((k in at)&&!gone[k]){ gone[k]=1; st.del++; }
@@ -5940,7 +5944,7 @@ function sboMerge(store,lines,oldInv){
     }
     const it=sboItem_(L['출고상품명']);
     if(!it.known) w('「'+L['출고상품명']+'」('+L['상품코드']+') — 품목표에서 못 찾았습니다');
-    const ch=SBO_CHANNELS.filter(function(c){ return c.re.test(type); })[0];
+    const ch=isInf?{memo:'인플루언서 체험단'}:SBO_CHANNELS.filter(function(c){ return c.re.test(type); })[0];
     if(!ch) w('발주타입 「'+type+'」 을 어느 채널로 볼지 모릅니다');
     const tel=L['전화번호1']||L['전화번호2']||'';
     const tl=sboDigits_(tel).length;
@@ -5952,13 +5956,13 @@ function sboMerge(store,lines,oldInv){
       fin:done?entryDate_(L['출고완료일']):'', s:done?'출고완료':(L['진행상태']||''),
       r:who, a:L['주소(전체)']||'', z:L['우편번호']||'', a1:L['주소1']||'', a2:L['주소2']||'', t:sboTel_(tel), ty:type, m:ch?ch.memo:type,
       i:it.name, ic:L['상품코드']||'', q:Number(sboDigits_(L['수량']))||0,
-      cr:L['택배사']||'', v:sboDigits_(L['송장번호']), msg:L['배송메시지']||'',
+      cr:L['택배사']||'', v:sboDigits_(L['송장번호']), msg:L['배송메시지']||'', no:String(L['주문번호']||'').trim(),
       b:['관리메모1','관리메모2','관리메모3','관리메모4','관리메모5']
           .map(function(x){ return L[x]; }).filter(Boolean).join(' · ')};
     if(k in at){
       if(gone[k]){ delete gone[k]; st.del--; }
       const old=rows[at[k]];
-      if(old.v!==rec.v||old.s!==rec.s||old.fin!==rec.fin||(!old.z&&rec.z)){ rows[at[k]]=Object.assign({},old,rec); st.upd++; }
+      if(old.v!==rec.v||old.s!==rec.s||old.fin!==rec.fin||(!old.z&&rec.z)||(!old.no&&rec.no)){ rows[at[k]]=Object.assign({},old,rec); st.upd++; }
       else st.same++;
       return;
     }
@@ -6228,6 +6232,7 @@ async function importEntryOrders(logEl,onDone){
   let shipN=0, ryN=0, ryErr='';
   try{ shipN=await refreshShipped(got); mallStampShipDates_(); }catch(e){}
   try{ saveBranchSnap_(); }catch(e){}
+  let infN=0; try{ infN=infApplyShip_(await sboLoad()); }catch(e){}
   try{ const rv=await ryVerifyRows(got); saveRyVerify(rv); ryN=applyVerifyToOrders(rv); }catch(e){ ryErr=e.message||''; }
   persistLib();
 
@@ -6241,6 +6246,7 @@ async function importEntryOrders(logEl,onDone){
   if(shipSet) lines.push('   송장이 찍혀 「출고」로 바꾼 발주 '+shipSet+'건 (바로팜·아쿠아메디 등)');
   lines.push('   레디영 — '+(ryN?'발주 '+ryN+'건을 「출고」로 바꿨습니다':'새로 출고된 발주 없음')+(ryErr?' (대조 실패: '+ryErr+')':''));
   lines.push('   자사몰 — 송장 찍힌 출고 '+shipN+'종 확인');
+  if(infN) lines.push('   인플루언서 — 체험단 '+infN+'명 출고·송장 기록');
   const uk=Object.keys(unknown);
   if(uk.length){
     lines.push('');
@@ -7604,7 +7610,8 @@ function buildReadyBranch(){
 const CHANNELS=[
   {key:'ch_barofarm',id:'barofarm',name:'바로팜',ic:'🛒',desc:'약국 유통 플랫폼 바로팜 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
   {key:'ch_pharmmall',id:'pharmmall',name:'자사몰 약사 전용관',ic:'🏬',desc:'자사몰 내 약사 전용관 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
-  {key:'ch_aquamedi',id:'aquamedi',name:'아쿠아메디',ic:'💧',desc:'아쿠아메디 소속 약국 — 발주·거래 내역과 서류를 약국별로 관리합니다.'}
+  {key:'ch_aquamedi',id:'aquamedi',name:'아쿠아메디',ic:'💧',desc:'아쿠아메디 소속 약국 — 발주·거래 내역과 서류를 약국별로 관리합니다.'},
+  {key:'ch_influencer',id:'influencer',name:'인플루언서',ic:'🎁',desc:'인플루언서 체험단 — 「매장 수령」 제품을 레디영 지점으로 보내고 출고일·송장을 체험단 시트에 남깁니다.'}
 ];
 /* 아쿠아메디 소속 약국 — 붙박이 둘 + 나중에 넣은 곳 */
 function aquamediPharms(){
@@ -7613,12 +7620,205 @@ function aquamediPharms(){
   });
 }
 const channelMeta=v=>CHANNELS.find(c=>c.key===v);
+/* ============================================================
+   인플루언서 체험단 (2026-10-15)
+   [메라블X레디영] 인플루언서 체험단 시트에서 「제품제공 여부 = 매장 수령」인 사람의 제품을
+   우리가 레디영 지점으로 보냅니다. 지점마다 한 건으로 묶어 사방넷 발주 엑셀을 만들고,
+   출고 엑셀이 올라오면 출고일·송장을 사람마다 남깁니다(lib.infShip).
+   체험단 시트 스크립트가 그 기록을 읽어 「제품 배송 여부」 칸을 채웁니다.
+   ============================================================ */
+const INF_SHEET_ID='1geCOk7SrJ78iW8cdfHwsvxdy9hNtgzD3QSk3HJa87zI';
+const INF_TABS_DEF=[{gid:'956300216',label:'시행사2 (알파마케팅)'}];
+function infCfg_(){ return Object.assign({type:'인플루언서_체험단',tabs:INF_TABS_DEF},lib.infCfg||{}); }
+function infOut_(){ lib.infOut=lib.infOut||{}; return lib.infOut; }   /* 주문번호 → {keys, store, at} */
+function infShip_(){ lib.infShip=lib.infShip||{}; return lib.infShip; } /* 사람 키 → {date, inv, carrier, ono} */
+function infNorm_(v){ return String(v||'').replace(/[\s()（）.,·\-]/g,'').toLowerCase(); }
+function infKey_(name,date,store){ return infNorm_(name)+'|'+date+'|'+infNorm_(store); }
+/* 품목 칸 → 보낼 품목 (1인 1세트) */
+function infItems_(txt){
+  const t=String(txt||'');
+  if(/포어\s*시그널/.test(t)) return ['포어시그널 딥 멜팅 폼클렌저','포어시그널 타이트락셀 앰플','포어시그널 셀텐자 크림'];
+  if(/루비알엔/.test(t)&&/2종|클렌저|피코/.test(t)) return ['루비알엔 앰플 클렌저','루비알엔 피코샷 크림'];
+  const m=t.match(/[(（]([^)）]+)[)）]/);
+  return (m?m[1]:t).split(/[,，\n]/).map(function(x){ return x.trim(); }).filter(Boolean);
+}
+async function infFetch_(){
+  const out=[];
+  for(const tab of infCfg_().tabs){
+    const url='https://docs.google.com/spreadsheets/d/'+INF_SHEET_ID+'/gviz/tq?tqx=out:csv&headers=0&gid='+tab.gid+'&cb='+Date.now();
+    const r=await fetch(url); if(!r.ok) throw new Error('체험단 시트를 읽지 못했습니다 ('+r.status+') — 공유 설정을 확인하세요');
+    const rows=parseCSV(await r.text());
+    let hi=-1;
+    for(let i=0;i<Math.min(rows.length,20);i++){ const h=rows[i].map(function(x){ return String(x||''); });
+      if(h.some(function(x){ return /제품제공/.test(x); })&&h.some(function(x){ return /성함/.test(x); })){ hi=i; break; } }
+    if(hi<0) continue;
+    const H=rows[hi].map(function(x){ return String(x||'').replace(/\s+/g,''); });
+    const ix=function(re){ for(let i=0;i<H.length;i++) if(re.test(H[i])) return i; return -1; };
+    const c={store:ix(/^지점/)>=0?ix(/^지점/):0,name:ix(/성함/),tel:ix(/연락처/),date:ix(/방문날짜/),nat:ix(/국가/),
+      sns:ix(/SNS계정ID/),supply:ix(/제품제공/),item:ix(/품목/),ship:ix(/제품배송/)};
+    /* 날짜 칸은 제목이 빠져서 옵니다(gviz 가 날짜형 칸의 머리글을 버림) — 날짜 모양 값이 있는 칸을 씁니다 */
+    if(c.date<0){ for(let j=0;j<(rows[hi+1]||[]).length&&c.date<0;j++){ if(rows.slice(hi+1,hi+6).some(function(r){ return /\d{4}\s*[.\-\/]\s*\d{1,2}\s*[.\-\/]\s*\d{1,2}/.test(String(r[j]||'')); })) c.date=j; } }
+    for(let i=hi+1;i<rows.length;i++){
+      const r=rows[i]; const nm=String(r[c.name]||'').trim(); const st=String(r[c.store]||'').trim();
+      if(!nm||!st) continue;
+      const date=entryDate_(r[c.date]);
+      out.push({tab:tab.label,store:st,name:nm,date:date,nat:c.nat>=0?String(r[c.nat]||''):'',
+        sns:c.sns>=0?String(r[c.sns]||''):'',supply:String(r[c.supply]||''),item:String(r[c.item]||''),
+        sheetShip:c.ship>=0?String(r[c.ship]||'').trim():'',key:infKey_(nm,date,st)});
+    }
+  }
+  return out;
+}
+/* 받는 곳 — 레디영 지점 (이름은 사방넷에 쓰던 「○○레디영」) */
+function infDest_(store){
+  const site=findSite(ryStoreKey(store))||findSite(store);
+  const base=(site?site.name:store).replace(/\(.*\)/,'').replace(/점$/,'').trim();
+  const recv=base+'레디영';
+  let tel='';
+  (ordersOf('ready')||[]).forEach(function(o){ if(o.src==='발주메일'&&o.tel&&ryStoreKey(orderStore_(o))===ryStoreKey(store)) tel=o.tel; });
+  return {recv:recv,addr:(site&&site.addr)||'',tel:tel,site:site?site.name:''};
+}
+/* 출고 엑셀이 올라오면 — 우리가 넣은 주문번호로 찾아 사람마다 출고일·송장을 남깁니다 */
+function infApplyShip_(so){
+  const O=infOut_(), S=infShip_(); let n=0;
+  Object.keys(O).forEach(function(ono){
+    const hit=((so&&so.rows)||[]).filter(function(r){ return r.no===ono&&r.v; });
+    if(!hit.length) return;
+    const h=hit.sort(function(a,b){ return String(b.fin||b.d).localeCompare(String(a.fin||a.d)); })[0];
+    (O[ono].keys||[]).forEach(function(k){
+      if(S[k]&&S[k].inv) return;
+      S[k]={date:h.fin||h.d||'',inv:h.v,carrier:h.cr||'',ono:ono,at:new Date().toISOString()}; n++;
+    });
+  });
+  return n;
+}
+function infStatus_(p){
+  const S=infShip_()[p.key];
+  if(S&&S.inv) return {k:'done',t:'출고 '+String(S.date||'').slice(5).replace('-','/')+' · '+(S.carrier?S.carrier+' ':'')+S.inv};
+  if(p.sheetShip) return {k:'done',t:p.sheetShip};
+  const O=infOut_();
+  for(const ono of Object.keys(O)) if((O[ono].keys||[]).indexOf(p.key)>=0) return {k:'sent',t:'사방넷 엑셀 받음 ('+String(O[ono].at||'').slice(5,10).replace('-','/')+') · 출고 대기',ono:ono};
+  return {k:'wait',t:'출고 전'};
+}
+let infShowDone=false;
+function renderInfluencer_(box){
+  const lb=document.createElement('div');lb.className='link-bar';
+  const a=document.createElement('a');a.className='link-btn';a.target='_blank';a.rel='noopener';
+  a.href='https://docs.google.com/spreadsheets/d/'+INF_SHEET_ID+'/edit#gid='+infCfg_().tabs[0].gid;
+  a.textContent='📊 인플루언서 체험단 시트 열기';lb.appendChild(a);box.appendChild(lb);
+  const g1=groupBox(1,'📦 매장 수령 제품 보내기','<span class="inf-sum" style="color:var(--ink-mute);">시트 읽는 중…</span>','setPriceCalc:grpInf1',true);
+  box.appendChild(g1.group);
+  const wrap=g1.body;
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='체험단 시트에서 <b>「제품제공 여부 = 매장 수령」</b>인 사람의 제품을 지점별로 묶었습니다. A타입 포어시그널 3종 · B타입 루비알엔 2종, 1인 1세트.<br>'+
+    '<b>「📤 사방넷 발주 엑셀」</b> → 사방넷 발주등록 → 엑셀등록. 퇴근 전 출고 엑셀을 홈에 올리면 출고일·송장이 사람마다 기록되고, '+
+    '체험단 시트 「제품 배송 여부」 칸은 시트 메뉴(또는 매일 아침 자동)로 채워집니다.';
+  wrap.appendChild(nt);
+  const body=document.createElement('div');body.innerHTML='<div class="hint">체험단 시트를 읽는 중…</div>';wrap.appendChild(body);
+  /* 사방넷 발주 타입 — 사방넷에 만든 이름으로 */
+  const cf=document.createElement('div');cf.className='hint';cf.style.cssText='margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;';
+  cf.innerHTML='사방넷 발주 타입 <span style="color:var(--ink-mute);">(사방넷에 만든 이름과 같게 · 관리메모에 「인플루언서」가 있으면 어떤 타입이든 인플루언서 건으로 봅니다)</span>';
+  const ti=document.createElement('input');ti.className='cell-input';ti.value=infCfg_().type;ti.style.cssText='width:200px;padding:6px 8px;';
+  ti.addEventListener('change',function(){ if(!canEdit()){ showToast('보기 전용입니다'); return; } lib.infCfg=Object.assign({},lib.infCfg||{},{type:ti.value.trim()||'인플루언서_체험단'}); persistLib(); showToast('발주 타입을 저장했습니다'); });
+  cf.appendChild(ti);wrap.appendChild(cf);
+  (async function(){
+    let list=[];
+    try{ list=await infFetch_(); }catch(e){ body.innerHTML='<div class="hint" style="color:var(--warn);">✕ '+e.message+'</div>'; return; }
+    try{ if(canEdit()&&infApplyShip_(await sboLoad())) persistLib(); }catch(e){}
+    const pick=list.filter(function(p){ return /매장/.test(p.supply); });
+    pick.forEach(function(p){ p.st=infStatus_(p); p.items=infItems_(p.item); });
+    const waitN=pick.filter(function(p){ return p.st.k==='wait'; }).length;
+    const sentN=pick.filter(function(p){ return p.st.k==='sent'; }).length;
+    const doneN=pick.filter(function(p){ return p.st.k==='done'; }).length;
+    const sum=g1.group.querySelector('.inf-sum');
+    if(sum) sum.innerHTML=(waitN?'<span style="color:var(--warn);">보낼 '+waitN+'명</span> · ':'')+(sentN?'출고 대기 '+sentN+'명 · ':'')+'출고 '+doneN+'명';
+    body.innerHTML='';
+    const h=document.createElement('div');h.className='sec-h';
+    const hs=document.createElement('span');hs.textContent='📋 매장 수령 체험단 ('+pick.length+'명)';h.appendChild(hs);
+    const tools=document.createElement('div');tools.className='sh-tools';
+    const xb=document.createElement('button');xb.className='icon-btn';xb.textContent='📤 사방넷 발주 엑셀';
+    xb.title='아직 안 보낸 사람(「출고 전」)을 지점마다 한 건으로 묶어 받습니다';
+    xb.addEventListener('click',async function(){
+      if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 받아주세요'); return; }
+      const todo=pick.filter(function(p){ return p.st.k==='wait'; });
+      if(!todo.length){ showToast('새로 보낼 사람이 없습니다'); return; }
+      const by={};
+      todo.forEach(function(p){ (by[p.store]=by[p.store]||[]).push(p); });
+      const ymd=sboToday_().replace(/-/g,'').slice(2);
+      const rows=[], outs=[];
+      Object.keys(by).forEach(function(st){
+        const ps=by[st], d=infDest_(st);
+        let ono='INF'+ymd+'-'+infNorm_(d.recv).replace(/레디영$/,'');
+        let k2=2; while(infOut_()[ono]) ono=ono.replace(/_\d+$/,'')+'_'+(k2++);
+        const cnt={};
+        ps.forEach(function(p){ p.items.forEach(function(it){ cnt[it]=(cnt[it]||0)+1; }); });
+        const dates=ps.map(function(p){ return p.date; }).filter(Boolean).sort();
+        const memo2='방문 '+(dates[0]?dates[0].slice(5).replace('-','/'):'?')+(dates.length>1&&dates[dates.length-1]!==dates[0]?'~'+dates[dates.length-1].slice(5).replace('-','/'):'')+
+          ' · '+ps.length+'명 ('+ps.slice(0,3).map(function(p){ return p.name; }).join(', ')+(ps.length>3?' 외':'')+')';
+        Object.keys(cnt).forEach(function(it){
+          rows.push({store:d.recv,addr:d.addr,tel:d.tel,item:it,qty:cnt[it],ono:ono,date:'',memo1:'인플루언서 체험단 매장수령',memo2:memo2});
+        });
+        outs.push({ono:ono,keys:ps.map(function(p){ return p.key; }),store:st,recv:d.recv});
+      });
+      const res=await sboOrderXlsx('influencer',rows);
+      if(!res) return;
+      const O=infOut_(), at=new Date().toISOString();
+      outs.forEach(function(o){ O[o.ono]={keys:o.keys,store:o.store,recv:o.recv,at:at}; });
+      persistLib(); refreshCurrentView();
+    });
+    tools.appendChild(xb);
+    if(doneN){
+      const tg=document.createElement('button');tg.className='icon-btn';
+      tg.textContent=infShowDone?'출고 완료 숨기기':'출고 완료도 보기 ('+doneN+')';
+      tg.addEventListener('click',function(){ infShowDone=!infShowDone; refreshCurrentView(); });
+      tools.appendChild(tg);
+    }
+    h.appendChild(tools);body.appendChild(h);
+    const show=pick.filter(function(p){ return infShowDone||p.st.k!=='done'; });
+    if(!show.length){ const e=document.createElement('div');e.className='hint';e.textContent=pick.length?'✅ 모두 출고됐습니다.':'매장 수령 체험단이 없습니다.';body.appendChild(e); return; }
+    const by={}; show.forEach(function(p){ (by[p.store]=by[p.store]||[]).push(p); });
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th>지점 → 받는 곳</th><th>방문일</th><th>성함</th><th>국가</th><th>품목</th><th>상태</th><th></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    Object.keys(by).forEach(function(st){
+      const ps=by[st].sort(function(a,b){ return String(a.date).localeCompare(String(b.date)); }), d=infDest_(st);
+      ps.forEach(function(p,i){
+        const tr=document.createElement('tr');
+        if(i===0&&tb.children.length) tr.style.borderTop='2px solid var(--line)';
+        let html='';
+        if(i===0) html+='<td rowspan="'+ps.length+'" style="vertical-align:top;"><b>'+st+'</b><div style="font-size:11.5px;color:var(--ink-soft);">→ '+d.recv+'</div>'+
+          '<div style="font-size:11px;color:'+(d.addr?'var(--ink-mute)':'var(--warn)')+';">'+(d.addr||'⚠ 지점 주소 없음 — 2km 규약 검사에서 지점을 확인하세요')+'</div></td>';
+        const col=p.st.k==='done'?'var(--good)':p.st.k==='sent'?'#8A5300':'var(--warn)';
+        html+='<td style="white-space:nowrap;">'+(p.date||'-')+'</td><td><b>'+p.name+'</b>'+(p.sns?'<div style="font-size:11px;color:var(--ink-mute);">'+p.sns+'</div>':'')+'</td>'+
+          '<td>'+(p.nat||'-')+'</td><td style="font-size:12px;">'+p.items.join('<br>')+'</td>'+
+          '<td style="font-size:12px;color:'+col+';font-weight:700;">'+p.st.t+'</td>';
+        tr.innerHTML=html;
+        const td=document.createElement('td');
+        if(p.st.k==='sent'&&canEdit()){
+          const x=document.createElement('button');x.className='icon-btn';x.style.fontSize='11px';x.textContent='↺ 다시 보내기';
+          x.title='사방넷에 안 올렸으면 「출고 전」으로 되돌립니다';
+          x.addEventListener('click',function(){
+            const O=infOut_()[p.st.ono]; if(!O) return;
+            O.keys=(O.keys||[]).filter(function(k){ return k!==p.key; });
+            if(!O.keys.length) delete infOut_()[p.st.ono];
+            persistLib(); refreshCurrentView();
+          });
+          td.appendChild(x);
+        }
+        tr.appendChild(td);tb.appendChild(tr);
+      });
+    });
+    t.appendChild(tb);
+    const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t);body.appendChild(bx);
+  })();
+}
 function renderChannel(view){
   const meta=channelMeta(view);if(!meta)return;
   const box=document.getElementById('view-channel');box.innerHTML='';
   const head=document.createElement('header');head.className='page-head';
   head.innerHTML='<div class="eyebrow">약국 채널</div><h1><span class="flag">'+meta.ic+'</span>'+meta.name+'</h1><p class="sub">'+meta.desc+'</p>';
   box.appendChild(head);
+  if(meta.id==='influencer'){ renderInfluencer_(box); return; }
   /* 판매가표는 매일 보는 것이 아닙니다 — 묶음이 있는 채널은 ④ 참고자료 안에 둡니다 */
   const GROUPED_CH={barofarm:1,pharmmall:1,aquamedi:1};
   if(PRICE_COLS[meta.id]&&!GROUPED_CH[meta.id]) box.appendChild(buildPriceTable(meta.id,true));
