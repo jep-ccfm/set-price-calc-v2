@@ -6258,6 +6258,239 @@ async function importEntryOrders(logEl,onDone){
   showToast('발주 '+added+'건을 등록했습니다');
   if(onDone) onDone();
 }
+/* ============================================================
+   이카운트 판매입력 (2026-10-15)
+   9월까지는 배송요청시트를 읽는 시트 자동화(레디영 ②→④, 약국 3채널)가 판매입력 표를 만들었습니다.
+   배송요청시트가 9/30에 멈추면서 10월분이 하나도 안 만들어졌습니다 — 사방넷 ERP 연동은 입고(구매)만 됩니다.
+   대시보드에 사방넷 출고·주문 금액이 다 있으니 여기서 같은 19열 표를 만듭니다.
+     · 레디영   = 사방넷 출고(약국 공급) · 레디영 공급가 · 무상(테스터·디피·인플루언서) 제외
+     · 자사몰   = 10월 주문 중 출고된 것 · 출고일 · 실제 주문 금액
+     · 바로팜   = 같은 방식 (5+1 증정분은 주문에 없으므로 자동 제외)
+     · 아쿠아메디는 거래명세서를 이카운트에서 끊으므로 이미 들어가 있습니다 — 여기서 안 만듭니다.
+   거래처표·품목표(완제품 코드)는 기존 자동화와 같은 「레디영 매출 시트」 마스터를 그대로 읽습니다.
+   양식: 일자·순번·거래처코드·거래처명·담당자·출하창고(00000)·거래유형(11)·주문번호·품목코드·품목명·규격·
+         수량·단가·외화금액·공급가액·부가세·적요·생산전표생성(N)·시리얼/로트 — 같은 날·같은 거래처 = 한 전표
+   ============================================================ */
+const EC_HUB_ID='1R7KZpSo90SMAPjq5U-gu4XvxvJKne7snky1xOMdZMYw';
+const EC_CUTOVER='2026-10-01';
+const EC_HEADERS=['일자','순번','거래처코드','거래처명','담당자','출하창고','거래유형','주문번호','품목코드','품목명','규격',
+  '수량','단가','외화금액','공급가액','부가세','적요','생산전표생성','시리얼/로트'];
+const EC_CH=[{id:'ready',label:'레디영'},{id:'pharmmall',label:'자사몰 약사전용관'},{id:'barofarm',label:'바로팜'}];
+let ecMasterCache=null;
+async function ecMasters_(){
+  if(ecMasterCache) return ecMasterCache;
+  const get=async function(tab){
+    const r=await fetch('https://docs.google.com/spreadsheets/d/'+EC_HUB_ID+'/gviz/tq?tqx=out:csv&sheet='+encodeURIComponent(tab)+'&cb='+Date.now());
+    if(!r.ok) throw new Error('레디영 매출 시트 「'+tab+'」를 읽지 못했습니다 ('+r.status+')');
+    return parseCSV(await r.text());
+  };
+  const v=await get('레디영_거래처표'), it=await get('레디영_품목표');
+  const vendors=v.slice(1).filter(function(r){ return String(r[0]||'').trim(); })
+    .map(function(r){ return {kw:String(r[0]).trim(),code:String(r[1]||'').trim(),name:String(r[2]||'').trim()}; })
+    .sort(function(a,b){ return b.kw.length-a.kw.length; });
+  const items=it.slice(1).filter(function(r){ return String(r[0]||'').trim(); })
+    .map(function(r){ return {name:String(r[0]).trim(),ecName:String(r[1]||'').trim(),unit:Number(String(r[2]||'').replace(/[^0-9.]/g,''))||0,
+      price:Number(String(r[3]||'').replace(/[^0-9.]/g,''))||0,use:String(r[4]||'').trim(),code:String(r[5]||'').trim()}; });
+  ecMasterCache={vendors:vendors,items:items};
+  return ecMasterCache;
+}
+/* 품목 — 우리 품목명으로 맞춰 품목표에서 찾습니다 (사용 Y 우선) */
+function ecItem_(M,name){
+  const want=[itemKey(itemLabel(name))];
+  const mi=matchItem(name); if(mi) want.push(itemKey(mi.name));
+  /* 품목표에 다른 이름으로 올라간 것 — 「포어시그널 멜팅 폼클렌져」(완_00035) */
+  const EC_ALIAS={'포어시그널딥멜팅폼클렌저':'포어시그널 멜팅 폼클렌져'};
+  want.slice().forEach(function(k){ if(EC_ALIAS[k]) want.push(itemKey(itemLabel(EC_ALIAS[k]))); });
+  const cand=M.items.filter(function(x){
+    return want.indexOf(itemKey(itemLabel(x.name)))>=0||want.indexOf(itemKey(itemLabel(x.ecName)))>=0;
+  });
+  return cand.filter(function(x){ return x.use!=='N'; })[0]||cand[0]||null;
+}
+/* 레디영 지점 — 받는분 이름에 키워드가 들어 있으면 (긴 키워드 먼저: 제주애월 > 제주) */
+function ecVendorRY_(M,recv){
+  const t=String(recv||'').replace(/\s+/g,'');
+  return M.vendors.filter(function(v){ return t.indexOf(v.kw)>=0; })[0]||null;
+}
+function ecBiz_(v){
+  const d=String(v||'').replace(/[^0-9]/g,'');
+  return d.length===10?d.slice(0,3)+'-'+d.slice(3,5)+'-'+d.slice(5):String(v||'').trim();
+}
+function ecDoneOf_(){ lib.ecountDone=lib.ecountDone||{}; return lib.ecountDone; }
+/* 한 달 · 한 채널의 판매입력 줄 */
+async function ecLines_(ch,mk){
+  const M=await ecMasters_();
+  const out=[], skipped=[];
+  const push=function(o){
+    const it=ecItem_(M,o.item);
+    if(!it) o.warn=(o.warn?o.warn+' · ':'')+'품목표에 없음';
+    else if(!it.code) o.warn=(o.warn?o.warn+' · ':'')+'품목코드 없음';
+    o.code=it&&it.code?it.code:''; o.ecName=it?(it.ecName||it.name):o.item;
+    if(!o.vcode) o.warn=(o.warn?o.warn+' · ':'')+'거래처코드 없음';
+    out.push(o);
+  };
+  if(ch==='ready'){
+    const so=await sboLoad();
+    (so.rows||[]).forEach(function(r){
+      if(r.m!=='약국 공급'||!r.v) return;
+      const d=String(r.fin||r.d||''); if(d.slice(0,7)!==mk||d<EC_CUTOVER) return;
+      const memo=String(r.b||'')+' '+String(r.msg||'');
+      const free=/테스터|디피|샘플|인플루언서|체험단|무상/.test(memo), paid=/공급|발주|판매/.test(memo);
+      if(free&&!paid){ skipped.push(r.r+' '+r.i+' ×'+r.q+' (무상: '+memo.trim()+')'); return; }
+      const it=ecItem_(M,r.i); const price=it?it.price:0;
+      const total=price*(r.q||0), supply=Math.round(total/1.1);
+      const v=ecVendorRY_(M,r.r);
+      push({key:'ry|'+r.k,date:d,vcode:v?v.code:'',vname:v?v.name:r.r,ono:r.no||'',item:r.i,qty:r.q||0,
+        unit:it?it.unit:0,supply:supply,vat:total-supply,memo:'사방넷 송장 '+r.v,
+        warn:(free?'무상·유상 섞임 — 수량 확인':'')+(price?'':(free?' · ':'')+'단가 없음')});
+    });
+  } else {
+    const led=(lib.ledger&&lib.ledger[ch])||{months:{}};
+    Object.keys(led.months||{}).forEach(function(m){
+      (led.months[m].docs||[]).forEach(function(d){
+        const sd=String(d.shipDate||''); if(sd.slice(0,7)!==mk||String(d.date||'')<EC_CUTOVER) return;
+        const meta=d.meta||{};
+        const si=(lib.storeInfo||{})[d.branch]||{};
+        const biz=ch==='barofarm'?meta['사업자번호']:(si.bizNo||'');
+        (d.items||[]).forEach(function(it){
+          const q=Number(it.qty)||0, sup=Number(it.supply)||0, vt=Number(it.vat)||0;
+          push({key:ch.slice(0,2)+'|'+d.serial+'|'+itemKey(it.name),date:sd,vcode:biz?ecBiz_(biz):'',
+            vname:(ch==='pharmmall'?(si.biz||d.branch):d.branch)||'',ono:(ch==='barofarm'?'BF':'')+d.serial,item:it.name,qty:q,
+            unit:q?Math.round(sup/q):0,supply:sup,vat:vt,memo:'주문 '+d.date,warn:''});
+        });
+      });
+    });
+  }
+  /* 같은 날 · 같은 거래처 = 한 전표 */
+  out.sort(function(a,b){ return a.date.localeCompare(b.date)||String(a.vcode+a.vname).localeCompare(String(b.vcode+b.vname))||String(a.ono).localeCompare(String(b.ono)); });
+  const seq={}, slot={};
+  out.forEach(function(o){
+    const g=o.date+'|'+(o.vcode||o.vname);
+    if(!slot[g]){ seq[o.date]=(seq[o.date]||0)+1; slot[g]=seq[o.date]; }
+    o.seq=slot[g];
+  });
+  return {lines:out,skipped:skipped};
+}
+function ecRow_(o){
+  return [o.date.replace(/-/g,''),String(o.seq),o.vcode,o.vname,'','00000','11',o.ono,o.code,o.code?'':o.ecName,'',
+    String(o.qty),String(o.unit),'',String(o.supply),String(o.vat),o.memo||'','N',''];
+}
+let ecView={ch:'ready',mk:null,showDone:false};
+function buildEcountPanel_(){
+  const D=ecDoneOf_();
+  const fp=foldPanel('🧾 이카운트 판매입력 (10월~)','<span class="ec-sum" style="color:var(--ink-mute);font-weight:600;">사방넷 출고 기준</span>','setPriceCalc:ecOpen',false);
+  const wrap=fp.body;
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='배송요청시트가 9/30에 멈추면서 시트 자동화가 10월 판매입력을 못 만들었습니다 — 여기서 같은 19열 표를 만듭니다.<br>'+
+    '<b>「📋 표 복사」</b> → 이카운트 판매입력 → <b>웹자료올리기</b> 표에 붙여넣기 → 저장한 뒤 <b>「✔ 올린 걸로 표시」</b>를 누르면 다음부터 안 나옵니다.<br>'+
+    '<span style="color:var(--ink-soft);">레디영 = 사방넷 출고 · 레디영 공급가 · 무상(테스터·디피·인플루언서) 제외 / 자사몰·바로팜 = 10월 주문 중 출고된 것 · 실제 주문 금액 / '+
+    '아쿠아메디는 명세서를 이카운트에서 끊어 이미 들어가 있습니다. 거래처·품목코드는 레디영 매출 시트 마스터를 그대로 씁니다.</span>';
+  wrap.appendChild(nt);
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;';
+  const now=new Date(); const z=function(x){ return String(x).padStart(2,'0'); };
+  const cur=now.getFullYear()+'-'+z(now.getMonth()+1);
+  const months=[]; for(let m=EC_CUTOVER.slice(0,7);m<=cur;){ months.push(m); const y=+m.slice(0,4), mo=+m.slice(5,7); m=(mo===12?(y+1)+'-01':y+'-'+z(mo+1)); }
+  if(!ecView.mk||months.indexOf(ecView.mk)<0) ecView.mk=cur;
+  const ms=document.createElement('select');ms.className='cell-input';ms.style.padding='6px 8px';
+  months.forEach(function(m){ const o=document.createElement('option');o.value=m;o.textContent=mkLabel(m);ms.appendChild(o); });
+  ms.value=ecView.mk; ms.addEventListener('change',function(){ ecView.mk=ms.value; draw(); });
+  bar.appendChild(ms);
+  EC_CH.forEach(function(c){
+    const b=document.createElement('button');b.className='icon-btn';b.textContent=c.label;b.dataset.ch=c.id;
+    b.addEventListener('click',function(){ ecView.ch=c.id; draw(); });
+    bar.appendChild(b);
+  });
+  wrap.appendChild(bar);
+  const body=document.createElement('div');wrap.appendChild(body);
+  let last=null;
+  const draw=async function(){
+    bar.querySelectorAll('button[data-ch]').forEach(function(b){ b.style.cssText=b.dataset.ch===ecView.ch?'background:var(--ink);color:#fff;border-color:var(--ink);':''; });
+    body.innerHTML='<div class="hint">만드는 중…</div>';
+    let res;
+    try{ res=await ecLines_(ecView.ch,ecView.mk); }catch(e){ body.innerHTML='<div class="hint" style="color:var(--warn);">✕ '+e.message+'</div>'; return; }
+    last=res;
+    const todo=res.lines.filter(function(o){ return !D[o.key]; }), done=res.lines.length-todo.length;
+    const show=ecView.showDone?res.lines:todo;
+    const warnN=todo.filter(function(o){ return o.warn; }).length;
+    const sumT=todo.reduce(function(a,o){ return a+o.supply+o.vat; },0);
+    body.innerHTML='';
+    const h=document.createElement('div');h.className='sec-h';
+    h.innerHTML='<span>'+mkLabel(ecView.mk)+' · '+EC_CH.filter(function(c){ return c.id===ecView.ch; })[0].label+' — 올릴 '+todo.length+'줄 · 합계 '+fmt(sumT)+'원'+
+      (done?' <span style="color:var(--good);font-size:12px;">(올림 '+done+'줄)</span>':'')+'</span>';
+    const tools=document.createElement('div');tools.className='sh-tools';
+    const cb=document.createElement('button');cb.className='icon-btn';cb.textContent='📋 표 복사';
+    cb.title='머리글 없이 복사합니다 — 웹자료올리기 표 첫 칸에 붙여넣으세요';
+    cb.addEventListener('click',function(){
+      if(!todo.length){ showToast('올릴 줄이 없습니다'); return; }
+      settleCopy_(todo.map(function(o){ return ecRow_(o).join('\t'); }).join('\n'),todo.length+'줄을 복사했습니다 — 이카운트 웹자료올리기에 붙여넣으세요');
+    });
+    const xb=document.createElement('button');xb.className='icon-btn';xb.textContent='📥 엑셀';
+    xb.addEventListener('click',function(){
+      if(!xlsxReady()||!todo.length) return;
+      const ws=XLSX.utils.aoa_to_sheet([EC_HEADERS].concat(todo.map(ecRow_)));
+      Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]) ws[k].t='s'; });
+      const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'판매입력');
+      XLSX.writeFile(wb,'이카운트_판매입력_'+EC_CH.filter(function(c){ return c.id===ecView.ch; })[0].label+'_'+ecView.mk+'.xlsx');
+    });
+    const mb=document.createElement('button');mb.className='icon-btn';mb.textContent='✔ 올린 걸로 표시';
+    mb.addEventListener('click',function(){
+      if(!canEdit()){ showToast('보기 전용입니다'); return; }
+      if(!todo.length) return;
+      if(!confirm(todo.length+'줄을 이카운트에 올린 걸로 표시할까요? 다음부터 표에 안 나옵니다.')) return;
+      const at=new Date().toISOString().slice(0,10);
+      todo.forEach(function(o){ D[o.key]=at; });
+      persistLib(); showToast(todo.length+'줄을 올린 걸로 표시했습니다'); draw();
+    });
+    tools.append(cb,xb,mb);
+    if(done){
+      const tg=document.createElement('button');tg.className='icon-btn';
+      tg.textContent=ecView.showDone?'올린 것 숨기기':'올린 것도 보기 ('+done+')';
+      tg.addEventListener('click',function(){ ecView.showDone=!ecView.showDone; draw(); });
+      tools.appendChild(tg);
+    }
+    h.appendChild(tools);body.appendChild(h);
+    if(warnN){
+      const w=document.createElement('div');w.className='hint';w.style.cssText='color:var(--warn);margin-bottom:6px;';
+      w.textContent='⚠ 확인 필요 '+warnN+'줄 — 거래처코드·품목코드가 없으면 이카운트에서 막히거나 엉뚱한 품목(반제품)이 잡힐 수 있습니다.';
+      body.appendChild(w);
+    }
+    if(res.skipped.length){
+      const w2=document.createElement('div');w2.className='hint';w2.style.marginBottom='6px';
+      w2.textContent='무상이라 뺀 출고 '+res.skipped.length+'줄: '+res.skipped.slice(0,5).join(' / ')+(res.skipped.length>5?' 외':'');
+      body.appendChild(w2);
+    }
+    if(!show.length){ const e=document.createElement('div');e.className='hint';e.textContent=res.lines.length?'✅ 이 달은 모두 올렸습니다.':'이 달 올릴 판매가 없습니다.';body.appendChild(e); return; }
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th>일자</th><th>순번</th><th>거래처</th><th>품목</th><th style="text-align:right;">수량</th><th style="text-align:right;">단가</th>'+
+      '<th style="text-align:right;">공급가액</th><th style="text-align:right;">부가세</th><th>주문번호</th><th>확인</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    show.forEach(function(o){
+      const tr=document.createElement('tr');
+      if(D[o.key]) tr.style.opacity='.45'; else if(o.warn) tr.style.background='#FFF8F0';
+      tr.innerHTML='<td style="white-space:nowrap;">'+o.date+'</td><td>'+o.seq+'</td>'+
+        '<td>'+(o.vname||'-')+'<div style="font-size:11px;color:'+(o.vcode?'var(--ink-mute)':'var(--warn)')+';">'+(o.vcode||'코드 없음')+'</div></td>'+
+        '<td>'+o.ecName+'<div style="font-size:11px;color:'+(o.code?'var(--ink-mute)':'var(--warn)')+';">'+(o.code||'품목코드 없음')+'</div></td>'+
+        '<td style="text-align:right;">'+fmt(o.qty)+'</td><td style="text-align:right;">'+fmt(o.unit)+'</td>'+
+        '<td style="text-align:right;">'+fmt(o.supply)+'</td><td style="text-align:right;">'+fmt(o.vat)+'</td>'+
+        '<td style="font-size:11px;color:var(--ink-soft);">'+(o.ono||'')+'</td>'+
+        '<td style="font-size:11.5px;color:var(--warn);">'+(D[o.key]?'<span style="color:var(--good);">올림 '+D[o.key]+'</span>':(o.warn||''))+'</td>';
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t);body.appendChild(bx);
+  };
+  /* 접혀 있어도 머리에 남은 줄 수를 보여줍니다 */
+  (async function(){
+    try{
+      let n=0;
+      for(const c of EC_CH){ const r=await ecLines_(c.id,ecView.mk||cur); n+=r.lines.filter(function(o){ return !D[o.key]; }).length; }
+      const s=fp.panel.querySelector('.ec-sum');
+      if(s) s.innerHTML=n?'<span style="color:var(--warn);">'+mkLabel(ecView.mk||cur)+' 올릴 '+n+'줄</span>':'<span style="color:var(--good);">✓ '+mkLabel(ecView.mk||cur)+' 다 올림</span>';
+    }catch(e){}
+  })();
+  fp.panel.querySelector('.ch-head').addEventListener('click',function(){ if(!last) draw(); });
+  if(fp.panel.classList.contains('open')) draw();
+  return fp.panel;
+}
 function buildEntrySync(){
   const fp=foldPanel('📦 사방넷 출고 엑셀 · 발주 맞추기',
     '<span class="sbo-sum" style="color:var(--ink-mute);font-weight:600;">10월부터 사방넷 출고 엑셀</span>',
@@ -12029,6 +12262,7 @@ function renderHome(){
   box.appendChild(grid);
 
   box.appendChild(buildEntrySync());
+  box.appendChild(buildEcountPanel_());
 
   /* ---- 빠른 이동 ---- */
   const qh=document.createElement('div');qh.className='sec-h';qh.textContent='바로가기';box.appendChild(qh);
