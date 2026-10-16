@@ -7934,6 +7934,33 @@ function infStatus_(p){
   return {k:'wait',t:'출고 전'};
 }
 let infShowDone=false;
+/* ---------- 방문 기간 고르기 (2026-10-16) ----------
+   예약이 몇 주 앞까지 미리 잡혀 있어, 전부 내보내면 한참 뒤 방문분까지 지금 보내게 됩니다.
+   방문날짜로 기간을 골라 그 안의 사람만 목록·사방넷 엑셀에 넣습니다. 고른 기간은 브라우저에 기억합니다
+   (「이번 주」 같은 바로가기는 날짜가 아니라 그 이름으로 기억해, 다음 날 열어도 그날 기준으로 다시 계산). */
+function infYmd_(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function infRangePreset_(k){
+  const t=new Date(); t.setHours(0,0,0,0);
+  const add=function(d,n){ const x=new Date(d.getTime()); x.setDate(x.getDate()+n); return x; };
+  const mon=add(t,-((t.getDay()+6)%7));
+  if(k==='week') return {k:k,from:infYmd_(mon),to:infYmd_(add(mon,6))};
+  if(k==='next') return {k:k,from:infYmd_(add(mon,7)),to:infYmd_(add(mon,13))};
+  if(k==='month') return {k:k,from:infYmd_(new Date(t.getFullYear(),t.getMonth(),1)),to:infYmd_(new Date(t.getFullYear(),t.getMonth()+1,0))};
+  if(k==='all') return {k:k,from:'',to:''};
+  return {k:'2w',from:infYmd_(t),to:infYmd_(add(t,13))};
+}
+function infRange_(){
+  let v=null; try{ v=JSON.parse(localStorage.getItem('setPriceCalc:infRange')||'null'); }catch(e){}
+  if(v&&v.k&&v.k!=='custom') return infRangePreset_(v.k);
+  if(v&&v.k==='custom') return v;
+  return infRangePreset_('2w');
+}
+function infSetRange_(r){ try{ localStorage.setItem('setPriceCalc:infRange',JSON.stringify(r)); }catch(e){} }
+function infInRange_(p,r){
+  if(!r.from&&!r.to) return true;
+  if(!p.date) return false;
+  return (!r.from||p.date>=r.from)&&(!r.to||p.date<=r.to);
+}
 function renderInfluencer_(box){
   const lb=document.createElement('div');lb.className='link-bar';
   const a=document.createElement('a');a.className='link-btn';a.target='_blank';a.rel='noopener';
@@ -7958,23 +7985,54 @@ function renderInfluencer_(box){
     let list=[];
     try{ list=await infFetch_(); }catch(e){ body.innerHTML='<div class="hint" style="color:var(--warn);">✕ '+e.message+'</div>'; return; }
     try{ if(canEdit()&&infApplyShip_(await sboLoad())) persistLib(); }catch(e){}
-    const pick=list.filter(function(p){ return /매장/.test(p.supply); });
-    pick.forEach(function(p){ p.st=infStatus_(p); p.items=infItems_(p.item); });
+    const pickAll=list.filter(function(p){ return /매장/.test(p.supply); });
+    pickAll.forEach(function(p){ p.st=infStatus_(p); p.items=infItems_(p.item); });
+    /* 고른 방문 기간 안의 사람만 */
+    const R=infRange_();
+    const pick=pickAll.filter(function(p){ return infInRange_(p,R); });
+    const outWait=pickAll.filter(function(p){ return p.st.k==='wait'&&!infInRange_(p,R); });
     const waitN=pick.filter(function(p){ return p.st.k==='wait'; }).length;
     const sentN=pick.filter(function(p){ return p.st.k==='sent'; }).length;
     const doneN=pick.filter(function(p){ return p.st.k==='done'; }).length;
     const sum=g1.group.querySelector('.inf-sum');
-    if(sum) sum.innerHTML=(waitN?'<span style="color:var(--warn);">보낼 '+waitN+'명</span> · ':'')+(sentN?'출고 대기 '+sentN+'명 · ':'')+'출고 '+doneN+'명';
+    if(sum) sum.innerHTML=(waitN?'<span style="color:var(--warn);">기간 안 보낼 '+waitN+'명</span> · ':'')+(sentN?'출고 대기 '+sentN+'명 · ':'')+'출고 '+doneN+'명'+
+      (outWait.length?' · <span style="color:var(--ink-mute);">기간 밖 '+outWait.length+'명</span>':'');
     body.innerHTML='';
+    /* 방문 기간 */
+    {
+      const rb=document.createElement('div');
+      rb.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:#FBFAF7;';
+      const lab=document.createElement('b');lab.style.fontSize='12.5px';lab.textContent='📅 방문 기간';rb.appendChild(lab);
+      const fi=document.createElement('input');fi.type='date';fi.className='cell-input';fi.value=R.from||'';fi.style.padding='5px 7px';
+      const sp=document.createElement('span');sp.textContent='~';
+      const ti2=document.createElement('input');ti2.type='date';ti2.className='cell-input';ti2.value=R.to||'';ti2.style.padding='5px 7px';
+      const setC=function(){ infSetRange_({k:'custom',from:fi.value,to:ti2.value}); refreshCurrentView(); };
+      fi.addEventListener('change',setC); ti2.addEventListener('change',setC);
+      rb.append(fi,sp,ti2);
+      [['week','이번 주'],['next','다음 주'],['2w','오늘부터 2주'],['month','이번 달'],['all','전체']].forEach(function(x){
+        const b=document.createElement('button');b.className='icon-btn';b.textContent=x[1];
+        if(R.k===x[0]) b.style.cssText='background:var(--ink);color:#fff;border-color:var(--ink);';
+        b.addEventListener('click',function(){ infSetRange_({k:x[0]}); refreshCurrentView(); });
+        rb.appendChild(b);
+      });
+      if(outWait.length){
+        const od=outWait.map(function(p){ return p.date; }).filter(Boolean).sort();
+        const on=document.createElement('span');on.className='hint';on.style.marginLeft='4px';
+        on.textContent='기간 밖에 아직 안 보낸 '+outWait.length+'명'+(od.length?' (방문 '+od[0].slice(5).replace('-','/')+(od.length>1?'~'+od[od.length-1].slice(5).replace('-','/'):'')+')':'')+
+          (outWait.some(function(p){ return !p.date; })?' · 방문일 없는 사람은 「전체」에서만 보입니다':'');
+        rb.appendChild(on);
+      }
+      body.appendChild(rb);
+    }
     const h=document.createElement('div');h.className='sec-h';
-    const hs=document.createElement('span');hs.textContent='📋 매장 수령 체험단 ('+pick.length+'명)';h.appendChild(hs);
+    const hs=document.createElement('span');hs.textContent='📋 매장 수령 체험단 (기간 안 '+pick.length+'명 / 전체 '+pickAll.length+'명)';h.appendChild(hs);
     const tools=document.createElement('div');tools.className='sh-tools';
     const xb=document.createElement('button');xb.className='icon-btn';xb.textContent='📤 사방넷 발주 엑셀';
-    xb.title='아직 안 보낸 사람(「출고 전」)을 지점마다 한 건으로 묶어 받습니다';
+    xb.title='고른 방문 기간 안에서 아직 안 보낸 사람(「출고 전」)을 지점마다 한 건으로 묶어 받습니다';
     xb.addEventListener('click',async function(){
       if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 받아주세요'); return; }
       const todo=pick.filter(function(p){ return p.st.k==='wait'; });
-      if(!todo.length){ showToast('새로 보낼 사람이 없습니다'); return; }
+      if(!todo.length){ showToast('고른 방문 기간 안에 새로 보낼 사람이 없습니다'); return; }
       const by={};
       todo.forEach(function(p){ (by[p.store]=by[p.store]||[]).push(p); });
       const ymd=sboToday_().replace(/-/g,'').slice(2);
@@ -8008,7 +8066,7 @@ function renderInfluencer_(box){
     }
     h.appendChild(tools);body.appendChild(h);
     const show=pick.filter(function(p){ return infShowDone||p.st.k!=='done'; });
-    if(!show.length){ const e=document.createElement('div');e.className='hint';e.textContent=pick.length?'✅ 모두 출고됐습니다.':'매장 수령 체험단이 없습니다.';body.appendChild(e); return; }
+    if(!show.length){ const e=document.createElement('div');e.className='hint';e.textContent=pick.length?'✅ 이 기간은 모두 출고됐습니다.':(pickAll.length?'이 방문 기간에는 매장 수령 체험단이 없습니다.':'매장 수령 체험단이 없습니다.');body.appendChild(e); return; }
     const by={}; show.forEach(function(p){ (by[p.store]=by[p.store]||[]).push(p); });
     const t=document.createElement('table');t.className='led-table';
     t.innerHTML='<thead><tr><th>지점 → 받는 곳</th><th>방문일</th><th>성함</th><th>국가</th><th>품목</th><th>상태</th><th></th></tr></thead>';
