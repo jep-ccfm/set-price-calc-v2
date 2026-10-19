@@ -2822,6 +2822,11 @@ function buildRyShipList(){
     tools.appendChild(sboOrderBtn_('ready',function(){
       return ryShipRows().filter(function(r){ return !ryShipMonth||String(r.date||'').slice(0,7)===ryShipMonth; });
     }));
+    /* 매출 시트 반영 — 레디영 매출 시트 「매출 rawdata」 + 약국 통합 매출 시트 (2026-10-19) */
+    const sb=document.createElement('button');sb.className='icon-btn';sb.textContent='📊 매출 시트 반영';
+    sb.title='발주 메일과 사방넷 출고를 대조한 뒤, 출고된 줄을 레디영 매출 시트와 약국 통합 매출 시트에 넣습니다';
+    sb.addEventListener('click',rySheetOpen_);
+    tools.appendChild(sb);
     h.appendChild(tools);
   }
   wrap.appendChild(h);
@@ -6492,7 +6497,7 @@ async function ecLines_(ch,mk){
       const total=price*(r.q||0), supply=Math.round(total/1.1);
       const v=ecVendorRY_(M,r.r);
       push({key:'ry|'+r.k,date:d,vcode:v?v.code:'',vname:v?v.name:r.r,ono:r.no||'',item:r.i,qty:r.q||0,
-        unit:it?it.unit:0,supply:supply,vat:total-supply,memo:'사방넷 송장 '+r.v,
+        unit:it?it.unit:0,supply:supply,vat:total-supply,memo:'사방넷 송장 '+r.v,inv:String(r.v),recv:r.r,plain:it?it.name:'',
         warn:(free?'무상·유상 섞임 — 수량 확인':'')+(price?'':(free?' · ':'')+'단가 없음')});
     });
   } else {
@@ -6537,6 +6542,107 @@ async function ecLines_(ch,mk){
     o.seq=slot[g];
   });
   return {lines:out,skipped:skipped};
+}
+/* ---------- 레디영 → 매출 시트 반영 (2026-10-19) ----------
+   10월부터 레디영 출고가 사방넷으로 옮겨 가면서, 배송요청시트를 읽던 두 시트가 9/30 에 멈췄습니다.
+     · 레디영 매출 시트 「매출 rawdata」  · 약국 통합 매출 시트의 레디영 줄
+   「📊 매출 시트 반영」 → 발주 메일과 사방넷 출고를 대조해 보여주고 → 확인하면 lib.rySheet 에 담습니다.
+   두 시트의 Apps Script 가 5분마다 이 값을 읽어 갑니다 (대시보드는 시트에 직접 쓰지 않습니다 — Pull).
+   한 줄 = 사방넷 출고 한 줄 (출고일 기준 · 무상 제외 · 레디영 공급가). 열쇠는 사방넷 줄 열쇠라 두 번 눌러도 안 겹칩니다. */
+function rySheetOf_(){ lib.rySheet=lib.rySheet||{at:'',rows:{}}; lib.rySheet.rows=lib.rySheet.rows||{}; return lib.rySheet; }
+async function rySheetLines_(){
+  const now=sboToday_().slice(0,7);
+  const out=[];
+  for(let m=EC_CUTOVER.slice(0,7);m<=now;){
+    const r=await ecLines_('ready',m); r.lines.forEach(function(o){ out.push(o); });
+    const y=+m.slice(0,4), mo=+m.slice(5,7); m=mo===12?(y+1)+'-01':y+'-'+String(mo+1).padStart(2,'0');
+  }
+  /* 발주 대조 — 같은 송장 · 같은 품목인 발주 줄을 찾습니다 */
+  let vr=[]; try{ vr=await ryVerifyRows(); }catch(e){}
+  const byInv={};
+  vr.forEach(function(v){
+    String(v.inv||'').split(/\s*,\s*/).filter(Boolean).forEach(function(iv){
+      (byInv[iv+'|'+itemKey(v.item)]=byInv[iv+'|'+itemKey(v.item)]||[]).push(v);
+    });
+  });
+  const S=rySheetOf_().rows;
+  out.forEach(function(o){
+    const hit=(byInv[o.inv+'|'+itemKey(itemLabel(o.item))]||[])[0]||null;
+    o.ord=hit&&hit.st!=='extra'?hit.date:'';
+    o.vst=!hit||hit.st==='extra'?'none':hit.st;
+    o.name=o.plain||itemLabel(o.item);
+    const prev=S[o.key];
+    o.state=!prev?'new':(prev.q!==o.qty||prev.tot!==o.supply+o.vat||prev.vc!==o.vcode||prev.code!==o.code)?'chg':'done';
+  });
+  out.waiting=vr.filter(function(v){ return v.st==='wait'||v.st==='miss'; });
+  return out;
+}
+function rySheetRow_(o){
+  return {k:o.key,mk:o.date.slice(0,7),d:o.date,vc:o.vcode,vn:o.vname,item:o.name,code:o.code,q:o.qty,
+    unit:o.unit,sup:o.supply,vat:o.vat,tot:o.supply+o.vat,ono:o.ono||'',inv:o.inv||'',ord:o.ord||'',vst:o.vst};
+}
+async function rySheetOpen_(){
+  if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 반영하세요'); return; }
+  showToast('발주·출고 대조 중…');
+  let L;
+  try{ L=await rySheetLines_(); }catch(e){ showToast('✕ '+e.message); return; }
+  const VST={ok:['✅ 발주 일치','var(--good)'],diff:['⚠️ 수량 다름','var(--warn)'],miss:['⚠️ 일부만','var(--warn)'],wait:['⚠️','var(--warn)'],none:['❓ 발주 메일 없음','#8A5300']};
+  docModalOpen('📊 레디영 → 매출 시트 반영',function(b){
+    const todo=L.filter(function(o){ return o.state!=='done'; });
+    const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+    nt.innerHTML='사방넷에서 <b>송장이 찍힌 레디영 출고</b>(10월~ · 무상 제외)를 <b>발주 메일과 대조</b>했습니다. 금액은 레디영 공급가, 날짜는 <b>출고일</b>입니다.<br>'+
+      '「반영」을 누르면 <b>레디영 매출 시트 「매출 rawdata」</b>와 <b>약국 통합 매출 시트</b>가 <b>5분 안에</b> 이 내용을 가져갑니다.'+
+      (S_at()?'<br><span style="color:var(--ink-mute);">마지막 반영 '+S_at()+'</span>':'');
+    b.appendChild(nt);
+    const cnt=function(f){ return L.filter(f).length; };
+    const sm=document.createElement('div');sm.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;';
+    [['새로 반영',cnt(function(o){ return o.state==='new'; }),'var(--ink)'],['바뀐 줄',cnt(function(o){ return o.state==='chg'; }),'var(--warn)'],
+     ['이미 반영',cnt(function(o){ return o.state==='done'; }),'var(--ink-mute)'],['발주 일치',cnt(function(o){ return o.vst==='ok'; }),'var(--good)'],
+     ['발주와 다름',cnt(function(o){ return o.vst!=='ok'; }),'#8A5300'],['코드 빠짐',cnt(function(o){ return !o.vcode||!o.code; }),'var(--warn)']].forEach(function(x){
+      const c=document.createElement('span');c.style.cssText='border:1px solid var(--line);border-radius:8px;padding:5px 10px;background:#FBFAF7;';
+      c.innerHTML=x[0]+' <b style="color:'+x[2]+';">'+x[1]+'</b>';sm.appendChild(c);
+    });
+    b.appendChild(sm);
+    if(L.waiting&&L.waiting.length){
+      const w=document.createElement('div');w.className='hint';w.style.cssText='margin:-2px 0 10px;padding:7px 10px;background:#F6F4EF;border-radius:8px;';
+      w.textContent='참고 — 발주는 받았는데 아직 송장이 안 찍힌 줄 '+L.waiting.length+'개 ('+
+        [...new Set(L.waiting.map(function(v){ return ryStoreKey(v.store)+' '+String(v.date).slice(5).replace('-','/'); }))].slice(0,6).join(', ')+
+        (L.waiting.length>6?' …':'')+') — 출고되면 다음 반영 때 들어갑니다.';
+      b.appendChild(w);
+    }
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='900px';
+    t.innerHTML='<thead><tr><th>출고일</th><th>거래처</th><th>품목</th><th style="text-align:right;">수량</th><th style="text-align:right;">합계</th><th>발주 대조</th><th>시트</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    L.slice().sort(function(a,c){ return String(c.date).localeCompare(String(a.date))||String(a.vname).localeCompare(String(c.vname),'ko'); }).forEach(function(o){
+      const tr=document.createElement('tr');
+      if(o.state==='done') tr.style.opacity='.55';
+      const v=VST[o.vst]||VST.none;
+      tr.innerHTML='<td style="white-space:nowrap;">'+o.date+'</td>'+
+        '<td>'+(o.vname||o.recv)+(o.vcode?'':' <span style="color:var(--warn);font-size:11px;">거래처코드 없음</span>')+'</td>'+
+        '<td>'+o.name+(o.code?'':' <span style="color:var(--warn);font-size:11px;">품목코드 없음</span>')+'</td>'+
+        '<td style="text-align:right;">'+fmt(o.qty)+'</td><td style="text-align:right;">'+fmt(o.supply+o.vat)+'</td>'+
+        '<td style="color:'+v[1]+';white-space:nowrap;">'+v[0]+(o.ord?' <span style="color:var(--ink-mute);">발주 '+o.ord.slice(5).replace('-','/')+'</span>':'')+'</td>'+
+        '<td style="white-space:nowrap;">'+(o.state==='new'?'<b>새로</b>':o.state==='chg'?'<b style="color:var(--warn);">바뀜</b>':'반영됨')+'</td>';
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const box=document.createElement('div');box.style.cssText='overflow:auto;max-height:52vh;';box.appendChild(t);b.appendChild(box);
+    const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
+    const go=document.createElement('button');go.className='btn btn-primary';
+    go.textContent=todo.length?'시트에 반영 ('+todo.length+'줄)':'새로 반영할 줄이 없습니다';
+    go.disabled=!todo.length;
+    go.addEventListener('click',function(){
+      const R=rySheetOf_();
+      todo.forEach(function(o){ R.rows[o.key]=rySheetRow_(o); });
+      R.at=new Date().toISOString();
+      persistLib();
+      document.getElementById('docModal').hidden=true;
+      showToast('레디영 '+todo.length+'줄을 담았습니다 — 두 시트가 5분 안에 가져갑니다');
+      refreshCurrentView();
+    });
+    bar.appendChild(go); b.appendChild(bar);
+  });
+  function S_at(){ const a=(lib.rySheet||{}).at; return a?String(new Date(a).toLocaleString('ko-KR')):''; }
 }
 function ecRow_(o){
   return [o.date.replace(/-/g,''),String(o.seq),o.vcode,o.vname,'','00000','11',o.ono,o.code,o.code?'':o.ecName,'',
