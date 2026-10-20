@@ -5728,7 +5728,9 @@ const SBO_CHANNELS=[
   {re:/레디영/,          memo:'약국 공급'},
   {re:/바로팜/,          memo:'바로팜 약국 판매'},
   {re:/자사몰/,          memo:'자사몰 약국 판매'},
-  {re:/아쿠아|개인약국/,  memo:'개인약국 판매'}
+  {re:/아쿠아|개인약국/,  memo:'개인약국 판매'},
+  /* 씨앤더블유 = 일본 라이브커머스(일본라방) 거래처 (2026-10-20 확인). 약국 채널이 아니라 발주·정산 대조엔 안 씁니다 */
+  {re:/씨앤더블유|C\s*&\s*W|CNW|일본/i, memo:'일본라방'}
 ];
 /* 배송요청시트를 못 읽어도(나중에 보관 처리 등) 사방넷 줄은 돌아가야 합니다 */
 const ENTRY_HEAD_DEFAULT=['날짜','수취인명','수취인 주소','수취인 전화번호','발주일자','관리메모1',
@@ -6079,7 +6081,7 @@ function sboOrderBtn_(chId,getRows){
 function sboMerge(store,lines,oldInv){
   const rows=store.rows.map(function(x){ return Object.assign({},x); });
   const at={}; rows.forEach(function(x,i){ at[x.k]=i; });
-  const st={add:0,upd:0,del:0,dup:0,cancel:0,notB2B:0,same:0}, warn=[], seen={}, gone={};
+  const st={add:0,upd:0,del:0,dup:0,cancel:0,notB2B:0,same:0}, warn=[], seen={}, gone={}, jp={};
   const w=function(t){ if(!seen[t]){ seen[t]=1; warn.push(t); } };
   lines.forEach(function(L){
     if(!L['오더코드']&&!L['상품코드']) return;
@@ -6119,14 +6121,26 @@ function sboMerge(store,lines,oldInv){
     if(k in at){
       if(gone[k]){ delete gone[k]; st.del--; }
       const old=rows[at[k]];
-      if(old.v!==rec.v||old.s!==rec.s||old.fin!==rec.fin||(!old.z&&rec.z)||(!old.no&&rec.no)){ rows[at[k]]=Object.assign({},old,rec); st.upd++; }
+      if(old.v!==rec.v||old.s!==rec.s||old.fin!==rec.fin||(!old.z&&rec.z)||(!old.no&&rec.no)||old.m!==rec.m){ rows[at[k]]=Object.assign({},old,rec); st.upd++; }
       else st.same++;
       return;
     }
     if(rec.v&&oldInv[rec.v+'|'+itemKey(it.name)]){ st.dup++; return; }
     at[k]=rows.length; rows.push(rec); st.add++;
+    /* 일본라방(씨앤더블유)은 판매분과 샘플이 같은 발주 타입으로 나갑니다 — 새로 들어온 건은 매번 알려서 사람이 가르게 합니다 */
+    if(ch&&ch.memo==='일본라방'){
+      const ok=String(L['오더코드']||'');
+      const j=jp[ok]=jp[ok]||{who:who,d:rec.d,items:[],memo:rec.b};
+      j.items.push(it.name+' ×'+rec.q);
+    }
   });
   if(st.del) w('사방넷에서 취소된 출고 '+st.del+'줄을 지웠습니다 — 이미 발주로 등록됐다면 발주 관리에서 확인하세요');
+  Object.keys(jp).forEach(function(ok){
+    const j=jp[ok];
+    const smp=/샘플|무상|테스트|테스터|증정/.test(String(j.memo||''));
+    warn.unshift('🇯🇵 일본라방(씨앤더블유) '+String(j.d||'').slice(5).replace('-','/')+' '+j.who+' — '+j.items.join(', ')+
+      (j.memo?' · 메모 「'+j.memo+'」':' · 메모 없음')+(smp?' → 샘플로 보임':' → 판매인지 샘플인지 확인'));
+  });
   return {rows:rows.filter(function(x){ return !gone[x.k]; }), stat:st, warn:warn};
 }
 /* 홈에서 엑셀을 올리면 — 읽고, 합치고, 저장 */
