@@ -6514,6 +6514,12 @@ async function ecLines_(ch,mk){
         unit:it?it.unit:0,supply:supply,vat:total-supply,memo:'사방넷 송장 '+r.v,inv:String(r.v),recv:r.r,plain:it?it.name:'',
         warn:(free?'무상·유상 섞임 — 수량 확인':'')+(price?'':(free?' · ':'')+'단가 없음')});
     });
+    /* 출고 없는 매출(수기) — 「📊 매출 시트 반영」에서 넣은 줄 */
+    ryManualRows_().forEach(function(x){
+      if(x.mk!==mk) return;
+      push({key:'ry|'+x.k,date:x.d,vcode:x.vc,vname:x.vn,ono:'',item:x.item,qty:x.q,unit:x.unit,supply:x.sup,vat:x.vat,
+        memo:'수기 매출'+(x.memo?' · '+x.memo:''),warn:''});
+    });
   } else {
     const led=(lib.ledger&&lib.ledger[ch])||{months:{}};
     Object.keys(led.months||{}).forEach(function(m){
@@ -6666,8 +6672,91 @@ async function rySheetOpen_(){
       refreshCurrentView();
     });
     bar.appendChild(go); b.appendChild(bar);
+    b.appendChild(ryManualBox_());
   });
   function S_at(){ const a=(lib.rySheet||{}).at; return a?String(new Date(a).toLocaleString('ko-KR')):''; }
+}
+/* ---------- 출고 없는 매출 (수기) — 2026-10-20 ----------
+   물건이 따로 나가지 않았는데 매출로 잡아야 하는 것 (예: 9/30 부산점 셀텐자크림 중복 출고 30개 →
+   10/12 「따로 전달 없이 돈만 더하기」로 확정). 사방넷에도 발주 메일에도 없으니 여기서 넣습니다.
+   넣는 즉시 lib.rySheet 에 담겨 두 시트(매출 rawdata · 통합매출)와 이카운트 판매입력에 같이 들어갑니다. */
+function ryManualRows_(){
+  const R=(lib.rySheet&&lib.rySheet.rows)||{};
+  return Object.keys(R).filter(function(k){ return /^man\|/.test(k); }).map(function(k){ return R[k]; })
+    .sort(function(a,b){ return String(b.d).localeCompare(String(a.d)); });
+}
+function ryManualBox_(){
+  const w=document.createElement('div');
+  w.style.cssText='margin-top:18px;padding:12px 14px;border:1px dashed var(--line);border-radius:10px;background:#FBFAF7;';
+  const h=document.createElement('div');h.style.cssText='font-weight:800;margin-bottom:4px;';h.textContent='✍ 출고 없는 매출 (수기)';w.appendChild(h);
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='8px';
+  nt.innerHTML='출고·발주 메일 없이 <b>돈만 더하기로 한 건</b>(중복 출고분 확정 등)을 넣습니다. 넣는 즉시 두 시트와 이카운트 판매입력에 들어가고, 그 달 정산에 더해집니다.';
+  w.appendChild(nt);
+  const list=document.createElement('div');w.appendChild(list);
+  const drawList=function(){
+    list.innerHTML='';
+    ryManualRows_().forEach(function(x){
+      const r=document.createElement('div');r.style.cssText='display:flex;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--line);font-size:12.5px;flex-wrap:wrap;';
+      r.innerHTML='<span style="white-space:nowrap;">'+x.d+'</span><b>'+x.vn+'</b><span>'+x.item+' ×'+fmt(x.q)+'</span><b>'+fmt(x.tot)+'원</b>'+
+        '<span style="color:var(--ink-mute);">'+(x.memo||'')+'</span>';
+      const del=document.createElement('button');del.className='icon-btn';del.textContent='삭제';del.style.marginLeft='auto';
+      del.addEventListener('click',function(){
+        if(!canEdit()){ showToast('보기 전용입니다'); return; }
+        if(!confirm(x.d+' '+x.vn+' '+x.item+' ×'+x.q+' 을(를) 지울까요?\n시트에 이미 들어간 줄은 매출 rawdata 에 남으니 그 줄도 지워주세요.')) return;
+        const R=rySheetOf_(); delete R.rows[x.k]; R.at=new Date().toISOString(); persistLib(); drawList();
+        showToast('지웠습니다 — 통합매출 시트는 5분 안에 빠집니다');
+      });
+      r.appendChild(del); list.appendChild(r);
+    });
+  };
+  drawList();
+  const f=document.createElement('div');f.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;';
+  const inp=function(type,ph,width){ const e=document.createElement('input');e.type=type;e.placeholder=ph||'';e.className='cell-input';e.style.cssText='padding:6px 8px;width:'+width+'px;';return e; };
+  const dt=inp('date','',140); dt.value=sboToday_();
+  const vs=document.createElement('select');vs.className='cell-input';vs.style.cssText='padding:6px 8px;';
+  const is=document.createElement('select');is.className='cell-input';is.style.cssText='padding:6px 8px;';
+  const q=inp('number','수량',80);
+  const memo=inp('text','메모 (예: 9/30 중복출고분 10/12 확정)',260);
+  const add=document.createElement('button');add.className='btn btn-primary';add.textContent='추가';add.style.padding='7px 14px';
+  f.append(dt,vs,is,q,memo,add); w.appendChild(f);
+  const prev=document.createElement('div');prev.className='hint';prev.style.marginTop='6px';w.appendChild(prev);
+  let M=null;
+  const calc=function(){
+    if(!M) return null;
+    const v=M.vendors.filter(function(x){ return x.name===vs.value; })[0];
+    const it=M.items.filter(function(x){ return x.name===is.value; })[0];
+    const n=Number(q.value)||0;
+    if(!v||!it||!n){ prev.textContent=''; return null; }
+    const total=(it.price||0)*n, sup=Math.round(total/1.1);
+    prev.innerHTML=v.name+(v.code?' ('+v.code+')':' <span style="color:var(--warn);">거래처코드 없음</span>')+' · '+it.name+' ×'+n+
+      ' = <b>'+fmt(total)+'원</b> (공급가 '+fmt(sup)+' + 부가세 '+fmt(total-sup)+')'+(it.price?'':' <span style="color:var(--warn);">단가 없음</span>');
+    return {v:v,it:it,n:n,total:total,sup:sup};
+  };
+  ecMasters_().then(function(m){
+    M=m;
+    const vn=[...new Set(m.vendors.map(function(x){ return x.name; }).filter(Boolean))].sort(function(a,b){ return a.localeCompare(b,'ko'); });
+    vs.innerHTML='<option value="">지점</option>'+vn.map(function(n){ return '<option>'+n+'</option>'; }).join('');
+    /* 품목표엔 오타·별칭 줄이 같은 코드로 여러 개 있습니다 — 코드마다 첫 줄만 */
+    const seenC={};
+    const items=m.items.filter(function(x){ if(x.use==='N') return false; const c=x.code||x.name; if(seenC[c]) return false; seenC[c]=1; return true; });
+    is.innerHTML='<option value="">품목</option>'+items.map(function(x){ return '<option>'+x.name+'</option>'; }).join('');
+  }).catch(function(e){ prev.textContent='✕ '+e.message; });
+  [vs,is,q].forEach(function(e){ e.addEventListener('change',calc); e.addEventListener('input',calc); });
+  add.addEventListener('click',function(){
+    if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 넣어주세요'); return; }
+    const c=calc();
+    if(!c||!dt.value){ showToast('날짜·지점·품목·수량을 채워주세요'); return; }
+    if(!c.v.code&&!confirm('이 지점은 거래처코드가 없습니다. 그대로 넣을까요?')) return;
+    const k='man|'+Date.now().toString(36);
+    const R=rySheetOf_();
+    R.rows[k]={k:k,mk:dt.value.slice(0,7),d:dt.value,vc:c.v.code||'',vn:c.v.name,item:c.it.name,code:c.it.code||'',q:c.n,
+      unit:c.it.unit||0,sup:c.sup,vat:c.total-c.sup,tot:c.total,ono:'수기',inv:'',ord:'',vst:'man',memo:memo.value.trim()};
+    R.at=new Date().toISOString();
+    persistLib();
+    q.value=''; memo.value=''; prev.textContent=''; drawList();
+    showToast('넣었습니다 — 두 시트가 5분 안에 가져갑니다');
+  });
+  return w;
 }
 function ecRow_(o){
   return [o.date.replace(/-/g,''),String(o.seq),o.vcode,o.vname,'','00000','11',o.ono,o.code,o.code?'':o.ecName,'',
