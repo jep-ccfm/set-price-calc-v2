@@ -6602,7 +6602,10 @@ async function rySheetOpen_(){
   try{ L=await rySheetLines_(); }catch(e){ showToast('✕ '+e.message); return; }
   const VST={ok:['✅ 발주 일치','var(--good)'],diff:['⚠️ 수량 다름','var(--warn)'],miss:['⚠️ 일부만','var(--warn)'],wait:['⚠️','var(--warn)'],none:['❓ 발주 메일 없음','#8A5300']};
   docModalOpen('📊 레디영 → 매출 시트 반영',function(b){
-    const todo=L.filter(function(o){ return o.state!=='done'; });
+    /* 거래처코드가 없는 지점(새 지점)은 보류 — 코드 없이 들어가면 지점별 집계에서 「미분류」로 빠집니다.
+       이카운트 거래처 등록 → 거래처표에 코드를 넣고 다시 누르면 그때 들어갑니다 */
+    const hold=L.filter(function(o){ return o.state!=='done'&&!o.vcode; });
+    const todo=L.filter(function(o){ return o.state!=='done'&&o.vcode; });
     const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
     nt.innerHTML='사방넷에서 <b>송장이 찍힌 레디영 출고</b>(10월~ · 무상 제외)를 <b>발주 메일과 대조</b>했습니다. 금액은 레디영 공급가, 날짜는 <b>출고일</b>입니다.<br>'+
       '「반영」을 누르면 <b>레디영 매출 시트 「매출 rawdata」</b>와 <b>약국 통합 매출 시트</b>가 <b>5분 안에</b> 이 내용을 가져갑니다.'+
@@ -6617,6 +6620,14 @@ async function rySheetOpen_(){
       c.innerHTML=x[0]+' <b style="color:'+x[2]+';">'+x[1]+'</b>';sm.appendChild(c);
     });
     b.appendChild(sm);
+    if(hold.length){
+      const hw=document.createElement('div');hw.className='hint';
+      hw.style.cssText='margin:-2px 0 10px;padding:7px 10px;background:#FFF8F3;border-left:3px solid var(--warn);border-radius:6px;';
+      const names=[...new Set(hold.map(function(o){ return o.vname||o.recv; }))];
+      hw.innerHTML='⏸ <b>거래처코드 없음 — 보류 '+hold.length+'줄</b> ('+names.join(', ')+'). 이카운트에 거래처를 등록하고 '+
+        '레디영 매출 시트 「레디영_거래처표」 거래처코드 칸에 넣은 뒤 다시 누르면 들어갑니다.';
+      b.appendChild(hw);
+    }
     if(L.waiting&&L.waiting.length){
       const w=document.createElement('div');w.className='hint';w.style.cssText='margin:-2px 0 10px;padding:7px 10px;background:#F6F4EF;border-radius:8px;';
       w.textContent='참고 — 발주는 받았는데 아직 송장이 안 찍힌 줄 '+L.waiting.length+'개 ('+
@@ -6636,7 +6647,7 @@ async function rySheetOpen_(){
         '<td>'+o.name+(o.code?'':' <span style="color:var(--warn);font-size:11px;">품목코드 없음</span>')+'</td>'+
         '<td style="text-align:right;">'+fmt(o.qty)+'</td><td style="text-align:right;">'+fmt(o.supply+o.vat)+'</td>'+
         '<td style="color:'+v[1]+';white-space:nowrap;">'+v[0]+(o.ord?' <span style="color:var(--ink-mute);">발주 '+o.ord.slice(5).replace('-','/')+'</span>':'')+'</td>'+
-        '<td style="white-space:nowrap;">'+(o.state==='new'?'<b>새로</b>':o.state==='chg'?'<b style="color:var(--warn);">바뀜</b>':'반영됨')+'</td>';
+        '<td style="white-space:nowrap;">'+(o.state==='done'?'반영됨':!o.vcode?'<b style="color:var(--warn);">⏸ 보류</b>':o.state==='new'?'<b>새로</b>':'<b style="color:var(--warn);">바뀜</b>')+'</td>';
       tb.appendChild(tr);
     });
     t.appendChild(tb);
