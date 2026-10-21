@@ -6808,7 +6808,12 @@ function buildEcountPanel_(){
     let res;
     try{ res=await ecLines_(ecView.ch,ecView.mk); }catch(e){ body.innerHTML='<div class="hint" style="color:var(--warn);">✕ '+e.message+'</div>'; return; }
     last=res;
-    const todo=res.lines.filter(function(o){ return !D[o.key]; }), done=res.lines.length-todo.length;
+    /* 거래처 고르기 (2026-10-21) — 이카운트에 미등록 거래처가 있으면 그 줄만 실패합니다(「미등록코드」).
+       성공한 거래처만 「올린 걸로 표시」하고, 실패한 거래처는 등록한 뒤 그것만 다시 복사할 수 있게 거래처를 끄고 켭니다 */
+    const vk=function(o){ return o.vcode||o.vname||'?'; };
+    ecView.off=ecView.off||{};
+    const todoAll=res.lines.filter(function(o){ return !D[o.key]; });
+    const todo=todoAll.filter(function(o){ return !ecView.off[vk(o)]; }), done=res.lines.length-todoAll.length;
     const show=ecView.showDone?res.lines:todo;
     const warnN=todo.filter(function(o){ return o.warn; }).length;
     const sumT=todo.reduce(function(a,o){ return a+o.supply+o.vat; },0);
@@ -6848,6 +6853,30 @@ function buildEcountPanel_(){
       tools.appendChild(tg);
     }
     h.appendChild(tools);body.appendChild(h);
+    {
+      const vs={};
+      todoAll.forEach(function(o){ const k=vk(o); vs[k]=vs[k]||{name:o.vname||k,code:o.vcode,n:0}; vs[k].n++; });
+      const keys=Object.keys(vs);
+      if(keys.length>1){
+        const vb=document.createElement('div');vb.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px;font-size:12px;';
+        const lb=document.createElement('span');lb.className='hint';lb.textContent='거래처 (끈 곳은 복사·표시에서 빠짐):';vb.appendChild(lb);
+        keys.sort(function(a,b){ return vs[a].name.localeCompare(vs[b].name,'ko'); }).forEach(function(k){
+          const off=!!ecView.off[k];
+          const c=document.createElement('button');c.className='icon-btn';
+          c.textContent=(off?'☐ ':'☑ ')+vs[k].name+' '+vs[k].n;
+          c.title=(vs[k].code||'코드 없음')+(off?' — 눌러서 다시 넣기':' — 눌러서 빼기');
+          if(off) c.style.cssText='opacity:.5;text-decoration:line-through;';
+          c.addEventListener('click',function(){ if(off) delete ecView.off[k]; else ecView.off[k]=1; draw(); });
+          vb.appendChild(c);
+        });
+        if(Object.keys(ecView.off).some(function(k){ return vs[k]; })){
+          const rs=document.createElement('button');rs.className='icon-btn';rs.textContent='모두 넣기';
+          rs.addEventListener('click',function(){ ecView.off={}; draw(); });
+          vb.appendChild(rs);
+        }
+        body.appendChild(vb);
+      }
+    }
     if(warnN){
       const w=document.createElement('div');w.className='hint';w.style.cssText='color:var(--warn);margin-bottom:6px;';
       w.textContent='⚠ 확인 필요 '+warnN+'줄 — 거래처코드·품목코드가 없으면 이카운트에서 막히거나 엉뚱한 품목(반제품)이 잡힐 수 있습니다.';
