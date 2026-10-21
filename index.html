@@ -6061,7 +6061,7 @@ function sboOrderBtn_(chId,getRows){
         const ng=geoNgText_(rows);
         if(ng.length&&confirm('⛔ 레디영 2km 이내 약국이 있습니다'+String.fromCharCode(10)+ng.join(String.fromCharCode(10))+
             String.fromCharCode(10,10)+'[확인] 이 약국은 빼고 받기   [취소] 그대로 넣기')){
-          rows=rows.filter(function(r){ const j=geoJudgeOf_(r.addr); return !(j&&j.ok===false); });
+          rows=rows.filter(function(r){ const j=geoJudgeOf_(r.addr); return !(j&&j.ok===false)||geoFreeItem_(r.item); });
         }
         if(jr.nokey) showToast('이 PC엔 VWorld 키가 없어 2km 판정을 못 했습니다');
       }
@@ -10551,11 +10551,17 @@ function geoBadge_(addr){
   if(j.ok===null) return '<div style="font-size:11px;color:var(--warn);">레디영 지점 좌표 필요</div>';
   return j.ok
     ?'<div style="font-size:11px;color:var(--good);font-weight:700;">✅ 2km 밖 · '+j.nearest+' '+distLabel(j.dist)+'</div>'
-    :'<div style="font-size:11.5px;color:#C62828;font-weight:800;">⛔ 레디영 2km 이내 · '+j.nearest+' '+distLabel(j.dist)+'</div>';
+    :'<div style="font-size:11.5px;color:#C62828;font-weight:800;">⛔ 레디영 2km 이내 · '+j.nearest+' '+distLabel(j.dist)+'</div>'+
+     '<div style="font-size:11px;color:var(--ink-soft);">'+geoFreeNote_()+'</div>';
 }
+/* 레디영 2km 규약에서 빠지는 품목 — 포어시그널 3종은 레디영과 무관 (2026-10-21 사용자 확인).
+   2km 안 약국이라도 이 품목만 나가는 줄은 경고·제외하지 않습니다 */
+function geoFreeItem_(name){ return /포어\s*시그널/.test(String(name||'')); }
+function geoFreeNote_(){ return '포어시그널 3종은 2km 상관없음'; }
 function geoNgText_(rows){
   const seen={}, out=[];
   rows.forEach(function(r){
+    if(r.item&&geoFreeItem_(r.item)) return;
     const j=geoJudgeOf_(r.addr);
     if(j&&j.ok===false&&!seen[r.store]){ seen[r.store]=1; out.push(r.store+'('+j.nearest+' '+distLabel(j.dist)+')'); }
   });
@@ -12014,6 +12020,7 @@ function buildApplicants(){
     const tdV=tr.querySelector('.ap-verdict');
     tdV.innerHTML=verdict;
     if(j&&j.ok===false){
+      tdV.insertAdjacentHTML('beforeend','<div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">'+geoFreeNote_()+' — 포어시그널만이면 공급 가능</div>');
       const box2=document.createElement('div');box2.style.marginTop='5px';
       const rb=document.createElement('button');rb.className='icon-btn';rb.style.fontSize='12px';
       rb.textContent='📋 거절 안내';
