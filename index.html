@@ -6446,7 +6446,31 @@ const EC_HUB_ID='1R7KZpSo90SMAPjq5U-gu4XvxvJKne7snky1xOMdZMYw';
 const EC_CUTOVER='2026-10-01';
 const EC_HEADERS=['일자','순번','거래처코드','거래처명','담당자','출하창고','거래유형','주문번호','품목코드','품목명','규격',
   '수량','단가','외화금액','공급가액','부가세','적요','생산전표생성','시리얼/로트'];
-const EC_CH=[{id:'ready',label:'레디영'},{id:'pharmmall',label:'자사몰 약사전용관'},{id:'barofarm',label:'바로팜'}];
+const EC_CH=[{id:'ready',label:'레디영'},{id:'pharmmall',label:'자사몰 약사전용관'},{id:'barofarm',label:'바로팜'},
+  {id:'aquamedi',label:'아쿠아메디'},{id:'jp',label:'일본라방'},{id:'hk',label:'홍콩 라이브 커머스'}];
+/* ---------- 아쿠아메디 · 일본라방 · 홍콩 (2026-10-21 추가) ----------
+   · 아쿠아메디 = 사방넷 출고(발주 타입 아쿠아·개인약국, 송장 찍힌 것, 샘플·무상 제외). 거래처 = 받는 약국의 사업자번호(약국정보).
+       단가 = 아쿠아메디 공급가(VAT 별도) — 9월 에이트뷰티·8월 생생온누리 명세서에 찍힌 값.
+   · 일본라방 = 차수별 「판매 집계」에 날짜와 함께 넣은 세트 판매. 세트가(수기가 있으면 수기, 없으면 계산기 가격)를
+       구성 품목으로 나눕니다(계산기 품목가 비율). 거래처는 아래 설정 한 곳.
+   · 홍콩 = 「SA」 판매 엑셀로 올린 장부. 영세율이라 부가세 0. SET 은 「구성」 칸의 품목으로 나눕니다.
+   일본·홍콩 거래처코드·거래유형은 이카운트에 등록된 값이 회사마다 달라 화면에서 한 번 넣어 둡니다(lib.ecCfg). */
+const AQ_PRICE={'루비알엔피코샷크림':19300,'루비알엔토닝샷앰플':19300,'유쎄라블리프팅샷900아이크림':19300,'유쎄라블타이트닝샷600아이크림':19300,
+  '유쎄라블2X볼륨필인앰플':20600,'유쎄라블실프팅4D크림':22700,'비타터닝나노샷앰플':22200,'비타터닝액티브캡슐크림':22200,
+  '포어시그널타이트락셀앰플':16700,'포어시그널셀텐자크림':16700,'포어시그널딥멜팅폼클렌저':11700,'루비알엔앰플클렌저':12200,'유쎄라블부스트업앰플클렌저':12200};
+const EC_CFG_DEF={jp:{vcode:'',vname:'씨앤더블유컴퍼니',tt:'11',vat:'별도'},hk:{vcode:'',vname:'주말무역(Weekend Trade)',tt:'12'}};
+function ecCfg_(ch){ lib.ecCfg=lib.ecCfg||{}; return Object.assign({},EC_CFG_DEF[ch]||{},lib.ecCfg[ch]||{}); }
+/* 세트를 구성 품목으로 — 금액은 무게(w) 비율, 끝자리는 마지막 품목에 */
+function ecSplit_(parts,sup,vat){
+  const ws=parts.reduce(function(a,p){ return a+(p.w||0); },0)||parts.length;
+  let rs=sup, rv=vat;
+  return parts.map(function(p,i){
+    const last=i===parts.length-1, f=(p.w||(ws===parts.length?1:0))/ws;
+    const s1=last?rs:Math.round(sup*f), v1=last?rv:Math.round(vat*f); rs-=s1; rv-=v1;
+    return Object.assign({},p,{sup:s1,vat:v1});
+  });
+}
+function ecListW_(name){ const mi=matchItem(name); const p=PRICE_LIST.filter(function(x){ return mi&&x[1]===mi.name; })[0]; return p?p[4]:0; }
 let ecMasterCache=null;
 async function ecMasters_(){
   if(ecMasterCache) return ecMasterCache;
@@ -6481,7 +6505,9 @@ function ecItem_(M,name){
      품목표에 줄을 넣으면 그쪽이 먼저입니다 */
   const FB={'루비알엔앰플겔마스크':['완_00031','루비알엔 앰플 겔 마스크'],'유쎄라블앰플겔마스크':['완_00032','유쎄라블 앰플 겔 마스크'],
     '클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],'메라블클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],
-    '유쎄라블부스트업앰플클렌저':['완_00029','유쎄라블 부스트업 앰플 클렌저']};
+    '유쎄라블부스트업앰플클렌저':['완_00029','유쎄라블 부스트업 앰플 클렌저'],
+    /* 판매종료 구명칭 — 홍콩은 아직 이 이름으로 나갑니다 (이카운트 「아쿠엑소 부스트업 앰플 클렌저_0차」) */
+    '아쿠엑소부스트업앰플클렌저':['완_00006','아쿠엑소 부스트업 앰플 클렌저_0차']};
   for(let i=0;i<want.length;i++){
     const k=String(want[i]).replace(/^메라블/,'').replace(/\(?\d+매입\)?$/,'');
     const f=FB[want[i]]||FB[k];
@@ -6531,6 +6557,63 @@ async function ecLines_(ch,mk){
       if(x.mk!==mk) return;
       push({key:'ry|'+x.k,date:x.d,vcode:x.vc,vname:x.vn,ono:'',item:x.item,qty:x.q,unit:x.unit,supply:x.sup,vat:x.vat,
         memo:'수기 매출'+(x.memo?' · '+x.memo:''),warn:''});
+    });
+  } else if(ch==='aquamedi'){
+    const so=await sboLoad();
+    const ph=aquamediPharms().map(function(x){ const inf=pharmInfoOf(x.pid); return {name:inf.name||x.name,biz:inf.biz||'',k:entryKey_(inf.name||x.name)}; })
+      .sort(function(a,b){ return b.k.length-a.k.length; });
+    (so.rows||[]).forEach(function(r){
+      if(r.m!=='개인약국 판매'||!r.v) return;
+      const d=String(r.fin||r.d||''); if(d.slice(0,7)!==mk||d<EC_CUTOVER) return;
+      const memo=String(r.b||'')+' '+String(r.msg||'');
+      if(/샘플|무상|테스트|테스터|증정|영업용/.test(memo)&&!/공급|발주|판매/.test(memo)){ skipped.push(r.r+' '+r.i+' ×'+r.q+' (무상: '+memo.trim()+')'); return; }
+      const rk=entryKey_(r.r);
+      const p=ph.filter(function(x){ return x.k&&(rk.indexOf(x.k)>=0||x.k.indexOf(rk)>=0); })[0]||null;
+      const price=AQ_PRICE[itemKey(itemLabel(r.i))]||0;
+      const sup=price*(r.q||0), vt=Math.round(sup*0.1);
+      push({key:'aq|'+r.k,date:d,vcode:p&&p.biz?ecBiz_(p.biz):'',vname:p?p.name:r.r,ono:r.no||'',item:r.i,qty:r.q||0,
+        unit:price,supply:sup,vat:vt,memo:'사방넷 송장 '+r.v,warn:(price?'':'아쿠아메디 단가 없음')+(p?'':(price?'':' · ')+'소속 약국 못 찾음')});
+    });
+  } else if(ch==='jp'){
+    const C=ecCfg_('jp'), s=(lib.companies&&lib.companies.jp&&lib.companies.jp.brands)||{};
+    Object.keys(s).forEach(function(bk){
+      ((s[bk]&&s[bk].rounds)||[]).forEach(function(round){
+        const ss=round.setSales||{};
+        (round.configs||[]).forEach(function(cfg){
+          const ct=configTotals(cfg);
+          saleEntries(ss[cfg.id]).forEach(function(e,ei){
+            const n=parseFloat(e.qty)||0, d=String(e.date||'');
+            if(!n||d.slice(0,7)!==mk||d<EC_CUTOVER) return;
+            const amt=ct.price*n;
+            const sup=C.vat==='포함'?Math.round(amt/1.1):amt, vt=C.vat==='포함'?amt-sup:Math.round(amt*0.1);
+            const rows=(cfg.rows||[]).filter(function(r){ return r.name&&(parseFloat(r.qty)||0)>0; });
+            const parts=ecSplit_(rows.map(function(r){ const q=parseFloat(r.qty)||0, cost=costDB[r.name];
+              return {name:r.name,q:q*n,w:(cost!==undefined?ceilTo(cost/(1-ct.margin),ct.roundupUnit):ecListW_(r.name))*q}; }),sup,vt);
+            parts.forEach(function(pt){
+              push({key:'jp|'+round.id+'|'+cfg.id+'|'+ei+'|'+itemKey(pt.name),date:d,vcode:C.vcode,vname:C.vname,ono:'',
+                item:pt.name,qty:pt.q,unit:pt.q?Math.round(pt.sup/pt.q):0,supply:pt.sup,vat:pt.vat,tt:C.tt,
+                memo:(bk==='lusolve'?'루솔브 ':'')+round.label+' 「'+(cfg.title||'')+'」 '+n+'세트 × '+fmt(ct.price)+(ct.manual===null?' (계산가)':''),warn:''});
+            });
+          });
+        });
+      });
+    });
+  } else if(ch==='hk'){
+    const C=ecCfg_('hk'), led=(lib.ledger&&lib.ledger.hk)||{months:{}};
+    Object.keys(led.months||{}).forEach(function(m){
+      (led.months[m].docs||[]).forEach(function(d,di){
+        const dd=String(d.date||''); if(dd.slice(0,7)!==mk||dd<EC_CUTOVER) return;
+        (d.items||[]).forEach(function(it,ii){
+          const q=Number(it.qty)||0, sup=Number(it.supply)||0, vt=Number(it.vat)||0;
+          const comp=/set|세트/i.test(String(it.name||''))?String(it.type||'').split('+').map(function(x){ return x.trim(); }).filter(Boolean):[];
+          const parts=comp.length>1?ecSplit_(comp.map(function(nm){ return {name:nm,q:q,w:ecListW_(nm)}; }),sup,vt):[{name:it.name,q:q,sup:sup,vat:vt}];
+          parts.forEach(function(pt){
+            push({key:'hk|'+(d.file||dd)+'|'+ii+'|'+itemKey(pt.name),date:dd,vcode:C.vcode,vname:C.vname,ono:'',
+              item:pt.name,qty:pt.q,unit:pt.q?Math.round(pt.sup/pt.q):0,supply:pt.sup,vat:pt.vat,tt:C.tt,
+              memo:'홍콩 '+String(d.file||'').replace(/\.xlsx?$/i,'')+(comp.length>1?' · '+it.name+' 나눔':''),warn:''});
+          });
+        });
+      });
     });
   } else {
     const led=(lib.ledger&&lib.ledger[ch])||{months:{}};
@@ -6771,7 +6854,7 @@ function ryManualBox_(){
   return w;
 }
 function ecRow_(o){
-  return [o.date.replace(/-/g,''),String(o.seq),o.vcode,o.vname,'','00000','11',o.ono,o.code,o.code?'':o.ecName,'',
+  return [o.date.replace(/-/g,''),String(o.seq),o.vcode,o.vname,'','00000',o.tt||'11',o.ono,o.code,o.code?'':o.ecName,'',
     String(o.qty),String(o.unit),'',String(o.supply),String(o.vat),o.memo||'','N',''];
 }
 let ecView={ch:'ready',mk:null,showDone:false};
@@ -6783,7 +6866,8 @@ function buildEcountPanel_(){
   nt.innerHTML='배송요청시트가 9/30에 멈추면서 시트 자동화가 10월 판매입력을 못 만들었습니다 — 여기서 같은 19열 표를 만듭니다.<br>'+
     '<b>「📋 표 복사」</b> → 이카운트 판매입력 → <b>웹자료올리기</b> 표에 붙여넣기 → 저장한 뒤 <b>「✔ 올린 걸로 표시」</b>를 누르면 다음부터 안 나옵니다.<br>'+
     '<span style="color:var(--ink-soft);">레디영 = 사방넷 출고 · 레디영 공급가 · 무상(테스터·디피·인플루언서) 제외 / 자사몰·바로팜 = 10월 주문 중 출고된 것 · 실제 주문 금액 / '+
-    '아쿠아메디는 명세서를 이카운트에서 끊어 이미 들어가 있습니다. 거래처·품목코드는 레디영 매출 시트 마스터를 그대로 씁니다.</span>';
+    '아쿠아메디 = 사방넷 출고 · 아쿠아메디 공급가 · 샘플 제외 · 거래처는 소속 약국 사업자번호 / 일본라방 = 차수 판매 집계(판매일) · 세트가를 품목으로 나눔 / '+
+    '홍콩 = SA 판매 엑셀 · 영세율 · SET 은 구성 품목으로 나눔. 품목코드는 레디영 매출 시트 「레디영_품목표」를 씁니다.</span>';
   wrap.appendChild(nt);
   const bar=document.createElement('div');bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;';
   const now=new Date(); const z=function(x){ return String(x).padStart(2,'0'); };
@@ -6876,6 +6960,38 @@ function buildEcountPanel_(){
         }
         body.appendChild(vb);
       }
+    }
+    /* 일본라방·홍콩 — 거래처·거래유형 설정 (한 번 넣으면 저장) */
+    if(ecView.ch==='jp'||ecView.ch==='hk'){
+      const C=ecCfg_(ecView.ch);
+      const sb=document.createElement('div');
+      sb.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;font-size:12px;';
+      sb.innerHTML='<b>이카운트 설정</b>';
+      const fld=function(label,key,w,ph){
+        const l=document.createElement('label');l.style.cssText='display:flex;gap:4px;align-items:center;';
+        const i=document.createElement('input');i.className='cell-input';i.style.cssText='padding:4px 6px;width:'+w+'px;';i.value=C[key]||'';i.placeholder=ph||'';
+        i.addEventListener('change',function(){
+          if(!canEdit()){ showToast('보기 전용입니다'); i.value=C[key]||''; return; }
+          lib.ecCfg=lib.ecCfg||{}; lib.ecCfg[ecView.ch]=Object.assign({},lib.ecCfg[ecView.ch]||{}); lib.ecCfg[ecView.ch][key]=i.value.trim();
+          persistLib(); draw();
+        });
+        l.append(document.createTextNode(label),i); sb.appendChild(l);
+      };
+      fld('거래처코드','vcode',120,'이카운트 코드');
+      fld('거래처명','vname',170,'');
+      fld('거래유형','tt',46,'11');
+      if(ecView.ch==='jp'){
+        const l=document.createElement('label');l.style.cssText='display:flex;gap:4px;align-items:center;';
+        const s=document.createElement('select');s.className='cell-input';s.style.padding='4px 6px';
+        s.innerHTML='<option value="별도">세트가 VAT 별도</option><option value="포함">세트가 VAT 포함</option>';s.value=C.vat||'별도';
+        s.addEventListener('change',function(){ if(!canEdit()){ showToast('보기 전용입니다'); return; }
+          lib.ecCfg=lib.ecCfg||{}; lib.ecCfg.jp=Object.assign({},lib.ecCfg.jp||{},{vat:s.value}); persistLib(); draw(); });
+        l.appendChild(s); sb.appendChild(l);
+      }
+      const hn=document.createElement('span');hn.className='hint';
+      hn.textContent=ecView.ch==='hk'?'영세율 거래유형 코드는 이카운트 「거래유형」에서 확인 (기본 12)':'날짜 = 판매 집계에 넣은 판매일 · 금액 = 세트가 × 세트 수';
+      sb.appendChild(hn);
+      body.appendChild(sb);
     }
     if(warnN){
       const w=document.createElement('div');w.className='hint';w.style.cssText='color:var(--warn);margin-bottom:6px;';
