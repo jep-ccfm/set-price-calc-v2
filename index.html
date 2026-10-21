@@ -6475,7 +6475,19 @@ function ecItem_(M,name){
   const cand=M.items.filter(function(x){
     return want.indexOf(itemKey(itemLabel(x.name)))>=0||want.indexOf(itemKey(itemLabel(x.ecName)))>=0;
   });
-  return cand.filter(function(x){ return x.use!=='N'; })[0]||cand[0]||null;
+  const hit=cand.filter(function(x){ return x.use!=='N'; })[0]||cand[0]||null;
+  if(hit&&hit.code) return hit;
+  /* 품목표에 없거나 코드가 빈 품목 — 이카운트 완제품 코드 (레디영 자동화 원가표·GWP 표에서 확인, 2026-10-21).
+     품목표에 줄을 넣으면 그쪽이 먼저입니다 */
+  const FB={'루비알엔앰플겔마스크':['완_00031','루비알엔 앰플 겔 마스크'],'유쎄라블앰플겔마스크':['완_00032','유쎄라블 앰플 겔 마스크'],
+    '클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],'메라블클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],
+    '유쎄라블부스트업앰플클렌저':['완_00029','유쎄라블 부스트업 앰플 클렌저']};
+  for(let i=0;i<want.length;i++){
+    const k=String(want[i]).replace(/^메라블/,'').replace(/\(?\d+매입\)?$/,'');
+    const f=FB[want[i]]||FB[k];
+    if(f) return Object.assign({name:f[1],ecName:f[1],unit:0,price:0,use:'Y'},hit||{},{code:f[0]});
+  }
+  return hit;
 }
 /* 레디영 지점 — 받는분 이름에 키워드가 들어 있으면 (긴 키워드 먼저: 제주애월 > 제주) */
 function ecVendorRY_(M,recv){
