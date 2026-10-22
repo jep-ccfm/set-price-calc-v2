@@ -3527,6 +3527,52 @@ function branchStockLive(){
   });
   return {cols:cols,rows:rows,newCols:newCols,newRows:newRows,dropped:dropped};
 }
+/* ---------- 약사 「내 주문 조회」용 정리본 (2026-10-22) ----------
+   약사전용관(melable-pharma.vercel.app)에서 약사가 사업자번호 + 주문 때 적은 전화번호 뒤 4자리로 자기 주문을 봅니다.
+   조회 웹앱(Apps Script 「약사_주문조회.gs」)은 이 lib.mallTrack 만 읽고, 그 약국 것만 걸러 내보냅니다.
+   사방넷 출고 엑셀을 올릴 때(importEntryOrders) 다시 만듭니다. 최근 4개월. */
+function mallTrackSnap_(so){
+  const led=(lib.ledger&&lib.ledger.pharmmall)||{months:{}};
+  const d0=new Date(); d0.setMonth(d0.getMonth()-4); const from=d0.toISOString().slice(0,7);
+  const dg=function(v){ return String(v||'').replace(/[^0-9]/g,''); };
+  /* 품목별 출고 여부 — 자사몰 「출고할 주문」과 같은 수량 맞추기 */
+  const st={};
+  shipOrderRows_('pharmmall',null,true).forEach(function(r){
+    const b=st[r.serial]=st[r.serial]||{all:true,any:false,last:''};
+    if(r.shipped){ b.any=true; if(String(r.shipDate||'')>b.last) b.last=String(r.shipDate||''); } else b.all=false;
+  });
+  /* 송장 — 사방넷 발주 엑셀에 ORD 주문번호를 넣어 보내므로 주문번호로 바로 짝지어집니다. 합포장은 약국·출고일로 */
+  const inv={}, box={};
+  const add=function(m,k,r){ const a=m[k]=m[k]||[]; if(!a.some(function(x){ return x.v===r.v; })) a.push({v:r.v,cr:r.cr||''}); };
+  ((so&&so.rows)||[]).forEach(function(r){
+    if(r.m!=='자사몰 약국 판매'||!r.v) return;
+    if(r.no) add(inv,String(r.no),r);
+    [r.d,r.fin].filter(Boolean).forEach(function(dd){ add(box,entryKey_(r.r)+'|'+dd,r); });
+  });
+  const docs=[];
+  Object.keys(led.months||{}).forEach(function(mk){
+    if(mk<from) return;
+    (led.months[mk].docs||[]).forEach(function(d){ if(!d.isTest&&d.serial) docs.push(d); });
+  });
+  /* 한 약국이 주문마다 다른 번호를 적기도 합니다 — 그 약국 주문에 쓴 번호 아무거나로 열리게 */
+  const tels={};
+  docs.forEach(function(d){ const t=dg((d.meta||{})['전화']).slice(-4); if(t.length===4){ (tels[d.branch]=tels[d.branch]||{})[t]=1; } });
+  const out=docs.map(function(d){
+    const si=(lib.storeInfo||{})[d.branch]||{};
+    const s=st[d.serial]||{all:false,any:false,last:''};
+    let iv=inv[d.serial]||[];
+    if(!iv.length&&s.last) iv=box[entryKey_(d.branch)+'|'+s.last]||[];
+    const shipDay=s.last||String(d.shipDate||'');
+    const status=(s.all&&s.any)||(iv.length&&!s.any)?'출고':(s.any?'일부 출고':'접수');
+    return {no:d.serial,date:d.date||'',store:d.branch||'',biz:dg(si.bizNo),tels:Object.keys(tels[d.branch]||{}),
+      items:(d.items||[]).map(function(it){ return {n:itemLabel(it.name),q:Number(it.qty)||0}; }),
+      total:Number(d.total)||0,status:status,ship:status==='접수'?'':shipDay,inv:iv};
+  }).sort(function(a,b){ return String(b.date+b.no).localeCompare(String(a.date+a.no)); });
+  const prev=JSON.stringify((lib.mallTrack||{}).orders||[]);
+  if(prev===JSON.stringify(out)) return false;
+  lib.mallTrack={at:new Date().toISOString(),orders:out};
+  return true;
+}
 /* 지점별 취급 품목을 공용 저장소에 남깁니다 — 중국 인플루언서 체험단 시트의 「지점별 판매품목」 탭이
    이걸 읽어 그립니다 (2026-10-13 연결). 바뀐 때만 저장합니다. */
 function saveBranchSnap_(L){
@@ -6571,6 +6617,7 @@ async function importEntryOrders(logEl,onDone){
   try{ shipN=await refreshShipped(got); mallStampShipDates_(); }catch(e){}
   try{ saveBranchSnap_(); }catch(e){}
   let infN=0; try{ infN=infApplyShip_(await sboLoad()); }catch(e){}
+  try{ mallTrackSnap_(await sboLoad()); }catch(e){}
   try{ const rv=await ryVerifyRows(got); saveRyVerify(rv); ryN=applyVerifyToOrders(rv); }catch(e){ ryErr=e.message||''; }
   persistLib();
 
