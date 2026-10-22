@@ -3048,7 +3048,10 @@ function buildOrders(pid,view){
   t.innerHTML='<thead><tr><th style="width:96px;">발주일</th>'+
     (hasStore?'<th style="width:120px;">지점</th>':'')+
     '<th style="width:70px;">상태</th><th>품목</th>'+
+    (pid==='barofarm'?'<th style="width:200px;">송장 (파트너센터 등록용)</th>':'')+
     '<th style="text-align:right;width:60px;">총수량</th><th style="width:58px;"></th></tr></thead>';
+  /* 바로팜 — 출고되면 파트너센터에 송장을 넣어야 합니다 (2026-10-22). 사방넷 출고 기록에서 그 약국·그 날 송장을 찾아 복사 버튼으로 */
+  const invCells=[];
   /* 같은 발주서를 메일로 두세 번 보내오면 메일ID 가 달라 따로 들어옵니다.
      (G마켓 7/10 건이 세 줄이었습니다) 내용이 같으면 짝을 지어 표시합니다 —
      정말 두 번 발주한 것일 수도 있어 지우지는 않고 눈에만 띄게 합니다. */
@@ -3073,7 +3076,9 @@ function buildOrders(pid,view){
         (supMap[o.id]?'<div style="font-size:11px;color:var(--warn);font-weight:800;">⚠ '+supMap[o.id].by+' 발주로 대체된 듯</div>':'')+'</td>':'')+
       '<td><span class="st-badge st-'+(o.status||'접수')+'">'+(o.status||'접수')+'</span></td>'+
       '<td style="font-size:12.5px;">'+names+(o.note?'<div style="color:var(--ink-soft);font-size:12px;margin-top:3px;">'+o.note+'</div>':'')+'</td>'+
+      (pid==='barofarm'?'<td class="bf-inv" style="font-size:12px;"><span style="color:var(--ink-mute);">…</span></td>':'')+
       '<td class="num-cell">'+fmt(tq)+'</td>';
+    if(pid==='barofarm') invCells.push({o:o,tr:tr});
     const td=document.createElement('td');
     const ed=document.createElement('button');ed.className='del-btn';ed.textContent='✎';ed.title='수정';
     ed.addEventListener('click',()=>openOrderModal(pid,o.id));
@@ -3116,8 +3121,52 @@ function buildOrders(pid,view){
     tr.appendChild(td);tb.appendChild(tr);
   });
   t.appendChild(tb);wrap.appendChild(t);
+  if(invCells.length) bfFillInv_(invCells);
   wrap.appendChild(buildOrderDrops(pid));
   return wrap;
+}
+/* 바로팜 발주 줄마다 사방넷 송장 — 같은 날(출고희망일) · 같은 약국 줄의 송장을 모읍니다.
+   송장마다 「복사」, 바로팜 주문번호(BF 뗀 숫자)도 같이 보여 파트너센터에서 바로 찾게 합니다 */
+async function bfFillInv_(cells){
+  let so={rows:[]}; try{ so=await sboLoad(); }catch(e){}
+  const by={};
+  (so.rows||[]).forEach(function(r){
+    if(r.m!=='바로팜 약국 판매') return;
+    const k=String(r.d||'')+'|'+entryKey_(r.r);
+    (by[k]=by[k]||[]).push(r);
+  });
+  cells.forEach(function(c){
+    const td=c.tr.querySelector('.bf-inv'); if(!td) return;
+    const o=c.o;
+    const rs=by[String(o.date||'')+'|'+entryKey_(orderStore_(o))]||[];
+    td.innerHTML='';
+    if(!rs.length){ td.innerHTML='<span style="color:var(--ink-mute);">사방넷 출고 기록 없음</span>'; return; }
+    const inv={};
+    rs.forEach(function(r){
+      const k=r.v||'';
+      const g=inv[k]=inv[k]||{v:r.v,cr:r.cr||'',nos:{}};
+      const no=String(r.no||'').replace(/^BF/,''); if(no) g.nos[no]=1;
+    });
+    Object.keys(inv).forEach(function(k){
+      const g=inv[k];
+      const line=document.createElement('div');line.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:3px;';
+      if(!g.v){
+        line.innerHTML='<span style="color:var(--warn);">송장 대기</span>'+(Object.keys(g.nos).length?'<span style="color:var(--ink-mute);">주문 '+Object.keys(g.nos).join(', ')+'</span>':'');
+        td.appendChild(line); return;
+      }
+      const num=document.createElement('b');num.textContent=g.v;num.style.cssText='font-family:monospace;font-size:12.5px;';
+      const cp=document.createElement('button');cp.className='icon-btn';cp.textContent='복사';cp.style.cssText='padding:2px 8px;font-size:11px;';
+      cp.addEventListener('click',async function(){
+        const ok=await copyText(g.v);
+        if(ok){ cp.textContent='✓ 복사됨'; setTimeout(function(){ cp.textContent='복사'; },1500); } else showToast('복사하지 못했습니다 — '+g.v);
+      });
+      line.append(num,cp);
+      const sub=document.createElement('div');sub.style.cssText='width:100%;font-size:11px;color:var(--ink-mute);';
+      sub.textContent=[g.cr,Object.keys(g.nos).length?'주문 '+Object.keys(g.nos).join(', '):''].filter(Boolean).join(' · ');
+      if(sub.textContent) line.appendChild(sub);
+      td.appendChild(line);
+    });
+  });
 }
 /* 본사 직접 건을 소속 약국으로 옮깁니다. 발주는 그대로 두고 자리만 바꿉니다. */
 function moveAquaOrder(o){
