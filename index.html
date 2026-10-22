@@ -3151,6 +3151,30 @@ async function bfInvPending_(){
     const g=by[m[1]]=by[m[1]]||{no:m[1],store:r.r,inv:[],d:String(r.fin||r.d||'')};
     if(g.inv.indexOf(r.v)<0) g.inv.push(r.v);
   });
+  /* 합포장 — 사방넷은 같은 약국·같은 날 주문 여러 건을 한 박스로 묶고 주문번호는 첫 주문 것만 남깁니다
+     (부산남포 39057130 에 39022006·39021678 이 들어감). 대시보드가 「출고됨」으로 맞춘 바로팜 주문은
+     그 약국 · 그 출고일 박스의 송장을 함께 씁니다. 옛 수기 출고(BF 번호 없음)도 이 길로 잡힙니다 */
+  const box={};
+  (so.rows||[]).forEach(function(r){
+    if(r.m!=='바로팜 약국 판매'||!r.v) return;
+    [String(r.d||''),String(r.fin||'')].filter(Boolean).forEach(function(dd){
+      const k=entryKey_(r.r)+'|'+dd; const b=box[k]=box[k]||{inv:[],d:String(r.fin||r.d||''),store:r.r};
+      if(b.inv.indexOf(r.v)<0) b.inv.push(r.v);
+    });
+  });
+  const used={};
+  try{
+    shipOrderRows_('barofarm',null,true).forEach(function(x){
+      const sn=String(x.serial||''); if(!sn||by[sn]||!x.shipped||!x.shipDate) return;
+      const b=box[entryKey_(x.store)+'|'+x.shipDate]; if(!b) return;
+      by[sn]={no:sn,store:x.store,inv:b.inv.slice(),d:b.d,merged:true};
+    });
+  }catch(e){}
+  Object.keys(by).forEach(function(k){ used[entryKey_(by[k].store)+'|'+String(by[k].d).slice(0,10)]=1; });
+  Object.keys(noSerial).forEach(function(k){ /* 합포장 길로 잡힌 옛 수기 출고는 목록에서 뺍니다 */
+    const sp=k.lastIndexOf(' '); const st=k.slice(0,sp), md=k.slice(sp+1);
+    if(Object.keys(used).some(function(u){ return u.indexOf(entryKey_(st)+'|')===0&&u.slice(-5)===md; })) delete noSerial[k];
+  });
   const all=Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return a.d.localeCompare(b.d)||a.no.localeCompare(b.no); });
   return {rows:all.filter(function(g){ return !D[g.no]; }), all:all, noSerial:Object.keys(noSerial)};
 }
@@ -3166,8 +3190,49 @@ async function bfInvExport_(mark){
   }
   if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패'); return; }
   if(!p.rows.length){ showToast('새로 등록할 송장이 없습니다'+(p.all.length?' (모두 표시됨)':'')); return; }
+  /* 파트너센터는 이미 송장이 들어간 주문이 하나라도 있으면 파일째 막습니다(「기등록」, 2026-10-22).
+     주문내역 엑셀엔 운송장번호 칸이 없어 우리가 알 수 없으니 — 받기 전에 목록에서 이미 등록한 주문을 빼게 합니다 */
+  docModalOpen('📤 바로팜 송장 일괄등록',function(b){
+    const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='8px';
+    nt.innerHTML='파트너센터 주문 내역에서 <b>운송장번호가 이미 들어간 주문은 체크를 빼세요</b> (하나라도 섞이면 「기등록」으로 파일 전체가 막힙니다).<br>'+
+      '뺀 주문은 「이미 등록」으로 표시돼 다음부터 안 나옵니다.';
+    b.appendChild(nt);
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th></th><th>출고일</th><th>주문번호</th><th>약국</th><th>송장</th></tr></thead>';
+    const tb=document.createElement('tbody'); const cbs=[];
+    p.rows.forEach(function(g){
+      const tr=document.createElement('tr');
+      const td0=document.createElement('td'); const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;td0.appendChild(cb);tr.appendChild(td0);
+      tr.insertAdjacentHTML('beforeend','<td>'+g.d+'</td><td style="font-family:monospace;">'+g.no+'</td><td>'+g.store+'</td><td style="font-family:monospace;">'+g.inv.join('<br>')+
+        (g.inv.length>1?'<div style="font-size:11px;color:var(--warn);">첫 송장만 들어감</div>':'')+
+        (g.merged?'<div style="font-size:11px;color:var(--ink-mute);">합포장 — 같은 박스 송장</div>':'')+'</td>');
+      tb.appendChild(tr); cbs.push({g:g,cb:cb});
+    });
+    t.appendChild(tb);
+    const box=document.createElement('div');box.style.cssText='overflow:auto;max-height:50vh;';box.appendChild(t);b.appendChild(box);
+    if(p.noSerial.length){ const w=document.createElement('div');w.className='hint';w.style.marginTop='6px';
+      w.textContent='바로팜 주문번호 없는 출고(직접 등록): '+p.noSerial.join(', '); b.appendChild(w); }
+    const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
+    const go=document.createElement('button');go.className='btn btn-primary';go.textContent='체크한 주문 엑셀 받기';
+    go.addEventListener('click',function(){
+      const pick=cbs.filter(function(x){ return x.cb.checked; }).map(function(x){ return x.g; });
+      const skip=cbs.filter(function(x){ return !x.cb.checked; }).map(function(x){ return x.g; });
+      if(skip.length){
+        if(!canEdit()){ showToast('보기 전용이라 「이미 등록」 표시는 못 남깁니다'); }
+        else { const D=bfInvDone_(), at=sboToday_(); skip.forEach(function(g){ D[g.no]=at+' 이미 등록(수동)'; }); persistLib(); }
+      }
+      if(!pick.length){ document.getElementById('docModal').hidden=true; showToast(skip.length+'건을 이미 등록으로 표시했습니다'); refreshCurrentView(); return; }
+      bfInvWrite_(pick,p);
+      document.getElementById('docModal').hidden=true;
+      if(skip.length) refreshCurrentView();
+    });
+    bar.appendChild(go); b.appendChild(bar);
+  });
+}
+function bfInvWrite_(rows,p){
   const aoa=[['주문번호','송장번호'],['바로팜 주문번호를 입력해 주세요.','송장번호를 입력해 주세요.']]
-    .concat(p.rows.map(function(g){ return [Number(g.no),Number(g.inv[0])]; }));
+    .concat(rows.map(function(g){ return [Number(g.no),Number(g.inv[0])]; }));
+  p={rows:rows,noSerial:p.noSerial};
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]&&ws[k].t==='n') ws[k].z='0'; });
   ws['!cols']=[{wch:16},{wch:18}];
