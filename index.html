@@ -3016,6 +3016,17 @@ function buildOrders(pid,view){
     tg.addEventListener('click',()=>{ordShowDone=!ordShowDone;refreshCurrentView();});
     tools.appendChild(tg);
   }
+  /* 바로팜 — 파트너센터 「운송장번호 일괄등록」 엑셀 (2026-10-22) */
+  if(pid==='barofarm'){
+    const ib=document.createElement('button');ib.className='icon-btn';ib.textContent='📤 송장 일괄등록 엑셀';
+    ib.title='사방넷에서 송장이 찍힌 바로팜 주문을 파트너센터 「운송장번호 일괄등록」 양식으로 받습니다';
+    ib.addEventListener('click',function(){ bfInvExport_(false); });
+    tools.appendChild(ib);
+    const im=document.createElement('button');im.className='icon-btn';im.textContent='✔ 송장 등록한 걸로 표시';
+    im.addEventListener('click',function(){ bfInvExport_(true); });
+    tools.appendChild(im);
+    bfInvPending_().then(function(p){ if(p.rows.length){ ib.textContent='📤 송장 일괄등록 엑셀 ('+p.rows.length+'건)'; ib.style.cssText='background:#FFF4E5;border-color:#F0B35A;color:#8A5300;font-weight:800;'; } }).catch(function(){});
+  }
   const add=document.createElement('button');add.className='icon-btn';add.textContent='＋ 발주 등록';
   add.addEventListener('click',()=>openOrderModal(pid,null));
   tools.appendChild(add);h.appendChild(tools);wrap.appendChild(h);
@@ -3124,6 +3135,48 @@ function buildOrders(pid,view){
   if(invCells.length) bfFillInv_(invCells);
   wrap.appendChild(buildOrderDrops(pid));
   return wrap;
+}
+/* ---------- 바로팜 운송장번호 일괄등록 (2026-10-22) ----------
+   파트너센터 양식: 시트 「시트1」 · A1 주문번호 · B1 송장번호 · 2행은 안내 문구(그대로 둠) · 3행부터 자료.
+   사방넷 출고 기록에서 바로팜 주문번호(「BF」+번호로 우리가 넣은 주문번호)와 송장을 짝짓습니다.
+   주문 하나에 송장이 여럿이면(박스 나눔) 첫 송장만 넣고 화면에 알립니다. 올린 주문은 lib.bfInvDone 에 표시 */
+function bfInvDone_(){ lib.bfInvDone=lib.bfInvDone||{}; return lib.bfInvDone; }
+async function bfInvPending_(){
+  const so=await sboLoad(); const D=bfInvDone_();
+  const by={}, noSerial={};
+  (so.rows||[]).forEach(function(r){
+    if(r.m!=='바로팜 약국 판매'||!r.v) return;
+    const m=String(r.no||'').match(/^BF(\d+)$/);
+    if(!m){ noSerial[r.r+' '+String(r.d||'').slice(5)]=1; return; }
+    const g=by[m[1]]=by[m[1]]||{no:m[1],store:r.r,inv:[],d:String(r.fin||r.d||'')};
+    if(g.inv.indexOf(r.v)<0) g.inv.push(r.v);
+  });
+  const all=Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return a.d.localeCompare(b.d)||a.no.localeCompare(b.no); });
+  return {rows:all.filter(function(g){ return !D[g.no]; }), all:all, noSerial:Object.keys(noSerial)};
+}
+async function bfInvExport_(mark){
+  let p; try{ p=await bfInvPending_(); }catch(e){ showToast('사방넷 출고 기록을 못 읽었습니다'); return; }
+  if(mark){
+    if(!canEdit()){ showToast('보기 전용입니다'); return; }
+    if(!p.rows.length){ showToast('표시할 주문이 없습니다'); return; }
+    if(!confirm('바로팜 주문 '+p.rows.length+'건을 「송장 등록함」으로 표시할까요?\n다음 엑셀부터 빠집니다.')) return;
+    const D=bfInvDone_(), at=sboToday_();
+    p.rows.forEach(function(g){ D[g.no]=at+' '+g.inv[0]; });
+    persistLib(); showToast(p.rows.length+'건을 등록한 걸로 표시했습니다'); refreshCurrentView(); return;
+  }
+  if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패'); return; }
+  if(!p.rows.length){ showToast('새로 등록할 송장이 없습니다'+(p.all.length?' (모두 표시됨)':'')); return; }
+  const aoa=[['주문번호','송장번호'],['바로팜 주문번호를 입력해 주세요.','송장번호를 입력해 주세요.']]
+    .concat(p.rows.map(function(g){ return [Number(g.no),Number(g.inv[0])]; }));
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]&&ws[k].t==='n') ws[k].z='0'; });
+  ws['!cols']=[{wch:16},{wch:18}];
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'시트1');
+  XLSX.writeFile(wb,'바로팜_운송장번호_일괄등록_'+sboToday_().replace(/-/g,'')+'.xlsx');
+  const multi=p.rows.filter(function(g){ return g.inv.length>1; });
+  showToast(p.rows.length+'건을 받았습니다'+(multi.length?' — ⚠ 송장 2개 이상 '+multi.length+'건(첫 송장만): '+multi.map(function(g){ return g.store; }).join(', '):'')+
+    (p.noSerial.length?' · 바로팜 주문번호 없는 출고 '+p.noSerial.length+'건은 직접 등록: '+p.noSerial.join(', '):'')+
+    ' · 파트너센터에 올린 뒤 「✔ 송장 등록한 걸로 표시」');
 }
 /* 바로팜 발주 줄마다 사방넷 송장 — 같은 날(출고희망일) · 같은 약국 줄의 송장을 모읍니다.
    송장마다 「복사」, 바로팜 주문번호(BF 뗀 숫자)도 같이 보여 파트너센터에서 바로 찾게 합니다 */
