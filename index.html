@@ -1290,6 +1290,7 @@
       <div><label>계약일</label><input type="text" id="pfContract" placeholder="예: 2026-08-27"></div>
       <div class="fg-full"><label>결제 조건</label><input type="text" id="pfPay" placeholder="예: 공급 후 1주일 이내 입금"></div>
       <div class="fg-full"><label>배송지 / 수령인</label><input type="text" id="pfShip"></div>
+      <div class="fg-full"><label>다른 이름 (사방넷 받는분 · 쉼표로 구분)</label><input type="text" id="pfAlias" placeholder="예: 명동 베리뉴, 해운대 베리뉴 약국 — 사방넷에 찍히는 이름 그대로 (정확히 같아야 합니다)"></div>
       <div class="fg-full"><label>정산 계좌</label><input type="text" id="pfBank" placeholder="은행 / 계좌번호 / 예금주"></div>
       <div class="fg-full"><label>비고</label><textarea id="pfNote"></textarea></div>
     </div>
@@ -5841,15 +5842,39 @@ function entryKey_(s){ return String(s||'').replace(/[\s()（）]/g,''); }
 /* 아쿠아메디는 약국이 여럿이라 수취인명으로 갈라 넣습니다.
    새로 넣은 약국은 등록한 이름으로 맞춰 봅니다 — 긴 이름부터 봐야
    「온누리약국」이 「생생온누리약국」을 가로채지 않습니다. */
+/* 한 거래처가 지점마다 다른 이름으로 찍혀 올 때 쓰는 「다른 이름」 (2026-10-27).
+   베리뉴 = 모기업 한테라퓨틱스가 사입하고 배송만 지점으로 갑니다. 입금·세금계산서가
+   한 곳이라 카드도 하나여야 하는데, 사방넷엔 「명동 베리뉴」·「해운대 베리뉴 약국」으로
+   찍혀 옵니다. 카드 이름을 바꾸면(「베리뉴」→「한테라퓨틱스 (베리뉴)」) 포함 매칭이
+   끊겨 사업자번호 없는 새 약국이 저절로 생깁니다 — 그래서 옛 이름·지점명을 여기 남깁니다. */
+function pharmNames_(pid,fallback){
+  const inf=pharmInfoOf(pid);
+  const out=[String(inf.name||fallback||'').trim()];
+  String(inf.alias||'').split(/[,\n·]/).forEach(function(x){ if(x.trim()) out.push(x.trim()); });
+  return out.filter(Boolean);
+}
+/* 받는분 이름이 이 약국 것인가.
+   약국 이름은 예전처럼 서로 포함되면 같은 곳으로 봅니다.
+   별칭은 「정확히 같을 때만」 입니다 — 「베리뉴」를 포함으로 보면
+   바로팜 거래처인 「성수베리뉴약국」·「홍대베리뉴약국」까지 끌려옵니다. */
+function pharmNameHit_(pid,fallback,recvKey){
+  const inf=pharmInfoOf(pid);
+  const nm=entryKey_(inf.name||fallback||'');
+  if(nm&&(recvKey.indexOf(nm)>=0||nm.indexOf(recvKey)>=0)) return true;
+  return String(inf.alias||'').split(/[,\n·]/).some(function(x){
+    const a=entryKey_(x); return a&&a===recvKey;
+  });
+}
 function entryAquaPid_(recv){
   const k=entryKey_(recv);
   if(!k) return 'aquamedi';
+  /* 긴 이름부터 봐야 「온누리약국」이 「생생온누리약국」을 가로채지 않습니다 */
   const added=aquaAdded().slice().sort(function(a,b){
-    return entryKey_(b.name).length-entryKey_(a.name).length;
+    const ln=function(x){ return Math.max.apply(null,pharmNames_(x.pid,x.name).map(function(n){ return entryKey_(n).length; }).concat([0])); };
+    return ln(b)-ln(a);
   });
   for(let i=0;i<added.length;i++){
-    const nm=entryKey_(pharmInfoOf(added[i].pid).name||added[i].name);
-    if(nm&&(k.indexOf(nm)>=0||nm.indexOf(k)>=0)) return added[i].pid;
+    if(pharmNameHit_(added[i].pid,added[i].name,k)) return added[i].pid;
   }
   if(/신사|타워/.test(k)) return 'sinsa';
   if(/압구정|생생|온누리/.test(k)) return 'apgujeong';
@@ -5858,7 +5883,8 @@ function entryAquaPid_(recv){
 /* 처음 보는 아쿠아메디 약국은 소속 약국으로 바로 만듭니다 (2026-10-06 결정).
    예전엔 「＋ 약국 추가」를 눌러야 해서 새 약국 발주가 「본사 직접 건」으로 떨어져 있었습니다
    (9/22 에이트뷰티). 수취인이 아쿠아메디(본사)면 본사 직접 건으로 둡니다. */
-function aquaIsHq_(name){ return /아쿠아/.test(String(name||'')); }
+/* 사명이 아쿠아메디 → 지오메디로 바뀌었습니다 (2026-10-22 계약). 둘 다 본사로 봅니다 */
+function aquaIsHq_(name){ return /아쿠아|지오메디/.test(String(name||'')); }
 function aquaEnsurePharm_(name,addr,tel){
   const nm=String(name||'').trim();
   if(!nm||aquaIsHq_(nm)) return 'aquamedi';
@@ -7097,10 +7123,13 @@ function ecBiz_(v){
   return d.length===10?d.slice(0,3)+'-'+d.slice(3,5)+'-'+d.slice(5):String(v||'').trim();
 }
 function ecDoneOf_(){ lib.ecountDone=lib.ecountDone||{}; return lib.ecountDone; }
+/* 아쿠아메디 출고 줄마다 「테스터 몇 개가 섞였나」 — 사방넷 메모에 안 적혀 온 건만 여기 적습니다.
+   열쇠는 사방넷 출고 줄 열쇠(r.k), 값은 뺄 개수(0 = 전부 판매). 한 번 答하면 다시 안 묻습니다. */
+function aqFreeOf_(){ lib.aqFree=lib.aqFree||{}; return lib.aqFree; }
 /* 한 달 · 한 채널의 판매입력 줄 */
 async function ecLines_(ch,mk){
   const M=await ecMasters_();
-  const out=[], skipped=[], merged=[];
+  const out=[], skipped=[], merged=[], ask=[];
   const push=function(o){
     const it=ecItem_(M,o.item);
     if(!it) o.warn=(o.warn?o.warn+' · ':'')+'품목표에 없음';
@@ -7138,10 +7167,39 @@ async function ecLines_(ch,mk){
     const so=await sboLoad();
     const ph=aquamediPharms().map(function(x){ const inf=pharmInfoOf(x.pid); return {pid:x.pid,name:inf.name||x.name,corp:inf.corp||'',biz:inf.biz||'',k:entryKey_(inf.name||x.name)}; })
       .sort(function(a,b){ return b.k.length-a.k.length; });
-    const pharmOf=function(recv){ const rk=entryKey_(recv); return ph.filter(function(x){ return x.k&&(rk.indexOf(x.k)>=0||x.k.indexOf(rk)>=0); })[0]||null; };
+    const pharmOf=function(recv){ const rk=entryKey_(recv);
+      return ph.filter(function(x){ return pharmNameHit_(x.pid,x.name,rk); })[0]||null; };
     const nk=function(n){ let mi=null; try{ mi=matchItem(n); }catch(e){} return itemKey(mi&&mi.name?mi.name:n); };
     const dayGap=function(a,b){ const x=Date.parse(a), y=Date.parse(b); return (isNaN(x)||isNaN(y))?999:Math.abs(Math.round((y-x)/86400000)); };
-    const isFreeAq=function(r){ const memo=String(r.b||'')+' '+String(r.msg||''); return /샘플|무상|테스트|테스터|증정|영업용/.test(memo)&&!/공급|발주|판매/.test(memo); };
+    /* 카톡 발주는 지점을 괄호에 적습니다 — 「베리뉴약국(해운대점)」.
+       한 거래처에 지점이 여럿이면 지점까지 맞아야 같은 건입니다. 안 그러면
+       명동 10/23 출고가 해운대 10/26 발주와 짝지어져 명동 매출이 통째로 사라집니다. */
+    const brOf_=function(store){ const m=String(store||'').match(/[(（]([^)）]+)[)）]/);
+      return m?entryKey_(m[1]).replace(/점$/,''):''; };
+    /* 무상 판정은 2026-09-18 레디영에서 정한 규칙을 그대로 씁니다 —
+       「본품10개+테스터 1개」·「각 10종 주문 +테스터 1종 전달」은 무상건이 아니라
+       유상 발주에 덤을 얹은 것이라, 줄을 통째로 빼지 않고 덤 수량만 뺍니다.
+       비고·배송메시지에 유상을 뜻하는 말이 하나도 없을 때만 순수 무상건입니다
+       (10/13 「아쿠아메디 영업용 샘플 요청」). */
+    const aqMemo_=function(r){ return String(r.b||'')+' '+String(r.msg||''); };
+    const isFreeAq=function(r){ const memo=aqMemo_(r);
+      return /샘플|무상|테스트|테스터|증정|영업용|디피/.test(memo)&&!/공급|발주|판매|주문|본품/.test(memo); };
+    /* 덤 수량 — 비고와 배송메시지에 같은 말을 두 번 적어 오기도 합니다
+       (명동 10/23: 비고 「각 10종 주문 +테스터 1종 전달」 · 메시지도 같은 말).
+       더하면 2개가 되어 버리므로 많은 쪽 하나만 씁니다. */
+    const aqFreeQty_=function(r){ return Math.max(freeQty_(r.b),freeQty_(r.msg)); };
+    /* 유상 수량 — 덤이 적혀 있으면 빼고, 안 적혀 있는데 수량이 5의 배수가 아니면
+       테스터가 섞였는지 물어봅니다 (사용자 결정 2026-10-27). 멋대로 빼지 않습니다.
+       10·15·20·30 은 그대로 두고 11·16·21 만 묻습니다. 답은 lib.aqFree 에 적어 다시 안 묻습니다. */
+    const AQF=aqFreeOf_();
+    const aqPaid_=function(r){
+      const q=Number(r.q)||0, f=aqFreeQty_(r);
+      if(f>0) return (f<q)?{q:q-f,free:f,ask:0}:{q:q,free:0,ask:0};
+      if(AQF[r.k]!=null){ const n=Math.min(Number(AQF[r.k])||0,q); return {q:q-n,free:n,ask:0}; }
+      if(q%5) return {q:q,free:0,ask:q%5};
+      return {q:q,free:0,ask:0};
+    };
+    const aqPaidQty_=function(r){ return aqPaid_(r).q; };
     /* ① 등록된 카톡 발주 (본사 건 포함) */
     const kkSrc=ph.slice();
     if(!kkSrc.some(function(x){ return x.pid==='aquamedi'; })){ const hi=pharmInfoOf('aquamedi'); kkSrc.push({pid:'aquamedi',name:hi.name||'아쿠아메디',corp:hi.corp||'',biz:hi.biz||'',k:''}); }
@@ -7153,7 +7211,8 @@ async function ecLines_(ch,mk){
         const store=orderStore_(o)||p.name;
         (o.items||[]).forEach(function(it,ii){
           const q=Number(it.qty)||0; if(!q) return;
-          kk.push({p:p,o:o,ii:ii,name:it.name,nk:nk(it.name),q:q,rem:q,date:d,store:store,sk:entryKey_(store)});
+          kk.push({p:p,o:o,ii:ii,name:it.name,nk:nk(it.name),q:q,rem:q,date:d,store:store,
+                   sk:entryKey_(store),br:brOf_(store)});
         });
       });
     });
@@ -7164,9 +7223,12 @@ async function ecLines_(ch,mk){
       .filter(function(x){ return x.d>=EC_CUTOVER&&!isFreeAq(x.r); })
       .sort(function(a,b){ return a.d.localeCompare(b.d); })
       .forEach(function(x){
-        const r=x.r, p=pharmOf(r.r), q=r.q||0; if(!p||!q) return;
+        const r=x.r, p=pharmOf(r.r), q=aqPaidQty_(r); if(!p||!q) return;
         const k=nk(r.i), rk=entryKey_(r.r);
-        const cand=kk.filter(function(e){ return e.p.pid===p.pid&&e.nk===k&&e.rem>=q&&dayGap(e.date,x.d)<=7; })
+        const cand=kk.filter(function(e){
+            if(e.p.pid!==p.pid||e.nk!==k||e.rem<q||dayGap(e.date,x.d)>7) return false;
+            return !e.br||rk.indexOf(e.br)>=0;   /* 지점이 적혀 있으면 그 지점 출고하고만 */
+          })
           .sort(function(a,b){ return ((a.sk===rk)?0:1)-((b.sk===rk)?0:1)||dayGap(a.date,x.d)-dayGap(b.date,x.d); });
         if(cand.length){ cand[0].rem-=q; absorbed[r.k]=cand[0]; }
       });
@@ -7187,9 +7249,14 @@ async function ecLines_(ch,mk){
       if(absorbed[r.k]){ merged.push(r.r+' '+r.i+' ×'+r.q+' ← 카톡 발주 '+absorbed[r.k].date.slice(5).replace('-','/')); return; }
       const p=pharmOf(r.r);
       const price=aqPriceOf_(p?p.name:r.r,r.i);
-      const sup=price*(r.q||0), vt=Math.round(sup*0.1);
-      push({key:'aq|'+r.k,date:d,vcode:p&&p.biz?ecBiz_(p.biz):'',vname:p?(p.corp||p.name):r.r,ono:r.no||'',item:r.i,qty:r.q||0,
-        unit:price,supply:sup,vat:vt,memo:'사방넷 송장 '+r.v+(p&&p.corp?' · '+r.r:''),warn:(price?'':'아쿠아메디 단가 없음')+(p?'':(price?'':' · ')+'소속 약국 못 찾음')});
+      const pd=aqPaid_(r), pq=pd.q, fq=pd.free;
+      const sup=price*pq, vt=Math.round(sup*0.1);
+      if(pd.ask) ask.push({k:r.k,recv:r.r,item:r.i,qty:Number(r.q)||0,sug:pd.ask,date:d,inv:String(r.v||'')});
+      push({key:'aq|'+r.k,date:d,vcode:p&&p.biz?ecBiz_(p.biz):'',vname:p?(p.corp||p.name):r.r,ono:r.no||'',item:r.i,qty:pq,
+        free:fq,
+        unit:price,supply:sup,vat:vt,recv:r.r,
+        srcK:r.k,ask:pd.ask,
+        memo:'사방넷 송장 '+r.v+(p&&p.corp?' · '+r.r:'')+(fq?' · 덤(테스터·디피) '+fq+'개 제외':''),warn:(pd.ask?'❓ 테스터 포함? 확인 필요 · ':'')+(price?'':'아쿠아메디 단가 없음')+(p?'':(price?'':' · ')+'소속 약국 못 찾음')});
     });
   } else if(ch==='jp'){
     const C=ecCfg_('jp'), s=(lib.companies&&lib.companies.jp&&lib.companies.jp.brands)||{};
@@ -7273,7 +7340,7 @@ async function ecLines_(ch,mk){
     if(!slot[g]){ seq[o.date]=(seq[o.date]||0)+1; slot[g]=seq[o.date]; }
     o.seq=slot[g];
   });
-  return {lines:out,skipped:skipped,merged:merged};
+  return {lines:out,skipped:skipped,merged:merged,ask:ask};
 }
 /* ---------- 레디영 → 매출 시트 반영 (2026-10-19) ----------
    10월부터 레디영 출고가 사방넷으로 옮겨 가면서, 배송요청시트를 읽던 두 시트가 9/30 에 멈췄습니다.
@@ -7514,8 +7581,10 @@ function buildEcountPanel_(){
     const vk=function(o){ return o.vcode||o.vname||'?'; };
     ecView.off=ecView.off||{};
     const todoAll=res.lines.filter(function(o){ return !D[o.key]; });
-    const todo=todoAll.filter(function(o){ return !ecView.off[vk(o)]; }), done=res.lines.length-todoAll.length;
-    const show=ecView.showDone?res.lines:todo;
+    /* 테스터가 섞였는지 아직 안 정한 줄은 복사·올림 표시에서 뺍니다 — 보이기는 합니다 */
+    const held=todoAll.filter(function(o){ return o.ask; });
+    const todo=todoAll.filter(function(o){ return !o.ask&&!ecView.off[vk(o)]; }), done=res.lines.length-todoAll.length;
+    const show=ecView.showDone?res.lines:todo.concat(held);
     const warnN=todo.filter(function(o){ return o.warn; }).length;
     const sumT=todo.reduce(function(a,o){ return a+o.supply+o.vat; },0);
     body.innerHTML='';
@@ -7619,6 +7688,43 @@ function buildEcountPanel_(){
       const w2=document.createElement('div');w2.className='hint';w2.style.marginBottom='6px';
       w2.textContent='무상이라 뺀 출고 '+res.skipped.length+'줄: '+res.skipped.slice(0,5).join(' / ')+(res.skipped.length>5?' 외':'');
       body.appendChild(w2);
+    }
+    if(res.ask&&res.ask.length){
+      /* 사방넷 메모에 덤이 안 적혀 왔고 수량이 5의 배수가 아닌 줄 — 묶어서 한 번에 답합니다 */
+      const by={};
+      res.ask.forEach(function(a){ const g=a.inv||a.recv; (by[g]=by[g]||[]).push(a); });
+      const box=document.createElement('div');
+      box.style.cssText='border:1.5px solid #F0B35A;background:#FFF8EE;border-radius:9px;padding:10px 12px;margin-bottom:10px;';
+      const t0=document.createElement('div');
+      t0.style.cssText='font-weight:800;font-size:13px;margin-bottom:6px;';
+      t0.textContent='❓ 테스터가 섞였는지 확인해주세요 — '+res.ask.length+'줄';
+      box.appendChild(t0);
+      const h0=document.createElement('div');h0.className='hint';h0.style.marginBottom='8px';
+      h0.innerHTML='사방넷 메모에 덤이 안 적혀 있고 수량이 <b>5의 배수가 아닙니다.</b> 정하기 전까지 이 줄은 '+
+        '<b>표 복사·올린 걸로 표시에서 빠집니다.</b><br>'+
+        '<span style="color:var(--ink-soft);">다음부터는 사방넷 관리메모에 <b>「+테스터1」</b>처럼 적어 보내시면 자동으로 빠집니다.</span>';
+      box.appendChild(h0);
+      Object.keys(by).forEach(function(g){
+        const list=by[g], a0=list[0];
+        const row=document.createElement('div');
+        row.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:5px;font-size:12.5px;';
+        const lb=document.createElement('span');
+        lb.innerHTML='<b>'+a0.recv+'</b> '+a0.date+' · '+list.length+'품목 · 품목당 '+a0.qty+'개';
+        row.appendChild(lb);
+        const mk=function(label,n){
+          const b=document.createElement('button');b.className='icon-btn';b.textContent=label;
+          b.addEventListener('click',function(){
+            if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 정해주세요'); return; }
+            const F=aqFreeOf_(); list.forEach(function(a){ F[a.k]=n; });
+            persistLib(); showToast(a0.recv+' '+list.length+'줄 — '+(n?'테스터 '+n+'개씩 뺐습니다':'전부 판매로 두었습니다')); draw();
+          });
+          return b;
+        };
+        row.appendChild(mk('테스터 '+a0.sug+'개씩 빼기',a0.sug));
+        row.appendChild(mk('전부 판매',0));
+        box.appendChild(row);
+      });
+      body.appendChild(box);
     }
     if(res.merged&&res.merged.length){
       const w3=document.createElement('div');w3.className='hint';w3.style.marginBottom='6px';
@@ -13976,7 +14082,7 @@ function openPharmInfo(pid,fallbackName){
   const setv=(id,val)=>{document.getElementById(id).value=val||'';};
   setv('pfName',info.name||fallbackName);setv('pfYkiho',info.ykiho);setv('pfBiz',info.biz);setv('pfOwner',info.owner);
   setv('pfTel',info.tel);setv('pfFax',info.fax);setv('pfEmail',info.email);setv('pfAddr',info.addr);setv('pfNote',info.note);
-  setv('pfOpen',info.open);setv('pfBiztype',info.biztype);setv('pfLicense',info.license);setv('pfContract',info.contract);setv('pfShip',info.ship);setv('pfBank',info.bank);setv('pfPay',info.pay);
+  setv('pfOpen',info.open);setv('pfBiztype',info.biztype);setv('pfLicense',info.license);setv('pfContract',info.contract);setv('pfShip',info.ship);setv('pfAlias',info.alias);setv('pfBank',info.bank);setv('pfPay',info.pay);
   const md=document.getElementById('phInfoModal');md.dataset.pid=pid;md.hidden=false;
 }
 document.getElementById('pfCancel').addEventListener('click',()=>{document.getElementById('phInfoModal').hidden=true;});
@@ -13986,7 +14092,7 @@ document.getElementById('pfSave').addEventListener('click',()=>{
   const g=id=>document.getElementById(id).value.trim();
   info.name=g('pfName');info.ykiho=g('pfYkiho');info.biz=g('pfBiz');info.owner=g('pfOwner');
   info.tel=g('pfTel');info.fax=g('pfFax');info.email=g('pfEmail');info.addr=g('pfAddr');info.note=g('pfNote');
-  info.open=g('pfOpen');info.biztype=g('pfBiztype');info.license=g('pfLicense');info.contract=g('pfContract');info.ship=g('pfShip');info.bank=g('pfBank');info.pay=g('pfPay');
+  info.open=g('pfOpen');info.biztype=g('pfBiztype');info.license=g('pfLicense');info.contract=g('pfContract');info.ship=g('pfShip');info.alias=g('pfAlias');info.bank=g('pfBank');info.pay=g('pfPay');
   persistLib();document.getElementById('phInfoModal').hidden=true;showToast('약국 정보가 저장되었습니다');
   if(currentView&&currentView.indexOf('ph_')===0)renderPharm(currentView);
 });
