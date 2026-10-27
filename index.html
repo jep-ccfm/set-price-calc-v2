@@ -9625,6 +9625,78 @@ function addAquaPharm(){
       openPharmInfo(pid,name);
     }});
 }
+/* ---------- 약국 합치기 (2026-10-27) ----------
+   한 거래처인데 사방넷에 찍히는 이름이 달라 카드가 둘로 갈라질 때가 있습니다.
+   베리뉴가 그랬습니다 — 카드 이름을 「베리뉴」에서 「한테라퓨틱스 (베리뉴)」로 바꾸자
+   「명동 베리뉴」·「해운대 베리뉴 약국」 출고가 그 카드를 못 찾아, 사업자번호도 서류도 없는
+   약국이 저절로 둘 생겼습니다. 입금·세금계산서는 모기업 한 곳이라 카드도 하나여야 합니다.
+   합치면 발주·거래명세서·서류를 옮기고, 지워지는 쪽 이름을 남는 쪽의 「다른 이름」에
+   적어 둡니다 — 그래야 다음 출고가 또 새 약국을 만들지 않습니다. */
+function aquaMergeKeys_(o){
+  return [String(o.date||''),entryKey_(orderStore_(o)),orderSig_(o)].join('|');
+}
+function mergeAquaPharm(ph){
+  if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
+  const from=ph.pid, fromName=pharmInfoOf(from).name||ph.name;
+  const others=PHARMS_().filter(function(x){ return x.id!==from; });
+  if(!others.length){ showToast('합칠 다른 약국이 없습니다'); return; }
+  const nOrd=((lib.orders&&lib.orders[from])||[]).length;
+  askChoice('「'+fromName+'」 를 어느 약국으로 합칠까요?',
+    '발주 '+nOrd+'건과 거래명세서·서류를 옮기고 <b>'+fromName+'</b> 카드는 없앱니다.<br>'+
+    '<b>'+fromName+'</b> 라는 이름은 남는 약국의 「다른 이름」에 적어 둡니다 — 다음 사방넷 출고가 또 새 약국을 만들지 않게.',
+    others.map(function(t){
+      const tn=pharmInfoOf(t.id).name||t.name;
+      return {label:tn,desc:(pharmInfoOf(t.id).biz||'사업자번호 없음'),run:function(){ aquaMergeInto_(from,fromName,t.id); }};
+    }).concat([{label:'그만두기',desc:'아무것도 바꾸지 않습니다.',run:function(){}}]));
+}
+function aquaMergeInto_(from,fromName,to){
+  const ti=pharmInfoOf(to), fi=pharmInfoOf(from);
+  /* ① 발주 — 같은 날·같은 지점·같은 품목수량이면 이미 있는 건입니다 */
+  const dst=ordersOf(to), seen={};
+  dst.forEach(function(o){ seen[aquaMergeKeys_(o)]=1; });
+  let mo=0, dup=0;
+  ((lib.orders&&lib.orders[from])||[]).forEach(function(o){
+    const k=aquaMergeKeys_(o);
+    if(seen[k]){ dup++; return; }
+    seen[k]=1;
+    if(o.srcKey) o.srcKey=String(o.srcKey).replace(new RegExp('^'+from+'\\|'),to+'|');
+    dst.push(o); mo++;
+  });
+  dst.sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+  if(lib.orders) delete lib.orders[from];
+  /* ② 거래명세서 — 일련번호가 같으면 같은 장입니다 */
+  const fl=(lib.ledger&&lib.ledger[from])||{months:{}}; let md=0;
+  Object.keys(fl.months||{}).forEach(function(mk){
+    const tl=ledgerOf(to); tl.months[mk]=tl.months[mk]||{docs:[]};
+    ((fl.months[mk]||{}).docs||[]).forEach(function(d){
+      if(tl.months[mk].docs.some(function(x){ return x.serial&&x.serial===d.serial; })) return;
+      tl.months[mk].docs.push(d); md++;
+    });
+  });
+  if(lib.ledger) delete lib.ledger[from];
+  /* ③ 서류 · 빈 칸 — 남는 쪽을 덮어쓰지 않고 비어 있는 것만 채웁니다 */
+  let mf=0;
+  ti.files=ti.files||[];
+  (fi.files||[]).forEach(function(f){
+    if(ti.files.some(function(x){ return x.path===f.path; })) return;
+    ti.files.push(f); mf++;
+  });
+  ['biz','corp','owner','tel','email','addr','ship','open','biztype','license','contract','pay','bank','ykiho']
+    .forEach(function(k){ if(!String(ti[k]||'').trim()&&String(fi[k]||'').trim()) ti[k]=fi[k]; });
+  if(String(fi.note||'').trim()&&String(ti.note||'').indexOf(String(fi.note).trim())<0)
+    ti.note=String(ti.note||'').trim()+(ti.note?'\n':'')+fi.note;
+  /* ④ 지워지는 이름을 「다른 이름」에 — 이게 없으면 다음 출고가 또 새 약국을 만듭니다 */
+  const al=String(ti.alias||'').split(/[,\n·]/).map(function(x){ return x.trim(); }).filter(Boolean);
+  if(!al.some(function(x){ return entryKey_(x)===entryKey_(fromName); })) al.push(fromName);
+  ti.alias=al.join(', ');
+  /* ⑤ 카드 치우기 */
+  lib.aquaPharms=aquaAdded().filter(function(x){ return x.pid!==from; });
+  if(lib.pharmInfo) delete lib.pharmInfo[from];
+  persistLib();
+  switchView('ch_aquamedi');
+  showToast('「'+fromName+'」 를 「'+(ti.name||to)+'」 로 합쳤습니다 — 발주 '+mo+'건'+
+    (dup?'(중복 '+dup+'건 건너뜀)':'')+' · 명세서 '+md+'장 · 서류 '+mf+'건 · 다른 이름에 「'+fromName+'」 추가');
+}
 /* 빼기 — 발주·명세서·서류가 달려 있으면 막습니다 (지우면 같이 사라집니다) */
 function removeAquaPharm(ph){
   if(!canEdit()){ showToast('보기 전용입니다 — 수정 권한이 없습니다'); return; }
@@ -9683,7 +9755,14 @@ function buildAquamediPharms(){
       x.textContent='✕';x.title='이 약국을 목록에서 뺍니다';
       x.style.cssText='position:absolute;top:8px;right:8px;';
       x.addEventListener('click',ev=>{ ev.stopPropagation(); removeAquaPharm(ph); });
-      cell.appendChild(x);g.appendChild(cell);
+      cell.appendChild(x);
+      /* 같은 거래처가 이름이 달라 두 카드로 갈라졌을 때 (2026-10-27) */
+      const mg=document.createElement('button');mg.type='button';mg.className='del-btn';
+      mg.textContent='⇄';mg.title='다른 약국과 합칩니다 — 발주·명세서·서류를 옮기고 이름은 「다른 이름」에 남깁니다';
+      mg.style.cssText='position:absolute;top:8px;right:34px;';
+      mg.addEventListener('click',ev=>{ ev.stopPropagation(); mergeAquaPharm(ph); });
+      cell.appendChild(mg);
+      g.appendChild(cell);
     } else g.appendChild(b);
   });
   wrap.appendChild(g);
