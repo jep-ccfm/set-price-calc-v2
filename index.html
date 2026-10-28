@@ -7426,7 +7426,7 @@ async function ecLines_(ch,mk){
     kk.forEach(function(e){
       if(e.date.slice(0,7)!==mk) return;
       const price=aqPriceOf_(e.store,e.name), sup=price*e.q, vt=Math.round(sup*0.1);
-      push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:'',
+      push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),pid:e.p.pid,recv:e.store,date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:'',
         item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:(e.o.src?'카톡':'수기')+' 발주 '+e.date+' · '+e.store,tag:e.o.src?'카톡':'수기',
         warn:price?'':'아쿠아메디 단가 없음'});
     });
@@ -7442,7 +7442,7 @@ async function ecLines_(ch,mk){
       const pd=aqPaid_(r), pq=pd.q, fq=pd.free;
       const sup=price*pq, vt=Math.round(sup*0.1);
       if(pd.ask) ask.push({k:r.k,recv:r.r,item:r.i,qty:Number(r.q)||0,sug:pd.ask,date:d,inv:String(r.v||'')});
-      push({key:'aq|'+r.k,date:d,vcode:p&&p.biz?ecBiz_(p.biz):'',vname:p?(p.corp||p.name):r.r,ono:r.no||'',item:r.i,qty:pq,
+      push({key:'aq|'+r.k,pid:p?p.pid:'',date:d,vcode:p&&p.biz?ecBiz_(p.biz):'',vname:p?(p.corp||p.name):r.r,ono:r.no||'',item:r.i,qty:pq,
         free:fq,
         unit:price,supply:sup,vat:vt,recv:r.r,
         srcK:r.k,ask:pd.ask,
@@ -7543,7 +7543,8 @@ async function rySheetLines_(){
   const now=sboToday_().slice(0,7);
   const out=[];
   for(let m=EC_CUTOVER.slice(0,7);m<=now;){
-    const r=await ecLines_('ready',m); r.lines.forEach(function(o){ out.push(o); });
+    /* 수기 매출(ry|man|…)은 이미 rySheet 에 man|… 로 들어 있습니다 — 또 담으면 두 번 잡힙니다 */
+    const r=await ecLines_('ready',m); r.lines.forEach(function(o){ if(!/^ry\|man\|/.test(o.key)) out.push(o); });
     const y=+m.slice(0,4), mo=+m.slice(5,7); m=mo===12?(y+1)+'-01':y+'-'+String(mo+1).padStart(2,'0');
   }
   /* 발주 대조 — 같은 송장 · 같은 품목인 발주 줄을 찾습니다 */
@@ -7570,6 +7571,37 @@ function rySheetRow_(o){
   return {k:o.key,mk:o.date.slice(0,7),d:o.date,vc:o.vcode,vn:o.vname,item:o.name,code:o.code,q:o.qty,
     unit:o.unit,sup:o.supply,vat:o.vat,tot:o.supply+o.vat,ono:o.ono||'',inv:o.inv||'',ord:o.ord||'',vst:o.vst};
 }
+/* ---------- 매출 시트 자동 반영 (2026-10-28) ----------
+   「📊 매출 시트 반영」 누르는 걸 잊으면 시트가 멈춥니다 — 10/21 이후 안 눌려 레디영 10/20~27 출고 25줄(12,216,600)이
+   레디영 매출 시트·통합매출 시트 둘 다에서 빠져 있었습니다. 바로팜·자사몰처럼 대시보드가 원천이니
+   편집 권한으로 홈을 열 때마다 알아서 담습니다 (거래처코드 없는 줄은 예전처럼 보류 — 버튼 화면에서 확인).
+   아쿠아메디도 10월부터 거래명세서 PDF 를 안 올리고 판매입력(카톡 발주 + 사방넷 출고)으로 이카운트에 올라가므로
+   같은 줄을 lib.aqSheet 에 담아 통합매출 시트가 그 달 아쿠아메디 매출로 씁니다.
+   aqSheet 는 매번 통째로 다시 만듭니다 — 발주를 고치거나 지우면 시트에서도 빠지게. */
+let sheetAutoAt=0;
+async function sheetAutoSync_(){
+  if(!canEdit()||Date.now()-sheetAutoAt<3*60*1000) return;
+  sheetAutoAt=Date.now();
+  let changed=0, ryN=0;
+  try{
+    const L=await rySheetLines_();
+    const todo=L.filter(function(o){ return o.state!=='done'&&o.vcode; });
+    if(todo.length){ const R=rySheetOf_(); todo.forEach(function(o){ R.rows[o.key]=rySheetRow_(o); }); R.at=new Date().toISOString(); ryN=todo.length; changed++; }
+  }catch(e){}
+  try{
+    const now=sboToday_().slice(0,7), rows={};
+    for(let m=EC_CUTOVER.slice(0,7);m<=now;){
+      (await ecLines_('aquamedi',m)).lines.forEach(function(o){
+        rows[o.key]={k:o.key,mk:o.date.slice(0,7),d:o.date,pid:o.pid||'',vc:o.vcode,vn:o.vname,recv:o.recv||'',item:o.item,code:o.code||'',
+          q:o.qty,unit:o.unit,sup:o.supply,vat:o.vat,tot:o.supply+o.vat,ono:o.ono||'',src:o.tag||'사방넷 출고'};
+      });
+      const y=+m.slice(0,4), mo=+m.slice(5,7); m=mo===12?(y+1)+'-01':y+'-'+String(mo+1).padStart(2,'0');
+    }
+    const A=lib.aqSheet=lib.aqSheet||{at:'',rows:{}};
+    if(JSON.stringify(A.rows||{})!==JSON.stringify(rows)){ A.rows=rows; A.at=new Date().toISOString(); changed++; }
+  }catch(e){}
+  if(changed){ persistLib(); if(ryN) showToast('레디영 출고 '+ryN+'줄을 매출 시트로 넘겼습니다'); }
+}
 async function rySheetOpen_(){
   if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 반영하세요'); return; }
   showToast('발주·출고 대조 중…');
@@ -7583,7 +7615,8 @@ async function rySheetOpen_(){
     const todo=L.filter(function(o){ return o.state!=='done'&&o.vcode; });
     const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
     nt.innerHTML='사방넷에서 <b>송장이 찍힌 레디영 출고</b>(10월~ · 무상 제외)를 <b>발주 메일과 대조</b>했습니다. 금액은 레디영 공급가, 날짜는 <b>출고일</b>입니다.<br>'+
-      '「반영」을 누르면 <b>레디영 매출 시트 「매출 rawdata」</b>와 <b>약국 통합 매출 시트</b>가 <b>5분 안에</b> 이 내용을 가져갑니다.'+
+      '「반영」을 누르면 <b>레디영 매출 시트 「매출 rawdata」</b>와 <b>약국 통합 매출 시트</b>가 <b>5분 안에</b> 이 내용을 가져갑니다. '+
+      '<span style="color:var(--ink-soft);">(홈을 열면 자동으로도 담깁니다 — 이 화면은 발주 대조 확인용)</span>'+
       (S_at()?'<br><span style="color:var(--ink-mute);">마지막 반영 '+S_at()+'</span>':'');
     b.appendChild(nt);
     const cnt=function(f){ return L.filter(f).length; };
@@ -14189,6 +14222,7 @@ function renderHome(){
   box.appendChild(buildEntrySync());
   box.appendChild(buildEcVendorPanel_());
   box.appendChild(buildEcountPanel_());
+  sheetAutoSync_();
   box.appendChild(buildItemPricePanel_());
 
   /* ---- 빠른 이동 ---- */
