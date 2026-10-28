@@ -13107,8 +13107,7 @@ function buildApplicants(){
     /* 판정 — 2km 안이면 거절 안내를 바로 복사할 수 있게 */
     const tdV=tr.querySelector('.ap-verdict');
     tdV.innerHTML=verdict;
-    if(j&&j.ok===false){
-      tdV.insertAdjacentHTML('beforeend','<div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">'+geoFreeNote_()+' — 포어시그널만이면 공급 가능</div>');
+    const rejectBox=function(){
       const box2=document.createElement('div');box2.style.marginTop='5px';
       const rb=document.createElement('button');rb.className='icon-btn';rb.style.fontSize='12px';
       rb.textContent='📋 거절 안내';
@@ -13123,7 +13122,13 @@ function buildApplicants(){
       rv.style.cssText='font-size:12px;margin-left:4px;';
       rv.textContent='보기';rv.title='본문을 확인하고 복사';
       rv.addEventListener('click',()=>showRejectMail(a));
-      box2.append(rb,rv);tdV.appendChild(box2);
+      box2.append(rb,rv);
+      return box2;
+    };
+    const geoNg=!!(j&&j.ok===false);
+    if(geoNg){
+      tdV.insertAdjacentHTML('beforeend','<div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">'+geoFreeNote_()+' — 포어시그널만이면 공급 가능</div>');
+      tdV.appendChild(rejectBox());
     }
     // 약국명 = 상세 보기 버튼
     const tdN=tr.querySelector('.ap-name');
@@ -13164,7 +13169,10 @@ function buildApplicants(){
     const badge=document.createElement('div');badge.style.cssText='font-size:12px;margin-top:3px;';
     if(a.status==='승인')badge.innerHTML='<span style="color:var(--good);font-weight:800;">승인됨</span> '+(a.decidedAt||'');
     else if(a.status==='거절')badge.innerHTML='<span style="color:var(--warn);font-weight:800;">거절됨</span> '+(a.decidedAt||'');
-    tdS.append(sel,badge);tr.appendChild(tdS);
+    tdS.append(sel,badge);
+    /* 2km 말고 다른 이유로 거절해도 안내 메일을 바로 씁니다 (2026-10-28 — 해운대베리뉴약국: 2km 가능인데 거절) */
+    if(a.status==='거절'&&!geoNg) tdS.appendChild(rejectBox());
+    tr.appendChild(tdS);
     // 편집/삭제
     const tdA=document.createElement('td');
     const ed=document.createElement('button');ed.className='del-btn';ed.textContent='✎';ed.title='수정';
