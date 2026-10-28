@@ -6111,7 +6111,8 @@ const SBO_CODES=[
   ['M300KR','비타터닝 나노샷 앰플 30ml'],['M301KR','비타터닝 액티브 캡슐 크림 30ml'],['M302KR','비타터닝 UV쉴드 선크림 30ml'],
   ['M401KR','메라블 클리어 클렌징 패드(15매입)']
 ];
-const SBO_TYPE={ready:'오프라인B2B_레디영', pharmmall:'온라인B2B_자사몰 약사전용관', barofarm:'온라인B2B_바로팜'};
+/* 아쿠아메디 = 사방넷 출고 엑셀에 찍힌 발주 타입 그대로 (2026-10-28 확인 — 19줄 전부 「온라인B2B_아쿠아메디」) */
+const SBO_TYPE={ready:'오프라인B2B_레디영', pharmmall:'온라인B2B_자사몰 약사전용관', barofarm:'온라인B2B_바로팜', aquamedi:'온라인B2B_아쿠아메디'};
 /* 우리 품목명 → [상품코드, 사방넷 상품명] */
 function sboCodeMap_(so){
   const m={};
