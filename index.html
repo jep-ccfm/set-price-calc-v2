@@ -6274,6 +6274,124 @@ function buildBfKitList_(){
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';box.appendChild(t);wrap.appendChild(box);
   return wrap;
 }
+/* ---------- 아쿠아메디 쇼카드 · 포인트 스티커 (2026-10-28) ----------
+   소속 약국 지점이 늘고 발주가 계속 들어와 홍보물을 보냈는지 바로팜 세트 홍보물처럼 줄마다 체크합니다.
+   · 쇼카드: 지점마다 그 품목을 처음 받을 때 품목당 1장 (기간 전 발주도 「받은 적 있음」으로 셉니다)
+   · 포인트 스티커: 발주 수량만큼
+   지점 = 발주의 지점(받는 분) 이름 — 한테라퓨틱스처럼 한 사업자 아래 지점이 여럿이면 지점마다 따로 셉니다.
+   본사(지오메디·아쿠아메디) 건은 영업용 샘플이라 뺍니다. 보냄 기록 = lib.aqKitSent[발주 id] */
+const AQ_KIT_FROM='2026-10-01';
+function aqKitSent_(){ lib.aqKitSent=lib.aqKitSent||{}; return lib.aqKitSent; }
+let aqKitShowSent=false;
+function aqKitRows_(){
+  const all=[];
+  aquamediPharms().forEach(function(p){
+    if(p.pid==='aquamedi'||aquaIsHq_(p.name)) return;
+    (ordersOf(p.pid)||[]).forEach(function(o){
+      const store=orderStore_(o)||p.name;
+      const items=(o.items||[]).map(function(it){
+        const m=matchItem(it.name);
+        return {name:(m&&m.name)?m.name:String(it.name||'').trim(),qty:Number(it.qty)||0};
+      }).filter(function(it){ return it.qty>0&&it.name; });
+      if(items.length) all.push({o:o,pid:p.pid,pharm:p.name,store:store,date:String(o.date||''),items:items,
+        bk:p.pid+'|'+entryKey_(store)});
+    });
+  });
+  all.sort(function(a,b){ return (a.date+a.o.id).localeCompare(b.date+b.o.id); });
+  const seen={};
+  all.forEach(function(r){
+    r.cards=[];
+    r.items.forEach(function(it){ const k=r.bk+'|'+itemKey(it.name); if(!seen[k]){ seen[k]=1; r.cards.push(it.name); } });
+    r.sticker=r.items.reduce(function(a,it){ return a+it.qty; },0);
+    r.key=r.o.id;
+  });
+  return all.filter(function(r){ return r.date>=AQ_KIT_FROM; });
+}
+function buildAqKitList_(){
+  const wrap=document.createElement('div');wrap.style.marginTop='18px';
+  const all=aqKitRows_(), S=aqKitSent_();
+  const left=all.filter(function(r){ return !S[r.key]; });
+  const rows=aqKitShowSent?all:left;
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');
+  hs.textContent='🪧 쇼카드 · 포인트 스티커'+(left.length?' — 보낼 '+left.length+'건':'');
+  h.appendChild(hs);
+  const tools=document.createElement('div');tools.className='sh-tools';h.appendChild(tools);
+  const cp=document.createElement('button');cp.className='icon-btn';cp.textContent='📋 표 복사';
+  cp.title='아직 안 보낸 줄을 엑셀·시트에 붙여넣을 수 있게 복사합니다';
+  cp.addEventListener('click',function(){
+    if(!left.length){ showToast('보낼 홍보물이 없습니다'); return; }
+    const tsv=[['발주일','약국','지점','품목','쇼카드','포인트 스티커','발주 상태']].concat(left.map(function(r){
+      return [r.date,r.pharm,r.store,r.items.map(function(it){ return it.name+' '+it.qty; }).join(', '),
+        r.cards.length?r.cards.join(', ')+' (각 1장)':'',r.sticker+'장',r.o.status||'접수'];
+    })).map(function(x){ return x.join('\t'); }).join('\n');
+    navigator.clipboard.writeText(tsv).then(function(){ showToast(left.length+'줄을 복사했습니다'); },function(){ showToast('복사하지 못했습니다'); });
+  });
+  tools.appendChild(cp);
+  const sentN=all.length-left.length;
+  if(sentN){
+    const tg=document.createElement('button');tg.className='icon-btn';
+    tg.textContent=aqKitShowSent?'보낸 것 숨기기':'보낸 것도 보기 ('+sentN+')';
+    tg.addEventListener('click',function(){ aqKitShowSent=!aqKitShowSent; ledgerRefresh(); });
+    tools.appendChild(tg);
+  }
+  wrap.appendChild(h);
+  const nt=document.createElement('div');nt.className='hint';nt.style.margin='-4px 0 10px';
+  nt.innerHTML=(+AQ_KIT_FROM.slice(5,7))+'/'+(+AQ_KIT_FROM.slice(8))+'부터 들어온 소속 약국 발주(카톡·수기·사방넷)입니다. '+
+    '<b>쇼카드</b> 지점마다 그 품목을 처음 받을 때 품목당 1장 · <b>포인트 스티커</b> 발주 수량만큼. 보낸 줄은 「보냄」을 누르세요. '+
+    '<span style="color:var(--ink-mute);">본사(지오메디) 샘플 건은 뺍니다.</span>';
+  wrap.appendChild(nt);
+  if(left.length){
+    const card={}, stk={};
+    left.forEach(function(r){
+      r.cards.forEach(function(nm){ card[nm]=(card[nm]||0)+1; });
+      r.items.forEach(function(it){ stk[it.name]=(stk[it.name]||0)+it.qty; });
+    });
+    const sumOf=function(o){ return Object.keys(o).reduce(function(a,k){ return a+o[k]; },0); };
+    const li=function(o){ return Object.keys(o).sort().map(function(k){ return '<div style="display:flex;justify-content:space-between;gap:10px;"><span>'+k+'</span><b>'+o[k]+'장</b></div>'; }).join('')||'<span style="color:var(--ink-mute);">없음</span>'; };
+    const sb=document.createElement('div');
+    sb.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:12px;';
+    [['🪧 쇼카드',card],['🏷 포인트 스티커',stk]].forEach(function(x){
+      const c=document.createElement('div');
+      c.style.cssText='border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#FBFAF7;font-size:12.5px;line-height:1.7;';
+      c.innerHTML='<div style="font-weight:800;margin-bottom:4px;">'+x[0]+' <span style="color:var(--ink-mute);font-weight:600;">총 '+sumOf(x[1])+'장</span></div>'+li(x[1]);
+      sb.appendChild(c);
+    });
+    const cap=document.createElement('div');cap.className='hint';cap.style.margin='0 0 6px';cap.innerHTML='<b>준비할 수량</b> (아직 안 보낸 '+left.length+'건 합계)';
+    wrap.append(cap,sb);
+  }
+  if(!rows.length){
+    const e=document.createElement('div');e.className='hint';
+    e.textContent=all.length?'✅ 쇼카드·포인트 스티커를 모두 보냈습니다.':'아직 소속 약국 발주가 없습니다.';
+    wrap.appendChild(e); return wrap;
+  }
+  const esc=function(x){ return String(x||'').replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  const t=document.createElement('table');t.className='led-table';t.style.minWidth='820px';
+  t.innerHTML='<thead><tr><th>발주일</th><th>약국 · 지점</th><th>품목</th><th>쇼카드</th><th style="text-align:right;">포인트 스티커</th><th>상태</th><th></th></tr></thead>';
+  const tb=document.createElement('tbody');
+  rows.slice().reverse().forEach(function(r){
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td style="white-space:nowrap;">'+r.date+'</td>'+
+      '<td><b>'+esc(r.store)+'</b>'+(entryKey_(r.store)!==entryKey_(r.pharm)?'<div style="font-size:11.5px;color:var(--ink-mute);">'+esc(r.pharm)+'</div>':'')+'</td>'+
+      '<td style="font-size:12.5px;">'+r.items.map(function(it){ return esc(it.name)+' <b>'+it.qty+'</b>'; }).join('<br>')+'</td>'+
+      '<td style="font-size:12.5px;">'+(r.cards.length?r.cards.length+'장<div style="font-size:11.5px;color:var(--ink-soft);">'+r.cards.map(esc).join(', ')+'</div>':'<span style="color:var(--ink-mute);">재발주 — 없음</span>')+'</td>'+
+      '<td style="text-align:right;">'+r.sticker+'장</td>'+
+      '<td style="font-size:12px;color:var(--ink-soft);">'+esc(r.o.status||'접수')+'</td>';
+    const td=document.createElement('td');td.style.whiteSpace='nowrap';
+    const b=document.createElement('button');b.className='icon-btn';
+    b.textContent=S[r.key]?'✓ '+String(S[r.key]).slice(5).replace('-','/')+' 보냄 ↺':'보냄';
+    if(S[r.key]) b.style.color='var(--good)';
+    b.addEventListener('click',function(){
+      if(!canEdit()){ showToast('보기 전용입니다'); return; }
+      if(S[r.key]) delete S[r.key]; else S[r.key]=sboToday_();
+      persistLib(); ledgerRefresh();
+    });
+    td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';box.appendChild(t);wrap.appendChild(box);
+  return wrap;
+}
 /* rows: [{store, addr, tel, item, qty, ono(주문번호), date}] */
 async function sboOrderXlsx(chId,rows){
   if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return; }
@@ -7138,6 +7256,7 @@ function ecItem_(M,name){
   const FB={'루비알엔앰플겔마스크':['완_00031','루비알엔 앰플 겔 마스크'],'유쎄라블앰플겔마스크':['완_00032','유쎄라블 앰플 겔 마스크'],
     '클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],'메라블클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],
     '유쎄라블올페이스텐션마스크팩':['완_00023','유쎄라블 올페이스 텐션 마스크팩'],   /* 사용자 확인 2026-10-28 */
+    '비타터닝UV쉴드선크림':['완_00038','비타터닝 UV쉴드 선크림'],                  /* 사용자 확인 2026-10-28 */
     '유쎄라블부스트업앰플클렌저':['완_00029','유쎄라블 부스트업 앰플 클렌저'],
     /* 판매종료 구명칭 — 홍콩은 아직 이 이름으로 나갑니다 (이카운트 「아쿠엑소 부스트업 앰플 클렌저_0차」) */
     '아쿠엑소부스트업앰플클렌저':['완_00006','아쿠엑소 부스트업 앰플 클렌저_0차']};
@@ -9592,6 +9711,7 @@ function renderChannel(view){
     const g1=groupBox(1,'💊 소속 약국',aquamediPharms().length+'곳 합산','setPriceCalc:grpAq1',true);
     g1.body.appendChild(entrySyncLink());
     g1.body.appendChild(buildAquamediPharms());
+    g1.body.appendChild(buildAqKitList_());
     g1.body.appendChild(buildAquamediRollup());
     box.appendChild(g1.group);
 
