@@ -5415,7 +5415,12 @@ const ITEM_ALIAS={
   /* 어순만 뒤집혀 옵니다 — 가격표는 「실프팅 4D」, 발주서는 「4D 실프팅」 */
   '유쎄라블4D실프팅크림':'유쎄라블 실프팅 4D 크림',
   /* 옛 이름 — 「부스트업」이 붙기 전 표기입니다 (사용자 확인 2026-09-18) */
-  '유쎄라블앰플클렌저':'유쎄라블 부스트업 앰플 클렌저'
+  '유쎄라블앰플클렌저':'유쎄라블 부스트업 앰플 클렌저',
+  /* 줄임말 — 포어시그널은 앰플·크림·클렌저가 하나씩이라 헷갈릴 일이 없습니다.
+     「＋ 발주 등록」에 이렇게 적은 10/08 생생온누리 건이 단가 0원으로 떴습니다 (2026-10-28) */
+  '포어시그널앰플':'포어시그널 타이트락셀 앰플',
+  '포어시그널크림':'포어시그널 셀텐자 크림',
+  '포어시그널클렌저':'포어시그널 딥 멜팅 폼클렌저'
 };
 /* ---------- 취급을 끊은 품목 ----------
    빼기 전에 나간 발주·명세서에는 그대로 남아 있습니다. 그래서 이름은 계속
@@ -7132,6 +7137,7 @@ function ecItem_(M,name){
      품목표에 줄을 넣으면 그쪽이 먼저입니다 */
   const FB={'루비알엔앰플겔마스크':['완_00031','루비알엔 앰플 겔 마스크'],'유쎄라블앰플겔마스크':['완_00032','유쎄라블 앰플 겔 마스크'],
     '클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],'메라블클리어클렌징패드':['완_00016','메라블 클리어 클렌징 패드(15매입)'],
+    '유쎄라블올페이스텐션마스크팩':['완_00023','유쎄라블 올페이스 텐션 마스크팩'],   /* 사용자 확인 2026-10-28 */
     '유쎄라블부스트업앰플클렌저':['완_00029','유쎄라블 부스트업 앰플 클렌저'],
     /* 판매종료 구명칭 — 홍콩은 아직 이 이름으로 나갑니다 (이카운트 「아쿠엑소 부스트업 앰플 클렌저_0차」) */
     '아쿠엑소부스트업앰플클렌저':['완_00006','아쿠엑소 부스트업 앰플 클렌저_0차']};
@@ -7229,13 +7235,15 @@ async function ecLines_(ch,mk){
       return {q:q,free:0,ask:0};
     };
     const aqPaidQty_=function(r){ return aqPaid_(r).q; };
-    /* ① 등록된 카톡 발주 (본사 건 포함) */
+    /* ① 등록된 카톡 발주 (본사 건 포함) + 「＋ 발주 등록」으로 손으로 넣은 발주(src 없음).
+       src 「배송요청시트」는 출고 기록을 옮겨 온 것이라 아래 사방넷 출고 줄로 셉니다.
+       수기 발주가 빠져 있어 10/08 생생온누리 354,200 이 패널에 안 떠 이카운트에 손으로 넣었습니다 (2026-10-28) */
     const kkSrc=ph.slice();
     if(!kkSrc.some(function(x){ return x.pid==='aquamedi'; })){ const hi=pharmInfoOf('aquamedi'); kkSrc.push({pid:'aquamedi',name:hi.name||'아쿠아메디',corp:hi.corp||'',biz:hi.biz||'',k:''}); }
     const kk=[];
     kkSrc.forEach(function(p){
       ((lib.orders&&lib.orders[p.pid])||[]).forEach(function(o){
-        if(o.src!=='카톡') return;
+        if(o.src&&o.src!=='카톡') return;
         const d=String(o.date||''); if(d<EC_CUTOVER) return;
         const store=orderStore_(o)||p.name;
         (o.items||[]).forEach(function(it,ii){
@@ -7266,7 +7274,7 @@ async function ecLines_(ch,mk){
       if(e.date.slice(0,7)!==mk) return;
       const price=aqPriceOf_(e.store,e.name), sup=price*e.q, vt=Math.round(sup*0.1);
       push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:'',
-        item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:'카톡 발주 '+e.date+' · '+e.store,tag:'카톡',
+        item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:(e.o.src?'카톡':'수기')+' 발주 '+e.date+' · '+e.store,tag:e.o.src?'카톡':'수기',
         warn:price?'':'아쿠아메디 단가 없음'});
     });
     /* 이 달 사방넷 출고 줄 — 카톡 발주와 합친 건은 뺍니다 */
@@ -7569,6 +7577,66 @@ function ryManualBox_(){
 function ecRow_(o){
   return [o.date.replace(/-/g,''),String(o.seq),o.vcode,o.vname,'','00000',o.tt||'11',o.ono,o.code,o.code?'':o.ecName,'',
     String(o.qty),String(o.unit),'',String(o.supply),String(o.vat),o.memo||'','N',''];
+}
+/* ---------- 품목 · 이카운트 품목코드 · 채널별 가격 한눈에 (2026-10-28) ----------
+   가격은 채널마다 흩어져 있습니다 — 레디영·바로팜·자사몰 약사전용관 = PRICE_LIST(VAT 포함),
+   아쿠아메디 = AQ_PRICE · 베리뉴 = AQ_PRICE_BY(공급가액, VAT 별도). 품목코드는 판매입력과 같은 ecItem_ 으로 찾습니다.
+   여기서는 보기만 합니다 — 고칠 때는 위 표들을 고칩니다. */
+let ipVat=true;
+function buildItemPricePanel_(){
+  const fp=foldPanel('🏷️ 품목코드 · 채널별 가격','<span style="color:var(--ink-mute);font-weight:600;">'+PRICE_LIST.length+'개 품목</span>','setPriceCalc:ipOpen',false);
+  const wrap=fp.body;
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;';
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  [['VAT 포함',true],['공급가액 (VAT 별도)',false]].forEach(function(x){
+    const b=document.createElement('button');b.className='icon-btn';b.textContent=x[0];
+    b.addEventListener('click',function(){ ipVat=x[1]; draw(); });
+    bar.appendChild(b);
+  });
+  wrap.appendChild(bar);wrap.appendChild(box);
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginTop='8px';
+  nt.innerHTML='품목코드 = 레디영 매출 시트 「레디영_품목표」 → 없으면 대시보드에 박아 둔 코드(빨간 「없음」이면 판매입력에 품목명만 들어갑니다). '+
+    '레디영·바로팜·약사전용관 = 판매가표(갱신 '+PRICE_UPDATED+') · 아쿠아메디·베리뉴 = 공급가 표. 「—」 = 단가 없음.';
+  wrap.appendChild(nt);
+  let codes=null, codeErr='';
+  const aqBy=AQ_PRICE_BY['베리뉴']||[];
+  const aqOf=function(nm){ return AQ_PRICE[itemKey(itemLabel(nm))]||0; };
+  const vnOf=function(nm){ const h=aqBy.filter(function(x){ return itemKey(itemLabel(x[0]))===itemKey(itemLabel(nm)); })[0]; return h?h[1]:0; };
+  /* inc = VAT 포함가, sup = 공급가액 — 둘 중 아는 쪽 하나만 줍니다 */
+  const cell=function(inc,sup,strong){
+    const v=ipVat?(inc||(sup?Math.round(sup*1.1):0)):(sup||(inc?Math.round(inc/1.1):0));
+    return '<td class="num-cell"'+(strong?' style="font-weight:800;"':'')+'>'+(v?fmt(v):'<span style="color:var(--ink-mute);">—</span>')+'</td>';
+  };
+  function draw(){
+    [...bar.querySelectorAll('button')].forEach(function(b,i){ b.classList.toggle('on',(i===0)===ipVat); b.style.fontWeight=((i===0)===ipVat)?'800':''; });
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='980px';
+    t.innerHTML='<thead><tr><th style="width:70px;">라인</th><th>제품명</th><th>이카운트 품목코드</th>'+
+      '<th style="text-align:right;">정상 소비자가</th><th style="text-align:right;">자사몰 판매가</th>'+
+      '<th style="text-align:right;background:#E4EDF7;">레디영</th><th style="text-align:right;background:#E4EDF7;">바로팜</th>'+
+      '<th style="text-align:right;background:#E4EDF7;">자사몰 약사전용관</th><th style="text-align:right;background:#E4EDF7;">아쿠아메디</th>'+
+      '<th style="text-align:right;background:#E4EDF7;">베리뉴</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    PRICE_LIST.forEach(function(r){
+      const gone=droppedItem(r[1]);
+      const c=codes?codes[r[1]]:null;
+      const cc=!codes?'<span style="color:var(--ink-mute);">'+(codeErr?'못 읽음':'불러오는 중…')+'</span>'
+        :(c&&c.code?'<b>'+c.code+'</b>'+(c.ecName&&itemKey(c.ecName)!==itemKey(r[1])?'<div style="font-size:11px;color:var(--ink-soft);">'+c.ecName+'</div>':'')
+          :'<span style="color:var(--warn);font-weight:700;">없음</span>');
+      const tr=document.createElement('tr');if(gone)tr.style.opacity='.5';
+      tr.innerHTML='<td style="color:var(--ink-soft);font-size:12.5px;">'+r[0]+'</td><td style="white-space:nowrap;">'+r[1]+(gone?' <span style="font-size:11px;color:var(--ink-mute);">(취급 중단)</span>':'')+'</td>'+
+        '<td style="font-size:12.5px;">'+cc+'</td>'+
+        cell(r[2],0)+cell(r[3],0)+cell(r[4],0,true)+cell(r[5],0,true)+cell(r[6],0,true)+cell(0,aqOf(r[1]),true)+cell(0,vnOf(r[1]),true);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.innerHTML='';box.appendChild(t);
+  }
+  draw();
+  ecMasters_().then(function(M){
+    codes={};
+    PRICE_LIST.forEach(function(r){ const it=ecItem_(M,r[1]); codes[r[1]]=it?{code:it.code||'',ecName:it.ecName||it.name||''}:null; });
+    draw();
+  }).catch(function(e){ codeErr=e.message; codes=null; draw(); });
+  return fp.panel;
 }
 let ecView={ch:'ready',mk:null,showDone:false};
 function buildEcountPanel_(){
@@ -13861,6 +13929,7 @@ function renderHome(){
 
   box.appendChild(buildEntrySync());
   box.appendChild(buildEcountPanel_());
+  box.appendChild(buildItemPricePanel_());
 
   /* ---- 빠른 이동 ---- */
   const qh=document.createElement('div');qh.className='sec-h';qh.textContent='바로가기';box.appendChild(qh);
