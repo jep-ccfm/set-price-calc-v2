@@ -7792,6 +7792,110 @@ function buildItemPricePanel_(){
   }).catch(function(e){ codeErr=e.message; codes=null; draw(); });
   return fp.panel;
 }
+/* ---------- 이카운트 거래처 등록 (2026-10-28) ----------
+   이카운트에 거래처코드(사업자번호)가 없으면 판매입력 웹자료올리기가 그 전표에서 막힙니다.
+   9월 바로팜 신규 약국 5곳(바로·새빛·선아·스마일·신이화)이 그래서 빠졌습니다.
+   모든 채널에서 처음 보는 사업자번호를 모아 이카운트 「거래처등록」 웹자료올리기 칸 순서
+   (거래처코드·상호·대표자명·업태·종목·전화·Email·우편번호·주소1)로 복사합니다.
+   「등록함」 표시는 lib.ecVendorReg 에 남습니다. 패널을 만들 때 그때까지의 거래처는 전부 등록된 걸로 넣었습니다
+   (판매조회에 나온 곳 + 10/28 사용자가 등록 완료한 12곳 + 이미 있던 3곳). */
+function ecVendorReg_(){ lib.ecVendorReg=lib.ecVendorReg||{}; return lib.ecVendorReg; }
+async function ecVendorList_(){
+  const map={};
+  const add=function(code,o){
+    code=ecBiz_(code); if(!/^\d{3}-\d{2}-\d{5}$/.test(code)) return;
+    const v=map[code]||(map[code]={code:code,name:'',ceo:'',tel:'',email:'',addr:'',ch:'',first:''});
+    ['name','ceo','tel','email','addr','ch'].forEach(function(k){ if(!v[k]&&o[k]) v[k]=String(o[k]).replace(/\s+/g,' ').trim(); });
+    if(o.date&&(!v.first||o.date<v.first)) v.first=String(o.date);
+  };
+  ['barofarm','pharmmall'].forEach(function(ch){
+    const L=(lib.ledger&&lib.ledger[ch])||{months:{}};
+    Object.keys(L.months||{}).forEach(function(mk){
+      ((L.months[mk]||{}).docs||[]).forEach(function(d){
+        const m=d.meta||{};
+        if(ch==='barofarm'){ add(m['사업자번호'],{name:d.branch,ceo:m['약사'],tel:telFix_(m['전화']),addr:m['배송지'],ch:'바로팜',date:d.date}); return; }
+        if(d.isTest) return;
+        const si=storeInfoOf(d.branch||'');
+        const ap=(lib.applicants||[]).filter(function(a){ return storeKey_(a.name)===storeKey_(d.branch||''); })[0]||{};
+        add(si.bizNo||ap.biz,{name:si.biz||d.branch,ceo:si.ceo||ap.owner,tel:telFix_(m['전화']),email:si.email||ap.email,
+          addr:m['약국주소'],ch:'자사몰 약사전용관',date:d.date});
+      });
+    });
+  });
+  aquamediPharms().forEach(function(x){
+    const pi=pharmInfoOf(x.pid);
+    const first=((lib.orders&&lib.orders[x.pid])||[]).map(function(o){ return String(o.date||''); }).filter(Boolean).sort()[0]||'';
+    add(pi.biz,{name:pi.corp||pi.name||x.name,ceo:pi.owner,tel:telFix_(pi.tel),email:pi.email,addr:pi.addr||pi.ship,ch:'아쿠아메디',date:first});
+  });
+  /* 레디영 지점은 「레디영_거래처표」에 코드가 들어가는 순간 여기에 뜹니다 (상세 정보는 없음) */
+  try{ const M=await ecMasters_(); M.vendors.forEach(function(v){ add(v.code,{name:v.name,ch:'레디영'}); }); }catch(e){}
+  return Object.keys(map).map(function(k){ return map[k]; })
+    .sort(function(a,b){ return String(b.first).localeCompare(String(a.first))||a.name.localeCompare(b.name); });
+}
+let ecvShowAll=false;
+function buildEcVendorPanel_(){
+  const fp=foldPanel('🏢 이카운트 거래처 등록','<span class="ecv-sum" style="color:var(--ink-mute);font-weight:600;">불러오는 중…</span>','setPriceCalc:ecvOpen',false);
+  const wrap=fp.body, sum=fp.panel.querySelector('.ecv-sum');
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='새 약국·지점이 생기면 여기에 뜹니다 — 이카운트에 거래처가 없으면 판매입력이 그 전표에서 막힙니다.<br>'+
+    '<b>「📋 표 복사」</b> → 이카운트 거래처등록 → <b>웹자료올리기</b> → 첫 칸(거래처코드)에 붙여넣기 → 저장한 뒤 <b>「✔ 등록함」</b>.<br>'+
+    '<span style="color:var(--ink-soft);">칸 순서 = 거래처코드 · 상호 · 대표자명 · 업태 · 종목 · 전화 · Email · 주소1 우편번호 · 주소1 (업태·종목·우편번호는 비워 둠). '+
+    '바로팜 = 주문내역의 약사·전화·배송지 / 자사몰 = 가입 심사 정보 / 아쿠아메디 = 약국정보 / 레디영 = 「레디영_거래처표」(코드·이름만).</span>';
+  wrap.appendChild(nt);
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;';
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  wrap.appendChild(bar);wrap.appendChild(box);
+  const clean=function(t){ return String(t||'').replace(/[\t\r\n]+/g,' ').trim(); };
+  async function draw(){
+    let list;
+    try{ list=await ecVendorList_(); }catch(e){ box.innerHTML='<div class="hint" style="color:var(--warn);">✕ '+e.message+'</div>'; return; }
+    const R=ecVendorReg_();
+    const todo=list.filter(function(v){ return !R[v.code]; });
+    sum.innerHTML=todo.length?'<span style="color:var(--warn);font-weight:800;">'+todo.length+'곳 등록 필요</span>':'새 거래처 없음';
+    if(todo.length) fp.panel.classList.add('open');
+    bar.innerHTML='';
+    const cp=document.createElement('button');cp.className='icon-btn';cp.textContent='📋 표 복사 (이카운트 양식)';cp.disabled=!todo.length;
+    cp.addEventListener('click',function(){
+      settleCopy_(todo.map(function(v){ return [v.code,v.name,v.ceo,'','',v.tel,v.email,'',v.addr].map(clean).join('\t'); }).join('\n'),
+        todo.length+'곳을 복사했습니다 — 이카운트 웹자료올리기 거래처코드 칸에 붙여넣으세요');
+    });
+    bar.appendChild(cp);
+    const all=document.createElement('button');all.className='icon-btn';all.textContent='✔ 전부 등록함';all.disabled=!todo.length;
+    all.addEventListener('click',function(){
+      if(!confirm(todo.length+'곳을 이카운트에 등록한 걸로 표시할까요?')) return;
+      const d=ymdText(new Date()); todo.forEach(function(v){ R[v.code]=d; }); persistLib(); draw();
+    });
+    bar.appendChild(all);
+    const sa=document.createElement('label');sa.style.cssText='font-size:12.5px;color:var(--ink-soft);display:flex;gap:4px;align-items:center;margin-left:auto;';
+    sa.innerHTML='<input type="checkbox"'+(ecvShowAll?' checked':'')+'> 등록한 곳도 보기 ('+(list.length-todo.length)+')';
+    sa.querySelector('input').addEventListener('change',function(e){ ecvShowAll=e.target.checked; draw(); });
+    bar.appendChild(sa);
+    const rows=ecvShowAll?list:todo;
+    if(!rows.length){ box.innerHTML='<div class="hint">등록할 거래처가 없습니다 — 새 약국이 주문하면 여기에 뜹니다.</div>'; return; }
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='980px';
+    t.innerHTML='<thead><tr><th style="width:84px;"></th><th>채널</th><th>거래처코드</th><th>상호</th><th>대표자</th><th>전화</th><th>Email</th><th>주소</th><th>첫 거래</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    const dash='<span style="color:var(--ink-mute);">—</span>';
+    rows.forEach(function(v){
+      const done=!!R[v.code];
+      const tr=document.createElement('tr');if(done)tr.style.opacity='.55';
+      tr.innerHTML='<td></td><td style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">'+settleEsc_(v.ch)+'</td>'+
+        '<td style="white-space:nowrap;font-weight:700;">'+v.code+'</td><td style="white-space:nowrap;">'+settleEsc_(v.name)+'</td>'+
+        '<td>'+(v.ceo?settleEsc_(v.ceo):dash)+'</td><td style="white-space:nowrap;">'+(v.tel?settleEsc_(v.tel):dash)+'</td>'+
+        '<td style="font-size:12.5px;">'+(v.email?settleEsc_(v.email):dash)+'</td><td style="font-size:12.5px;">'+(v.addr?settleEsc_(v.addr):dash)+'</td>'+
+        '<td style="white-space:nowrap;font-size:12.5px;">'+(v.first?v.first.slice(5).replace('-','/'):'')+'</td>';
+      const b=document.createElement('button');b.className='icon-btn';b.style.cssText='padding:3px 8px;font-size:12px;white-space:nowrap;';
+      b.textContent=done?'↩ 취소':'✔ 등록함';
+      b.title=done?'등록 '+R[v.code]+' — 누르면 다시 목록에 띄웁니다':'이카운트에 등록했으면 누르세요';
+      b.addEventListener('click',function(){ if(done) delete R[v.code]; else R[v.code]=ymdText(new Date()); persistLib(); draw(); });
+      tr.firstChild.appendChild(b);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.innerHTML='';box.appendChild(t);
+  }
+  draw();
+  return fp.panel;
+}
 let ecView={ch:'ready',mk:null,showDone:false};
 function buildEcountPanel_(){
   const D=ecDoneOf_();
@@ -14083,6 +14187,7 @@ function renderHome(){
   box.appendChild(grid);
 
   box.appendChild(buildEntrySync());
+  box.appendChild(buildEcVendorPanel_());
   box.appendChild(buildEcountPanel_());
   box.appendChild(buildItemPricePanel_());
 
