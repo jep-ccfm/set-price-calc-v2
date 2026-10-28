@@ -3735,12 +3735,46 @@ function depNorm(s){return String(s||'').replace(/[\s（）()㈜（주）\.]/g,'
 /* 그 채널의 매출을 어느 원장에서 모을지 */
 function salesIdsFor(id){ return id==='aquamedi' ? aquaIds() : [id]; }
 
-/* 채널(+약국)의 월 매출 — 거래명세서/주문 + 세금계산서 안의 반품·조정 */
+/* ---------- 원장 대신 대시보드 줄 (2026-10-28) ----------
+   10월부터 레디영·아쿠아메디는 명세서 PDF 를 대시보드에 안 올립니다 — 이카운트에 올라간 대시보드 줄
+   (레디영 rySheet = 사방넷 출고 + 수기 매출 · 아쿠아메디 aqSheet = 카톡·수기 발주 + 사방넷 출고)이 매출입니다.
+   그런데 미수금·마감 체크·월 정산서·아쿠아메디 합산은 원장(명세서)만 봐서 10월이 0원이었습니다.
+   그 줄이 있는 달은 원장 대신 그 줄을 명세서 꼴로 묶어 씁니다 (같은 날 · 같은 지점/소속 약국 = 한 장).
+   통합매출 시트 v6.6 과 같은 규칙입니다. */
+function sheetOf_(sid){ return sid==='ready'?lib.rySheet:(aquaIds().indexOf(sid)>=0?lib.aqSheet:null); }
+function sheetDocs_(sid,mk){
+  const S=sheetOf_(sid); if(!S||!S.rows) return null;
+  const all=Object.values(S.rows).filter(function(x){ return x&&x.mk===mk; });
+  if(!all.length) return null;
+  const g={};
+  all.forEach(function(x){
+    if(sid!=='ready'&&(x.pid||'aquamedi')!==sid) return;
+    const br=sid==='ready'?String(x.vn||'').replace(/^레디영약국\s*[(（]/,'').replace(/[)）]\s*$/,''):(pharmInfoOf(sid).name||x.vn||'');
+    const k=x.d+'|'+br;
+    const d=g[k]||(g[k]={date:x.d,branch:br,store:x.recv||br,serial:'대시보드 '+x.d+' '+br,fromSheet:true,items:[],qty:0,supply:0,vat:0,total:0});
+    d.items.push({name:x.item,qty:+x.q||0,unit:+x.unit||0,supply:+x.sup||0,vat:+x.vat||0});
+    d.qty+=+x.q||0; d.supply+=+x.sup||0; d.vat+=+x.vat||0; d.total+=+x.tot||0;
+  });
+  return Object.keys(g).sort().map(function(k){ return g[k]; });
+}
+function docsOf_(sid,mk){
+  const s=sheetDocs_(sid,mk); if(s) return s;
+  const led=(lib.ledger&&lib.ledger[sid])||{months:{}};
+  return ((led.months||{})[mk]||{docs:[]}).docs||[];
+}
+function docMonthsOf_(sid){
+  const led=(lib.ledger&&lib.ledger[sid])||{months:{}}, m={};
+  Object.keys(led.months||{}).forEach(function(k){ m[k]=1; });
+  const S=sheetOf_(sid);
+  Object.values((S&&S.rows)||{}).forEach(function(x){ if(x&&x.mk&&(sid==='ready'||(x.pid||'aquamedi')===sid)) m[x.mk]=1; });
+  return Object.keys(m);
+}
+
+/* 채널(+약국)의 월 매출 — 거래명세서/주문(10월~ 레디영·아쿠아메디는 대시보드 줄) + 세금계산서 안의 반품·조정 */
 function salesOf(id, mk, store){
   let t=0;
   salesIdsFor(id).forEach(sid=>{
-    const led=(lib.ledger&&lib.ledger[sid])||{months:{}};
-    ((led.months||{})[mk]||{docs:[]}).docs.forEach(d=>{
+    docsOf_(sid,mk).forEach(d=>{
       if(store && String(d.branch||'')!==store) return;
       t+=d.total||0;
     });
@@ -3768,10 +3802,9 @@ function depSum(id, mk, store){
 function depMonths(id, store){
   const s={};
   salesIdsFor(id).forEach(sid=>{
-    const led=(lib.ledger&&lib.ledger[sid])||{months:{}};
-    Object.keys(led.months||{}).forEach(mk=>{
+    docMonthsOf_(sid).forEach(mk=>{
       if(mk==='기타')return;
-      if(store && !(led.months[mk].docs||[]).some(d=>String(d.branch||'')===store))return;
+      if(store && !docsOf_(sid,mk).some(d=>String(d.branch||'')===store))return;
       s[mk]=1;
     });
   });
@@ -4601,10 +4634,9 @@ function settleCollect(fromMk,toMk){
   settleChannels().forEach(function(ch){
     const docs=[];
     ch.pids.forEach(function(pid){
-      const L=(lib.ledger&&lib.ledger[pid])||{months:{}};
-      Object.keys(L.months||{}).forEach(function(mk){
+      docMonthsOf_(pid).forEach(function(mk){
         if(mk<fromMk||mk>toMk) return;
-        ((L.months[mk]||{}).docs||[]).forEach(function(d){ docs.push(d); });
+        docsOf_(pid,mk).forEach(function(d){ docs.push(d); });
       });
     });
     const custs={}, order=[];
@@ -5071,10 +5103,7 @@ function closeCheckRows(mk){
     {id:'aquamedi',  name:'아쿠아메디'}
   ].map(c=>{
     let docs=0;
-    salesIdsFor(c.id).forEach(sid=>{
-      const led=(lib.ledger&&lib.ledger[sid])||{months:{}};
-      docs+=(((led.months||{})[mk]||{}).docs||[]).length;
-    });
+    salesIdsFor(c.id).forEach(sid=>{ docs+=docsOf_(sid,mk).length; });
     const sale=salesOf(c.id,mk), paid=depSum(c.id,mk);
     let tax=0,taxTot=0;
     salesIdsFor(c.id).forEach(sid=>{
@@ -6423,9 +6452,64 @@ function buildAqKitList_(){
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';box.appendChild(t);wrap.appendChild(box);
   return wrap;
 }
+/* ---------- 아쿠아메디 — 보낼 발주 → 사방넷 (2026-10-28) ----------
+   카톡 발주를 붙여넣어 등록한 뒤 사방넷에 손으로 다시 치던 일. 바로팜·자사몰처럼 아직 안 나간 발주를 모아
+   한 번에 사방넷 발주등록 엑셀(또는 표 복사)로 냅니다.
+   「안 나간 것」 = 상태 접수 + 사방넷 출고와 아직 짝이 안 지어진 수량 (판매입력과 같은 짝짓기 — 같은 약국·품목·수량·7일 안). */
+function aqShipRows_(kk){
+  const by={}, rows=[];
+  (kk||[]).forEach(function(e){
+    if(e.rem<=0||(e.o.status||'접수')!=='접수') return;
+    const o=e.o, inf=pharmInfoOf(e.p.pid);
+    const addr=String(o.note||'').split(' · ').slice(1).join(' · ').trim()||inf.ship||inf.addr||'';
+    const it=(o.items||[])[e.ii]||{};
+    by[o.id]=by[o.id]||0; by[o.id]++;
+    rows.push({store:e.store,addr:addr,tel:o.tel||inf.tel||'',item:e.name,qty:e.rem,spec:it.spec||'',date:e.date,pid:e.p.pid,oid:o.id,
+      ono:'AQ'+e.date.replace(/-/g,'').slice(2)+'-'+String(o.id).slice(-4),
+      memo1:'개인약국 판매 · 아쿠아메디',memo2:(o.src==='카톡'?'카톡':'수기')+' 발주 '+e.date+(o.recv?' · '+o.recv:'')});
+  });
+  return rows.sort(function(a,b){ return String(b.date).localeCompare(String(a.date))||String(a.store).localeCompare(String(b.store),'ko'); });
+}
+function buildAqShipList_(){
+  const fp=foldPanel('📤 보낼 발주 → 사방넷','<span class="aqs-sum" style="color:var(--ink-mute);font-weight:600;">불러오는 중…</span>','setPriceCalc:aqShipOpen');
+  const wrap=fp.body, sum=fp.panel.querySelector('.aqs-sum');
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='10px';
+  nt.innerHTML='카톡·수기로 등록한 발주 중 <b>아직 사방넷에 안 나간 것</b>입니다. <b>「📤 사방넷 발주 엑셀」</b> → 사방넷 발주등록 → 엑셀등록(기본서식)에 올리거나, '+
+    '<b>「📋 표 복사」</b>로 같은 칸 순서를 복사합니다. 출고되면(사방넷 출고 엑셀을 올리면) 저절로 빠집니다.';
+  wrap.appendChild(nt);
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;';
+  const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
+  wrap.append(bar,box);
+  let rows=[];
+  bar.appendChild(sboOrderBtn_('aquamedi',function(){ return rows; }));
+  const cp=document.createElement('button');cp.className='icon-btn';cp.textContent='📋 표 복사';
+  cp.addEventListener('click',function(){ sboOrderXlsx('aquamedi',rows,{copy:true}); });
+  bar.appendChild(cp);
+  ecLines_('aquamedi',sboToday_().slice(0,7)).then(function(r){
+    rows=aqShipRows_(r.kk);
+    const nO=new Set(rows.map(function(x){ return x.oid; })).size;
+    sum.innerHTML=rows.length?'<span style="color:var(--warn);font-weight:800;">'+nO+'건 · '+rows.length+'줄</span>':'보낼 것 없음';
+    if(!rows.length){ box.innerHTML='<div class="hint">보낼 발주가 없습니다 — 카톡 발주를 등록하면 여기에 뜹니다.</div>'; return; }
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='820px';
+    t.innerHTML='<thead><tr><th>발주일</th><th>약국 · 지점</th><th>품목</th><th style="text-align:right;">수량</th><th>배송지</th><th>연락처</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    rows.forEach(function(x){
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td style="white-space:nowrap;">'+x.date+'</td><td style="white-space:nowrap;"><b>'+settleEsc_(x.store)+'</b></td>'+
+        '<td>'+settleEsc_(x.item)+(x.spec?' <span style="color:var(--ink-mute);font-size:11.5px;">'+settleEsc_(x.spec)+'</span>':'')+'</td>'+
+        '<td style="text-align:right;font-weight:800;">'+fmt(x.qty)+'</td>'+
+        '<td style="font-size:12.5px;">'+(x.addr?settleEsc_(x.addr):'<span style="color:var(--warn);font-weight:700;">주소 없음</span>')+'</td>'+
+        '<td style="white-space:nowrap;font-size:12.5px;">'+settleEsc_(x.tel)+'</td>';
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);box.innerHTML='';box.appendChild(t);
+  }).catch(function(e){ sum.textContent='못 읽음'; box.innerHTML='<div class="hint" style="color:var(--warn);">✕ '+e.message+'</div>'; });
+  return fp.panel;
+}
 /* rows: [{store, addr, tel, item, qty, ono(주문번호), date}] */
-async function sboOrderXlsx(chId,rows){
-  if(!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return; }
+async function sboOrderXlsx(chId,rows,opt){
+  opt=opt||{};
+  if(!opt.copy&&!xlsxReady()){ showToast('엑셀 라이브러리 로드 실패 (인터넷 확인)'); return; }
   if(!rows.length){ showToast('내보낼 발주가 없습니다'); return; }
   let so={rows:[]}; try{ so=await sboLoad(); }catch(e){}
   const codes=sboCodeMap_(so), noCode={}, noZip={};
@@ -6452,6 +6536,14 @@ async function sboOrderXlsx(chId,rows){
       '발주 타입':sboTypeOf_(chId)||'','출고희망일':ship};
     aoa.push(SBO_ORDER_HEAD.map(function(h){ return v[h]==null?'':String(v[h]); }));
   });
+  const tag0=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId==='influencer'?'인플루언서':chId==='aquamedi'?'아쿠아메디':chId;
+  /* 표 복사 — 제목줄 없이 사방넷 발주등록 칸 순서 그대로 */
+  if(opt.copy){
+    const nc0=Object.keys(noCode), nz0=Object.keys(noZip);
+    settleCopy_(aoa.slice(1).map(function(r){ return r.join(String.fromCharCode(9)); }).join(String.fromCharCode(10)),
+      tag0+' '+(aoa.length-1)+'줄을 복사했습니다 (사방넷 발주등록 칸 순서)'+((nc0.length||nz0.length)?' — ⚠ '+[nc0.length?'상품코드 없음: '+nc0.join(', '):'',nz0.length?'우편번호 없음: '+nz0.join(', '):''].filter(Boolean).join(' · '):''));
+    return {n:aoa.length-1, noCode:nc0, noZip:nz0, aoa:aoa};
+  }
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   /* 우편번호 앞자리 0, 날짜가 숫자로 바뀌지 않게 전부 글자로 */
   Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]) ws[k].t='s'; });
@@ -6809,9 +6901,15 @@ async function importEntryOrders(logEl,onDone){
     /* 이미 넣은 건은 건너뜁니다 (같은 날·같은 수취인) */
     /* 「중복·취소」로 지운 건은 다시 올리지 않습니다 */
     if(orderDropped(g.pid,{srcKey:k})){ return; }
-    const prev=list.filter(o=>o.src==='배송요청시트'&&o.srcKey===k)[0];
+    /* 아쿠아메디는 본사 직접 건으로 들어왔다가 aquaAdoptStores_ 가 소속 약국으로 옮겨 놓습니다.
+       자기 목록만 보면 옮겨 간 건을 못 찾고 본사 쪽에 또 만듭니다 (10/13 지오메디 샘플이 두 번 잡힘 · 2026-10-28)
+       — 아쿠아메디 쪽은 소속 약국 목록까지 다 봅니다 */
+    const pool=(aquaIds().indexOf(g.pid)>=0)?[].concat.apply([],aquaIds().map(function(x){ return ordersOf(x); })):list;
+    const prev=pool.filter(o=>o.src==='배송요청시트'&&o.srcKey===k)[0];
     /* 레디영·자사몰 말고는 손으로 넣은 발주가 원본 — 같은 건이면 새로 만들지 않습니다 */
-    if(!prev&&g.pid!=='ready'&&g.pid!=='pharmmall'&&sheetTwinOf_(list,{date:g.date,items:g.items})){ dup++; return; }
+    /* 송장이 찍혔으면 손으로 넣은 원본(카톡 발주)도 「출고」로 — 안 그러면 「보낼 발주」에 계속 남습니다 */
+    const tw=(!prev&&g.pid!=='ready'&&g.pid!=='pharmmall')?sheetTwinOf_(list,{date:g.date,items:g.items}):null;
+    if(tw){ if(g.shipped&&(tw.status||'접수')==='접수'){ tw.status='출고'; shipSet++; } dup++; return; }
     if(prev){
       /* 예전에 약국명 없이 들어간 건을 채워 줍니다 (자사몰 「미상」 행 방지) */
       if(g.store && !prev.store){ prev.store=g.store; fixed++; }
@@ -7321,6 +7419,7 @@ function ecDoneOf_(){ lib.ecountDone=lib.ecountDone||{}; return lib.ecountDone; 
 function aqFreeOf_(){ lib.aqFree=lib.aqFree||{}; return lib.aqFree; }
 /* 한 달 · 한 채널의 판매입력 줄 */
 async function ecLines_(ch,mk){
+  let kkAll=null;   /* 아쿠아메디 — 카톡·수기 발주 줄 (출고와 짝지은 뒤 남은 수량 rem) · 「보낼 발주」가 씁니다 */
   const M=await ecMasters_();
   const out=[], skipped=[], merged=[], ask=[];
   const push=function(o){
@@ -7398,7 +7497,7 @@ async function ecLines_(ch,mk){
        수기 발주가 빠져 있어 10/08 생생온누리 354,200 이 패널에 안 떠 이카운트에 손으로 넣었습니다 (2026-10-28) */
     const kkSrc=ph.slice();
     if(!kkSrc.some(function(x){ return x.pid==='aquamedi'; })){ const hi=pharmInfoOf('aquamedi'); kkSrc.push({pid:'aquamedi',name:hi.name||'아쿠아메디',corp:hi.corp||'',biz:hi.biz||'',k:''}); }
-    const kk=[];
+    const kk=[]; kkAll=kk;
     kkSrc.forEach(function(p){
       ((lib.orders&&lib.orders[p.pid])||[]).forEach(function(o){
         if(o.src&&o.src!=='카톡') return;
@@ -7535,7 +7634,7 @@ async function ecLines_(ch,mk){
     if(!slot[g]){ seq[o.date]=(seq[o.date]||0)+1; slot[g]=seq[o.date]; }
     o.seq=slot[g];
   });
-  return {lines:out,skipped:skipped,merged:merged,ask:ask};
+  return {lines:out,skipped:skipped,merged:merged,ask:ask,kk:kkAll};
 }
 /* ---------- 레디영 → 매출 시트 반영 (2026-10-19) ----------
    10월부터 레디영 출고가 사방넷으로 옮겨 가면서, 배송요청시트를 읽던 두 시트가 9/30 에 멈췄습니다.
@@ -9888,6 +9987,7 @@ function renderChannel(view){
     const g1=groupBox(1,'💊 소속 약국',aquamediPharms().length+'곳 합산','setPriceCalc:grpAq1',true);
     g1.body.appendChild(entrySyncLink());
     g1.body.appendChild(buildAquamediPharms());
+    g1.body.appendChild(buildAqShipList_());
     g1.body.appendChild(buildAqKitList_());
     g1.body.appendChild(buildAquamediRollup());
     box.appendChild(g1.group);
@@ -10212,10 +10312,10 @@ function aquamediOrders(){
 function aquamediLedger(){
   const months={};
   aquamediSources().forEach(src=>{
-    const led=(lib.ledger&&lib.ledger[src.pid])||{months:{}};
-    Object.keys(led.months||{}).forEach(mk=>{
-      const docs=led.months[mk].docs||[];if(!docs.length)return;
+    docMonthsOf_(src.pid).forEach(mk=>{
+      const docs=docsOf_(src.pid,mk);if(!docs.length)return;
       months[mk]=months[mk]||{mk,docs:0,qty:0,total:0,byPharm:{}};
+      if(docs[0].fromSheet) months[mk].fromSheet=true;
       const M=months[mk];
       M.byPharm[src.name]=M.byPharm[src.name]||{src,docs:0,qty:0,total:0,rows:[]};
       const B=M.byPharm[src.name];
@@ -10240,7 +10340,8 @@ function buildAquamediRollup(){
   const hs=document.createElement('span');hs.textContent='소속 약국 합산';h.appendChild(hs);
   wrap.appendChild(h);
   const note=document.createElement('div');note.className='hint';note.style.marginBottom='12px';
-  note.innerHTML='소속 약국의 <b>발주와 거래명세서를 한 곳에 모아</b> 보여줍니다. 명세서는 어느 화면에 올려도 거래처를 보고 그 약국 장부로 들어갑니다.';
+  note.innerHTML='소속 약국의 <b>발주와 거래(매출)를 한 곳에 모아</b> 보여줍니다. 9월까지는 거래명세서 PDF, '+
+    '<b>10월부터는 이카운트에 올린 판매입력 줄</b>(카톡·수기 발주 + 사방넷 출고 · 샘플 제외)이 거래입니다.';
   wrap.appendChild(note);
 
   /* 요약 카드 */
@@ -10248,7 +10349,7 @@ function buildAquamediRollup(){
   const card=(l,v,hero)=>{const d=document.createElement('div');d.className='stat-card'+(hero?' hero':'');
     d.innerHTML='<div class="sc-l">'+l+'</div><div class="sc-v">'+v+'</div>';sr.appendChild(d);};
   card('거래 합계 (VAT 포함)',fmt(ledTotal)+'원',true);
-  card('거래명세서',ledDocs+'건 · '+fmt(ledQty)+'개');
+  card('거래 (명세서 · 판매입력)',ledDocs+'건 · '+fmt(ledQty)+'개');
   card('발주',orders.length+'건 · '+fmt(ordQty)+'개');
   card('집계 대상 월',months.length+'개월');
   wrap.appendChild(sr);
@@ -10273,7 +10374,7 @@ function buildAquamediRollup(){
     const b1=document.createElement('div');b1.style.cssText='overflow-x:auto;margin-bottom:8px;';
     const t1=document.createElement('table');t1.className='led-table';t1.style.minWidth='620px';
     t1.innerHTML='<thead><tr><th>약국</th><th style="text-align:right;">발주</th>'+
-      '<th style="text-align:right;">발주 수량</th><th style="text-align:right;">명세서</th>'+
+      '<th style="text-align:right;">발주 수량</th><th style="text-align:right;">거래</th>'+
       '<th style="text-align:right;">거래금액</th><th style="width:96px;">최근</th></tr></thead>';
     const tb1=document.createElement('tbody');
     rows.forEach(P=>{
@@ -10324,7 +10425,7 @@ function buildAquamediRollup(){
 
   /* 거래명세서 합산 (월별) */
   const lh=document.createElement('div');lh.className='sec-h';
-  lh.innerHTML='<span>거래명세서 합산 (월별)</span>';wrap.appendChild(lh);
+  lh.innerHTML='<span>거래 합산 (월별)</span>';wrap.appendChild(lh);
   if(!months.length){
     const e=document.createElement('div');e.className='empty-box';
     e.textContent='등록된 거래명세서가 없습니다. 각 약국 화면에서 명세서 PDF를 올리면 여기에 합산됩니다.';
@@ -10332,13 +10433,14 @@ function buildAquamediRollup(){
   }else{
     months.forEach(m=>{
       const lsKey='setPriceCalc:aqM:'+m.mk;
-      const open=localStorage.getItem(lsKey)==='1';
+      let open=false; try{ open=sessionStorage.getItem(lsKey)==='1'; }catch(e){}
       const pnl=document.createElement('div');pnl.className='ch-panel'+(open?' open':'');
       const hd=document.createElement('div');hd.className='ch-head';
-      hd.innerHTML='<span><span class="chev">▶</span> '+mkLabel(m.mk)+' · '+m.docs+'건 · '+fmt(m.qty)+'개</span>'+
+      hd.innerHTML='<span><span class="chev">▶</span> '+mkLabel(m.mk)+' · '+m.docs+'건 · '+fmt(m.qty)+'개'+
+        ' <span style="font-weight:600;font-size:12px;color:var(--ink-soft);">'+(m.fromSheet?'판매입력(이카운트)':'거래명세서')+'</span></span>'+
         '<span class="num-mono" style="font-weight:800;">'+fmt(m.total)+'원</span>';
       hd.addEventListener('click',()=>{pnl.classList.toggle('open');
-        localStorage.setItem(lsKey,pnl.classList.contains('open')?'1':'0');});
+        try{ sessionStorage.setItem(lsKey,pnl.classList.contains('open')?'1':'0'); }catch(e){} });
       pnl.appendChild(hd);
       const bd=document.createElement('div');bd.className='ch-body';
       const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';
