@@ -4114,15 +4114,20 @@ function entrySyncLink(){
   d.append(a,n2);
   return d;
 }
+/* 평소엔 전부 접어 둡니다 (2026-10-28 — 홈이 펼친 패널 때문에 24,000px 이라 보기 불편하다는 의견).
+   펼친 것은 이번 탭에서만 기억합니다(sessionStorage) — 버튼을 눌러 화면이 다시 그려져도 펼친 채로 있고,
+   다음에 대시보드를 열면 다시 접혀 있습니다. openDefault 와 예전 localStorage 기억은 더 쓰지 않습니다.
+   열쇠가 없는 패널은 제목(숫자 뺀 글자)으로 기억합니다. */
 function foldPanel(titleHtml,rightHtml,lsKey,openDefault){
-  const saved=lsKey?localStorage.getItem(lsKey):null;
-  const open=(saved===null)?!!openDefault:(saved==='1');
+  const key=lsKey||('fold:'+String(titleHtml||'').replace(/<[^>]*>/g,'').replace(/[\d,.\s]+/g,'').slice(0,40));
+  let saved=null; try{ saved=sessionStorage.getItem(key); }catch(e){}
+  const open=saved==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
   h.innerHTML='<span><span class="chev">▶</span> '+titleHtml+'</span>'+
     '<span style="font-size:12.5px;font-weight:800;">'+(rightHtml||'')+'</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');
-    if(lsKey)localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+    try{ sessionStorage.setItem(key,p.classList.contains('open')?'1':'0'); }catch(e){} });
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';p.appendChild(b);
   return{panel:p,body:b};
@@ -5085,18 +5090,18 @@ function closeCheckRows(mk){
 function buildCloseCheck(){
   const mk=prevMonthKey();
   const rows=closeCheckRows(mk);
-  const wrap=document.createElement('div');
-  const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');
   const doneDoc=rows.filter(r=>r.docs>0).length;
   const need=rows.filter(r=>!r.weekly&&r.sale>0);
   const doneTax=need.filter(r=>r.tax>0).length;
   const donePay=need.filter(r=>r.ar<=0).length;
-  hs.textContent='🗓 '+mkLabel(mk)+' 마감 체크  ·  명세서 '+doneDoc+'/4  ·  계산서 '+doneTax+'/'+need.length+'  ·  수금 '+donePay+'/'+need.length;
-  h.appendChild(hs);wrap.appendChild(h);
+  const allDone=doneDoc===4&&doneTax===need.length&&donePay===need.length;
+  const fp=foldPanel('🗓 '+mkLabel(mk)+' 마감 체크',
+    '<span style="color:'+(allDone?'var(--good)':'var(--warn)')+';">명세서 '+doneDoc+'/4 · 계산서 '+doneTax+'/'+need.length+' · 수금 '+donePay+'/'+need.length+'</span>',
+    'setPriceCalc:closeOpen');
+  const wrap=fp.body;
   /* 재무회계팀 합의 기준을 화면에 박아둔다 — 매달 헷갈리는 지점 */
   const due=b2bDue(mk), dueM=b2bDue(mk,'pharmmall');
-  const sch=document.createElement('div');sch.className='hint';sch.style.margin='-6px 0 10px';
+  const sch=document.createElement('div');sch.className='hint';sch.style.margin='0 0 10px';
   const lateTax=(doneTax<need.length)&&pastDue(due.tax);
   const latePay=(donePay<need.length)&&pastDue(due.pay);
   sch.innerHTML='B2B 약국 채널 공통 기준 — <b>말일 마감 → '+B2B_TAX_DAY+'일 정산 통보·세금계산서 → '+B2B_PAY_DAY+'일 입금</b>'+
@@ -5147,7 +5152,7 @@ function buildCloseCheck(){
     ? '<b>다음에 할 일</b> — '+todo.join(' · ')
     : '✅ '+mkLabel(mk)+' 마감에 남은 일이 없습니다.';
   wrap.appendChild(n);
-  return wrap;
+  return fp.panel;
 }
 
 /* ---------- 자사몰 약국 정보 (명의 대조용) ---------- */
@@ -7838,7 +7843,7 @@ async function ecVendorList_(){
   const add=function(code,o){
     code=ecBiz_(code); if(!/^\d{3}-\d{2}-\d{5}$/.test(code)) return;
     const v=map[code]||(map[code]={code:code,name:'',ceo:'',tel:'',email:'',addr:'',ch:'',first:''});
-    ['name','ceo','tel','email','addr','ch'].forEach(function(k){ if(!v[k]&&o[k]) v[k]=String(o[k]).replace(/\s+/g,' ').trim(); });
+    ['name','ceo','tel','email','addr','ch','pid'].forEach(function(k){ if(!v[k]&&o[k]) v[k]=String(o[k]).replace(/\s+/g,' ').trim(); });
     if(o.date&&(!v.first||o.date<v.first)) v.first=String(o.date);
   };
   ['barofarm','pharmmall'].forEach(function(ch){
@@ -7858,7 +7863,7 @@ async function ecVendorList_(){
   aquamediPharms().forEach(function(x){
     const pi=pharmInfoOf(x.pid);
     const first=((lib.orders&&lib.orders[x.pid])||[]).map(function(o){ return String(o.date||''); }).filter(Boolean).sort()[0]||'';
-    add(pi.biz,{name:pi.corp||pi.name||x.name,ceo:pi.owner,tel:telFix_(pi.tel),email:pi.email,addr:pi.addr||pi.ship,ch:'아쿠아메디',date:first});
+    add(pi.biz,{name:pi.corp||pi.name||x.name,ceo:pi.owner,tel:telFix_(pi.tel),email:pi.email,addr:pi.addr||pi.ship,ch:'아쿠아메디',date:first,pid:x.pid});
   });
   /* 레디영 지점은 「레디영_거래처표」에 코드가 들어가는 순간 여기에 뜹니다 (상세 정보는 없음) */
   try{ const M=await ecMasters_(); M.vendors.forEach(function(v){ add(v.code,{name:v.name,ch:'레디영'}); }); }catch(e){}
@@ -14068,6 +14073,78 @@ function setLibSummary(k){
   }));
   return{rounds,sets,rev};
 }
+/* ---------- 홈 검색 (2026-10-28) ----------
+   약국·지점 이름 · 사업자번호 · 대표자 · 전화 · 주문번호 · 품목 · 화면(홈 패널·메뉴)을 한 칸에서 찾습니다.
+   누르면 그 채널(아쿠아메디 소속 약국은 그 약국 화면)로 가고, 홈 패널이면 펼쳐서 그 자리로 갑니다. */
+let homeSearchQ='', homeSearchVendors=null;
+function buildHomeSearch_(){
+  const w=document.createElement('div');w.style.cssText='margin:0 0 18px;';
+  const inp=document.createElement('input');inp.type='search';inp.className='cell-input';
+  inp.placeholder='🔍  약국·지점 · 사업자번호 · 대표자 · 전화 · 주문번호 · 품목 · 메뉴 검색';
+  inp.style.cssText='width:100%;box-sizing:border-box;padding:11px 14px;font-size:14px;border-radius:10px;';
+  inp.value=homeSearchQ;
+  const res=document.createElement('div');
+  w.append(inp,res);
+  const VIEW={'바로팜':'ch_barofarm','자사몰 약사전용관':'ch_pharmmall','아쿠아메디':'ch_aquamedi','레디영':'ready','홍콩':'hk'};
+  const norm=function(s){ return String(s||'').toLowerCase().replace(/[\s\-()（）·,]/g,''); };
+  const homePanel=function(word){ return [...document.querySelectorAll('#view-home .ch-panel')].filter(function(p){ return p.querySelector('.ch-head').textContent.indexOf(word)>=0; })[0]||null; };
+  const go=function(it){
+    if(it.panel){ const pn=it.panel; if(!pn.classList.contains('open')) pn.querySelector('.ch-head').click();
+      setTimeout(function(){ pn.scrollIntoView({block:'start',behavior:'smooth'}); },120); return; }
+    if(it.view) switchView(it.view);
+  };
+  function run(){
+    homeSearchQ=inp.value; res.innerHTML='';
+    const q=norm(inp.value); if(!q) return;
+    const hit=function(){ for(let i=0;i<arguments.length;i++){ if(norm(arguments[i]).indexOf(q)>=0) return true; } return false; };
+    const G={'화면':[],'거래처':[],'주문':[],'품목':[]};
+    [...document.querySelectorAll('#view-home .ch-panel')].forEach(function(pn){
+      const t=pn.querySelector('.ch-head > span').textContent.replace(/^▶\s*/,'').trim();
+      if(hit(t)) G['화면'].push({t:t,s:'홈 — 펼쳐서 이동',panel:pn}); });
+    document.querySelectorAll('.nav-item').forEach(function(b){
+      const t=b.textContent.replace(/\d+$/,'').trim(); if(b.dataset.view&&hit(t)) G['화면'].push({t:t,s:'메뉴',view:b.dataset.view}); });
+    (homeSearchVendors||[]).forEach(function(v){
+      if(hit(v.name,v.code,v.ceo,v.tel)) G['거래처'].push({t:v.name,s:[v.ch,v.code,v.ceo,v.tel].filter(Boolean).join(' · '),view:v.pid?'ph_'+v.pid:VIEW[v.ch]}); });
+    /* 아쿠아메디 소속 약국은 화면 이름(「한테라퓨틱스 (베리뉴)」)으로도 — 거래처 이름은 법인명이라 */
+    aquamediPharms().forEach(function(x){ const nm=pharmInfoOf(x.pid).name||x.name;
+      if(hit(nm,x.name)&&!(homeSearchVendors||[]).some(function(v){ return v.pid===x.pid&&hit(v.name,v.code,v.ceo,v.tel); }))
+        G['거래처'].push({t:nm,s:'아쿠아메디 소속 약국',view:'ph_'+x.pid}); });
+    (lib.applicants||[]).forEach(function(a){
+      if(hit(a.name,a.owner,a.biz)) G['거래처'].push({t:a.name,s:'자사몰 가입 신청 · '+(a.status||'대기')+(a.owner?' · '+a.owner:''),view:'ch_pharmmall'}); });
+    /* 주문번호는 네 자리 넘게 쳤을 때만 — 숫자 한두 개로는 다 걸립니다 */
+    if(q.replace(/[^0-9a-z]/g,'').length>=4){
+      [['barofarm','바로팜','BF'],['pharmmall','자사몰 약사전용관',''],['hk','홍콩','']].forEach(function(c){
+        const L=(lib.ledger&&lib.ledger[c[0]])||{months:{}};
+        Object.keys(L.months||{}).forEach(function(m){ ((L.months[m]||{}).docs||[]).forEach(function(d){
+          if(hit(c[2]+d.serial,d.serial)) G['주문'].push({t:c[2]+(d.serial||'')+' · '+(d.branch||''),s:c[1]+' · 주문 '+(d.date||'')+(d.shipDate?' · 출고 '+d.shipDate:'')+' · '+fmt(d.total||0)+'원',view:VIEW[c[1]]});
+        }); });
+      });
+    }
+    PRICE_LIST.forEach(function(r){ if(hit(r[1])) G['품목'].push({t:r[1],s:r[0]+' · 품목코드 · 채널별 가격',panel:homePanel('품목코드')}); });
+    let any=0;
+    Object.keys(G).forEach(function(g){
+      const L=G[g]; if(!L.length) return; any++;
+      const h=document.createElement('div');h.style.cssText='font-size:11.5px;font-weight:800;color:var(--ink-soft);margin:10px 2px 4px;';
+      h.textContent=g+' '+L.length;res.appendChild(h);
+      L.slice(0,8).forEach(function(it){
+        const b=document.createElement('button');b.type='button';
+        b.style.cssText='display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;padding:8px 12px;margin:0 0 4px;border:1px solid var(--line);border-radius:8px;background:var(--panel,#fff);cursor:pointer;font:inherit;';
+        b.innerHTML='<b style="white-space:nowrap;">'+settleEsc_(it.t)+'</b><span style="font-size:12.5px;color:var(--ink-soft);">'+settleEsc_(it.s)+'</span>';
+        b.addEventListener('click',function(){ go(it); });
+        res.appendChild(b);
+      });
+      if(L.length>8){ const m=document.createElement('div');m.className='hint';m.style.margin='0 2px 4px';m.textContent='외 '+(L.length-8)+'건 — 더 길게 쳐 보세요';res.appendChild(m); }
+    });
+    if(!any){ const e=document.createElement('div');e.className='hint';e.style.margin='8px 2px';e.textContent='찾는 게 없습니다.';res.appendChild(e); }
+  }
+  let tm=null;
+  inp.addEventListener('input',function(){ clearTimeout(tm); tm=setTimeout(run,150); });
+  inp.addEventListener('keydown',function(e){ if(e.key==='Escape'){ inp.value=''; run(); } });
+  /* 거래처 목록은 레디영 거래처표를 읽어야 해서 한 번만 불러 둡니다 */
+  if(!homeSearchVendors) ecVendorList_().then(function(v){ homeSearchVendors=v; if(inp.value) run(); }).catch(function(){});
+  setTimeout(run,0);
+  return w;
+}
 function renderHome(){
   const box=document.getElementById('view-home');box.innerHTML='';
   const mk=thisMonthKey();
@@ -14075,6 +14152,7 @@ function renderHome(){
   head.innerHTML='<div class="eyebrow">B2B CHANNEL BOARD</div><h1>채널 통합 대시보드</h1>'+
     '<p class="sub">레디영 · 바로팜 · 자사몰 · 아쿠아메디 · 일본라방 · 홍콩의 현황을 한 화면에서 확인합니다. 카드를 클릭하면 해당 채널로 이동합니다.</p>';
   box.appendChild(head);
+  box.appendChild(buildHomeSearch_());
 
   /* ---- 알림 ---- */
   const alerts=[];
@@ -14157,11 +14235,15 @@ function renderHome(){
   if(!sites.length)alerts.push({t:'📍 레디영 지점 좌표 미등록',s:'2km 규약 판정을 쓰려면 지점을 등록하세요',view:'geo',kind:'warn'});
   else if(noCoord)alerts.push({t:'📍 좌표 미변환 지점 '+noCoord+'곳',s:'「주소 일괄 변환」을 실행하세요',view:'geo',kind:'info'});
 
-  const ah=document.createElement('div');ah.className='sec-h';ah.style.marginTop='0';
-  ah.textContent='확인이 필요한 항목 ('+alerts.length+')';box.appendChild(ah);
+  /* 접어 두되 제목에 건수와 첫 항목을 보여 줍니다 — 접혀 있어도 뭐가 있는지는 보이게 */
+  const warnN=alerts.filter(a=>a.kind==='warn').length;
+  const afp=foldPanel('🔔 확인이 필요한 항목'+(alerts.length?' <span style="font-weight:600;color:var(--ink-soft);">— '+settleEsc_(alerts[0].t.replace(/^\S+\s/,''))+(alerts.length>1?' 외':'')+'</span>':''),
+    alerts.length?'<span style="color:'+(warnN?'var(--warn)':'var(--ink)')+';">'+alerts.length+'건'+(warnN?' (경고 '+warnN+')':'')+'</span>':'<span style="color:var(--good);">없음</span>',
+    'setPriceCalc:alertOpen');
+  box.appendChild(afp.panel);
   if(!alerts.length){
     const e=document.createElement('div');e.className='empty-box';e.style.color='var(--good)';
-    e.textContent='✓ 확인이 필요한 항목이 없습니다.';box.appendChild(e);
+    e.textContent='✓ 확인이 필요한 항목이 없습니다.';afp.body.appendChild(e);
   }else{
     const al=document.createElement('div');al.className='alert-list';
     alerts.slice(0,12).forEach(a=>{
@@ -14170,9 +14252,9 @@ function renderHome(){
       d.addEventListener('click',()=>switchView(a.view));
       al.appendChild(d);
     });
-    box.appendChild(al);
+    afp.body.appendChild(al);
     if(alerts.length>12){const m2=document.createElement('div');m2.className='hint';m2.style.marginTop='6px';
-      m2.textContent='외 '+(alerts.length-12)+'건';box.appendChild(m2);}
+      m2.textContent='외 '+(alerts.length-12)+'건';afp.body.appendChild(m2);}
   }
 
   /* 월마감 체크리스트 — 전월 기준 */
@@ -14191,9 +14273,13 @@ function renderHome(){
     c.addEventListener('click',()=>switchView(view));
     grid.appendChild(c);
   };
-  const rd=ledgerSummary('ready',mk);
-  card('📦','레디영','ready',[['최근 월',rd.latest?mkLabel(rd.latest):'-'],
-    ['매출',fmt(rd.total)+'원'],['명세서',rd.docs+'건']],
+  /* 10월부터 레디영·아쿠아메디는 명세서 PDF 대신 대시보드 줄(rySheet·aqSheet)이 매출입니다 — 카드도 그걸로 */
+  const sheetSum=function(S){ const m={}, n={}; Object.values((S&&S.rows)||{}).forEach(function(x){ if(x&&x.mk){ m[x.mk]=(m[x.mk]||0)+(+x.tot||0); n[x.mk]=(n[x.mk]||0)+1; } });
+    const last=Object.keys(m).sort().pop(); return last?{mk:last,tot:m[last],n:n[last]}:null; };
+  const rd=ledgerSummary('ready',mk), ryS=sheetSum(lib.rySheet);
+  card('📦','레디영','ready',(ryS&&(!rd.latest||ryS.mk>=rd.latest))
+    ? [['최근 월',mkLabel(ryS.mk)],['매출',fmt(ryS.tot)+'원'],['출고',ryS.n+'줄']]
+    : [['최근 월',rd.latest?mkLabel(rd.latest):'-'],['매출',fmt(rd.total)+'원'],['명세서',rd.docs+'건']],
     '지점별 발주 · 세금계산서 대사');
   const hk=ledgerSummary('hk',mk);const hkS=setLibSummary('hk');
   card('🇭🇰','홍콩 라이브 커머스','hk',[['최근 월',hk.latest?mkLabel(hk.latest):'-'],
@@ -14215,7 +14301,8 @@ function renderHome(){
     ? aqL.map(function(x){ return [(pharmInfoOf(x.pid).name||x.name),ordS(x.pid)+'건']; })
     : [['소속 약국',aqL.length+'곳'],
        ['발주',aqL.reduce(function(a,x){ return a+ordS(x.pid); },0)+'건']])
-    .concat([['거래명세서',aq.latest?fmt(aq.total)+'원':'-']]);
+    .concat((function(){ const s=sheetSum(lib.aqSheet);
+      return (s&&(!aq.latest||s.mk>=aq.latest))?[[mkLabel(s.mk)+' 매출',fmt(s.tot)+'원']]:[['거래명세서',aq.latest?fmt(aq.total)+'원':'-']]; })());
   card('💧','아쿠아메디','ch_aquamedi',aqRows,'소속 약국 발주 · 서류 관리');
   box.appendChild(grid);
 
