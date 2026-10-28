@@ -2564,6 +2564,7 @@ document.getElementById('odCancel').addEventListener('click',()=>{document.getEl
 document.getElementById('orderModal').addEventListener('click',e=>{if(e.target.id==='orderModal'){document.getElementById('orderModal').hidden=true;odDraft=null;}});
 document.getElementById('odSave').addEventListener('click',()=>{
   if(!odDraft)return;
+  if(!canEdit()){ showToast('보기 전용입니다 — 로그인해야 저장됩니다'); return; }
   const items=odDraft.items.filter(r=>(r.name||'').trim()).map(r=>({name:r.name.trim(),qty:r.qty}));
   if(!items.length){showToast('품목을 최소 1개 입력해주세요');return;}
   const date=document.getElementById('odDate').value;
@@ -2576,7 +2577,9 @@ document.getElementById('odSave').addEventListener('click',()=>{
   persistLib();
   const pid=odDraft.pid;odDraft=null;
   document.getElementById('orderModal').hidden=true;showToast('발주가 저장되었습니다');
-  if(currentView&&currentView.indexOf('ph_')===0)renderPharm(currentView);
+  /* 약국 화면(ph_)만 다시 그려서, 아쿠아메디 같은 채널 화면(ch_)에선 저장돼도 목록이 안 바뀌어
+     「등록이 안 된다」로 보였습니다 (2026-10-28) */
+  if(currentView) refreshCurrentView();
 });
 /* ---------- 다시 가져오지 않을 발주 ----------
    레디영이 발주서를 취소하고 금액을 고쳐 다시 보내면 앞 건은 무효입니다.
