@@ -7866,7 +7866,57 @@ async function sheetAutoSync_(){
     const A=lib.aqSheet=lib.aqSheet||{at:'',rows:{}};
     if(JSON.stringify(A.rows||{})!==JSON.stringify(rows)){ A.rows=rows; A.at=new Date().toISOString(); changed++; }
   }catch(e){}
+  try{
+    const R=await sheetRefBuild_(), o=lib.sheetRef||{};
+    if(JSON.stringify(o.codes||{})!==JSON.stringify(R.codes)||JSON.stringify(o.biz||{})!==JSON.stringify(R.biz)){
+      lib.sheetRef={at:new Date().toISOString(),codes:R.codes,biz:R.biz}; changed++; }
+  }catch(e){}
   if(changed){ persistLib(); if(ryN) showToast('레디영 출고 '+ryN+'줄을 매출 시트로 넘겼습니다'); }
+}
+/* ---------- 통합매출 시트 03B 참고값 (2026-10-29) ----------
+   재무가 「약국·거래처」 이름이 입금자와 달라 맞춰 보기 어렵다고 해 03B 에 사업자번호·대표자명을,
+   품목명 옆에는 사방넷 상품코드(M001KR…)를 붙입니다. 시트는 이름을 맞출 줄 모르니 대시보드가 표를 만들어 둡니다.
+   codes = 원장·시트 줄에 적힌 품목명 그대로 → 사방넷 상품코드. 출고 엑셀에 가장 많이 찍힌 코드, 없으면 SBO_CODES.
+           세트(SET)는 코드가 없습니다 — 사방넷엔 구성 품목으로 나갑니다.
+   biz   = 「원장id|거래처」 → [사업자번호, 대표자]. 아쿠아메디는 「약국pid|」 도 둡니다(판매입력 줄용).
+           레디영 = 레디영_거래처표 코드(사업자번호 꼴일 때만) · 대표자 없음 / 바로팜 = 주문내역 사업자번호·약사 /
+           자사몰 = 약국 사업자 정보 → 가입 신청서 / 아쿠아메디 = 소속 약국 정보 */
+async function sheetRefBuild_(){
+  /* 같은 물건인데 품목표 이름이 따로 있는 것 — 구명칭(아쿠엑소)·아쿠아메디 명세서 표기 */
+  const SAME={'아쿠엑소부스트업앰플클렌저':'유쎄라블 부스트업 앰플 클렌저','포어시그널멜팅폼클렌져':'포어시그널 딥 멜팅 폼클렌저'};
+  const nk=function(n){ let t=String(n||'').trim().replace(/_(\d+차|\d+ml)$/i,''); t=SAME[itemKey(t)]||t;
+    let mi=null; try{ mi=matchItem(t); }catch(e){} return itemKey(mi&&mi.name?mi.name:t); };
+  const so=await sboLoad(), cnt={}, byKey={};
+  (so.rows||[]).forEach(function(r){ if(!r.ic||!r.i) return; const k=nk(r.i); cnt[k]=cnt[k]||{}; cnt[k][r.ic]=(cnt[k][r.ic]||0)+1; });
+  Object.keys(cnt).forEach(function(k){ byKey[k]=Object.keys(cnt[k]).sort(function(a,b){ return cnt[k][b]-cnt[k][a]; })[0]; });
+  SBO_CODES.forEach(function(x){ const k=nk(sboItem_(x[1]).name); if(!byKey[k]) byKey[k]=x[0]; });
+  const codes={}, biz={};
+  const code=function(n){ const t=String(n||'').trim(); if(!t||t in codes) return; const c=byKey[nk(t)]; if(c) codes[t]=c; };
+  const put=function(k,no,ceo){ let b=ecBiz_(no||''); if(!/^\d{3}-\d{2}-\d{5}$/.test(b)) b='';
+    const c=String(ceo||'').trim(); if(b||c) biz[k]=[b,c]; };
+  let M=null; try{ M=await ecMasters_(); }catch(e){}
+  const aq=aquaIds();
+  aq.forEach(function(pid){ const pi=(lib.pharmInfo||{})[pid]||{}; put(pid+'|',pi.biz,pi.owner); });
+  Object.keys(lib.ledger||{}).forEach(function(id){
+    const L=lib.ledger[id]||{};
+    Object.keys(L.months||{}).sort().forEach(function(mk){
+      (L.months[mk].docs||[]).forEach(function(d){
+        (d.items||[]).forEach(function(it){ code(it.name); });
+        const br=String(d.branch||'').trim(), k=id+'|'+br; if(!br) return;
+        if(id==='barofarm'){ const m=d.meta||{}; if(m['사업자번호']||m['약사']) put(k,m['사업자번호'],m['약사']); return; }
+        if(biz[k]) return;
+        if(id==='pharmmall'){ const si=(lib.storeInfo||{})[br]||{};
+          const ap=(lib.applicants||[]).filter(function(a){ return storeKey_(a.name)===storeKey_(br); })[0]||{};
+          put(k,si.bizNo||ap.biz,si.ceo||ap.owner); }
+        else if(id==='ready'){ const v=M?ecVendorRY_(M,br):null; if(v) put(k,v.code,''); }
+        else if(aq.indexOf(id)>=0){ const pi=(lib.pharmInfo||{})[id]||{};
+          const p2=(pi.biz||pi.owner)?pi:settleAquaInfo_(br); put(k,p2.biz,p2.owner); }
+      });
+    });
+  });
+  Object.keys(lib.taxDocs||{}).forEach(function(id){ (lib.taxDocs[id]||[]).forEach(function(t){ (t.items||[]).forEach(function(it){ code(it.name); }); }); });
+  [lib.rySheet,lib.aqSheet].forEach(function(S){ const R=(S&&S.rows)||{}; Object.keys(R).forEach(function(k){ code(R[k]&&R[k].item); }); });
+  return {codes:codes,biz:biz};
 }
 async function rySheetOpen_(){
   if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 반영하세요'); return; }
@@ -14348,14 +14398,14 @@ let homeSearchQ='', homeSearchVendors=null;
 function editLogEsc_(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 const EDIT_LOG_OWNER='jep@mkm20201101.com';
 const EDIT_LOG_SEEN='setPriceCalc:editLogSeen';
-const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
+const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,sheetRef:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
 const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계산서',deposits:'입금',pharmInfo:'약국 정보',
   applicants:'자사몰 가입 신청',geo:'2km 지점',companies:'세트 저장소',trash:'휴지통',ecountDone:'이카운트 반영 표시',
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
   orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
   purchaseDocs:'발주서',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
-  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
+  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
   rdRaw:'레디영 rawdata',branchStock:'지점 취급표',bfVerify:'바로팜 대조'};
 function editLogIsAuto_(c){
   const p=String(c.p||''), top=p.split('.')[0];
