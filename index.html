@@ -3471,8 +3471,8 @@ function buildPriceTable(channelKey,openDefault){
   const h=document.createElement('div');h.className='ch-head';
   /* 취급을 끊은 품목은 제안할 수 없으니 표에서 뺍니다.
      이름은 knownItemNames() 에 남겨 두어 과거 발주 대조는 그대로 됩니다. */
-  const list=PRICE_LIST.filter(function(r){ return !droppedItem(r[1]); });
-  const goneNames=PRICE_LIST.filter(function(r){ return droppedItem(r[1]); }).map(function(r){ return r[1]; });
+  const list=PRICE_LIST.filter(function(r){ return !droppedItem(r[1],channelKey); });
+  const goneNames=PRICE_LIST.filter(function(r){ return droppedItem(r[1],channelKey); }).map(function(r){ return r[1]; });
   h.innerHTML='<span><span class="chev">▶</span> 💰 '+col.label+' 표 ('+list.length+'개 품목)</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+PRICE_UPDATED+'</span>';
   h.addEventListener('click',()=>{p.classList.toggle('open');foldMemSet_(lsKey,p.classList.contains('open'));});
   p.appendChild(h);
@@ -3576,7 +3576,7 @@ function branchStockLive(){
     const nm=hits[k].item, ik=itemKey(nm);
     if(seen[ik]) return;
     /* 이제 안 파는 품목은 취급표에 올리지 않습니다 */
-    if(droppedItem(nm)){ dropped++; return; }
+    if(droppedItem(nm,'ready')){ dropped++; return; }
     const pr=(typeof PRICE_LIST!=='undefined')
       ? PRICE_LIST.filter(function(x){ return itemKey(x[1])===ik; })[0] : null;
     const r={line:pr?pr[0]:String(nm).split(' ')[0],name:pr?pr[1]:nm,base:[],isNew:true};
@@ -3735,7 +3735,7 @@ function buildBranchStock(){
   t.appendChild(tb);box.appendChild(t);b.appendChild(box);
   if(L.dropped){
     const dp=document.createElement('div');dp.className='hint';dp.style.marginTop='8px';
-    dp.innerHTML='취급을 끊은 품목은 뺐습니다 — <b>'+ITEM_DROPPED.join(', ')+'</b> '+
+    dp.innerHTML='취급을 끊은 품목은 뺐습니다 — <b>'+ITEM_DROPPED.concat(ITEM_DROPPED_BY.ready).join(', ')+'</b> '+
       '<span style="color:var(--ink-mute);">(끊기 전 발주는 대조에서 그대로 셉니다)</span>';
     b.appendChild(dp);
   }
@@ -5638,13 +5638,19 @@ const ITEM_ALIAS={
    알아봐야 하고(모르면 대조가 「발주서에 없음」으로 틀립니다), 대신 앞으로
    취급 품목표·신규 품목 제안·공급가 제안에는 올리지 않습니다. */
 const ITEM_DROPPED=[
-  '유쎄라블 부스트업 앰플 클렌저',
   '아쿠엑소 부스트업 앰플 클렌저'
 ];
+/* 한 채널만 끊은 품목 — 유쎄라블 부스트업 앰플 클렌저는 레디영만 취급 중단이고
+   바로팜·자사몰·아쿠아메디 등은 계속 팝니다 (사용자 확인 2026-10-29) */
+const ITEM_DROPPED_BY={
+  ready:['유쎄라블 부스트업 앰플 클렌저']
+};
 const ITEM_DROPPED_AT='2026-09-18';
-function droppedItem(name){
+/* ch 를 주면 그 채널에서 끊은 것까지, 안 주면 전 채널 공통으로 끊은 것만 봅니다 */
+function droppedItem(name,ch){
   const k=itemKey(aliasOf(name)||name);
-  return ITEM_DROPPED.filter(function(x){ return itemKey(x)===k; })[0]||'';
+  const L=ITEM_DROPPED.concat(ch&&ITEM_DROPPED_BY[ch]||[]);
+  return L.filter(function(x){ return itemKey(x)===k; })[0]||'';
 }
 /* 쓰다가 새로 만나는 표기는 확인 창에서 여기에 쌓입니다 */
 function itemAlias(){ lib.itemAlias=lib.itemAlias||{}; return lib.itemAlias; }
@@ -5951,7 +5957,7 @@ async function importRyOrders(logEl,onDone){
         newSites[key]={name:key,addr:d.addr||'',store:d.store};
       (d.items||[]).forEach(it=>{
         if(!it.name||matchItem(it.name))return;
-        if(droppedItem(it.name))return;        /* 끊은 품목은 다시 만들지 않습니다 */
+        if(droppedItem(it.name,'ready'))return;        /* 끊은 품목은 다시 만들지 않습니다 */
         const ik=itemKey(it.name);
         if(!newItems[ik])newItems[ik]={name:it.name,unit:it.unit||0};
       });
@@ -8060,7 +8066,7 @@ function buildItemPricePanel_(){
       '<th style="text-align:right;background:#E4EDF7;">베리뉴</th><th style="text-align:right;background:#E4EDF7;">메디킹덤</th></tr></thead>';
     const tb=document.createElement('tbody');
     PRICE_LIST.forEach(function(r){
-      const gone=droppedItem(r[1]);
+      const gone=droppedItem(r[1]), ryGone=!gone&&droppedItem(r[1],'ready');
       const c=codes?codes[r[1]]:null;
       const cc=!codes?'<span style="color:var(--ink-mute);">'+(codeErr?'못 읽음':'불러오는 중…')+'</span>'
         :(c&&c.code?'<b>'+c.code+'</b>'+(c.ecName&&itemKey(c.ecName)!==itemKey(r[1])?'<div style="font-size:11px;color:var(--ink-soft);">'+c.ecName+'</div>':'')
@@ -8068,7 +8074,7 @@ function buildItemPricePanel_(){
       const tr=document.createElement('tr');if(gone)tr.style.opacity='.5';
       tr.innerHTML='<td style="color:var(--ink-soft);font-size:12.5px;">'+r[0]+'</td><td style="white-space:nowrap;">'+r[1]+(gone?' <span style="font-size:11px;color:var(--ink-mute);">(취급 중단)</span>':'')+'</td>'+
         '<td style="font-size:12.5px;">'+cc+'</td>'+
-        cell(r[2],0)+cell(r[3],0)+cell(r[4],0,true)+cell(r[5],0,true,BF_PRICE_PREV[r[1]])+cell(r[6],0,true)+cell(0,aqOf(r[1]),true)+cell(0,byOf('베리뉴',r[1]),true)+cell(0,byOf('메디킹덤',r[1]),true);
+        cell(r[2],0)+cell(r[3],0)+(ryGone?'<td class="num-cell" style="color:var(--ink-mute);font-size:12px;white-space:nowrap;">취급 중단</td>':cell(r[4],0,true))+cell(r[5],0,true,BF_PRICE_PREV[r[1]])+cell(r[6],0,true)+cell(0,aqOf(r[1]),true)+cell(0,byOf('베리뉴',r[1]),true)+cell(0,byOf('메디킹덤',r[1]),true);
       tb.appendChild(tr);
     });
     t.appendChild(tb);box.innerHTML='';box.appendChild(t);
