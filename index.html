@@ -4008,11 +4008,11 @@ function payDueAdj_(pid,store,mk){
   const A=payDueAdjOf();
   const hit=A[payDueKey_(pid,store,mk)];
   if(hit) return hit;
-  /* 아쿠아메디 합계 줄 — 소속 약국에 협의가 있으면 그중 늦은 날 */
+  /* 아쿠아메디 합계 줄 — 소속 약국에 협의가 있으면 그중 늦은 날 (_key = 고칠 때 그 약국 열쇠로) */
   if(pid==='aquamedi'&&!store){
-    let best=null;
-    aquaIds().forEach(function(x){ const h=A[payDueKey_(x,'',mk)]; if(h&&(!best||h.due>best.due)) best=h; });
-    return best;
+    let best=null, bk='';
+    aquaIds().forEach(function(x){ const h=A[payDueKey_(x,'',mk)]; if(h&&(!best||h.due>best.due)){ best=h; bk=payDueKey_(x,'',mk); } });
+    return best?Object.assign({},best,{_key:bk}):null;
   }
   return null;
 }
@@ -4314,7 +4314,7 @@ function buildDeposits(id, opts){
         const t=document.createElement('div');t.style.cssText='font-size:11px;color:var(--ink-soft);font-weight:600;';
         t.textContent='📅 협의 기한 '+adj.due+(adj.note?' · '+adj.note:'');td.appendChild(t);
       }
-      if((ar>0||adj)&&canEdit()&&(id!=='aquamedi'||adj)){
+      if((ar>0||adj)&&canEdit()){
         const b=document.createElement('button');b.className='icon-btn';b.style.cssText='font-size:11px;padding:2px 6px;margin-top:3px;';
         b.textContent=adj?'📅 기한 수정':'📅 기한 협의';
         b.title='약국과 입금 날짜를 따로 정했으면 적어 두세요 — 그날까지 연체로 보지 않습니다 (비우면 계약 기한으로 돌아갑니다)';
@@ -4324,7 +4324,14 @@ function buildDeposits(id, opts){
           const def=adj?adj.due:(last.getFullYear()+'-'+z(last.getMonth()+1)+'-'+z(last.getDate()));
           const v=prompt(mkLabel(mk)+' 입금 기한 (예: 2026-10-31) — 비우면 계약 기한으로 되돌립니다',def);
           if(v===null) return;
-          const k=payDueKey_(id,store,mk);
+          /* 아쿠아메디 합계 줄에서 정하면 그 달 매출이 있는 소속 약국 앞으로 적습니다.
+             합계 줄 열쇠(aquamedi||월)에 적으면 그 달 모든 약국의 협의를 덮어 버립니다
+             (10/23 「11월 초 입금」이 8월 줄에 붙어 9월 에이트뷰티는 연체, 8월 생생온누리 10/31 협의는 가려졌습니다) */
+          let k=adj&&adj._key?adj._key:payDueKey_(id,store,mk);
+          if(id==='aquamedi'&&!store&&!(adj&&adj._key)){
+            const who=aquaIds().filter(function(x){ return salesOf(x,mk)>depSum(x,mk); });
+            if(who.length===1) k=payDueKey_(who[0],'',mk);
+          }
           if(!String(v).trim()){ delete payDueAdjOf()[k]; persistLib(); showToast('계약 기한으로 되돌렸습니다'); ledgerRefresh(); return; }
           if(!/^\d{4}-\d{2}-\d{2}$/.test(String(v).trim())){ showToast('날짜는 2026-10-31 처럼 적어주세요'); return; }
           const note=prompt('메모 (예: 10월 입금으로 협의)',adj?adj.note||'':'')||'';
