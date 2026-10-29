@@ -7891,7 +7891,11 @@ async function sheetRefBuild_(){
   Object.keys(cnt).forEach(function(k){ byKey[k]=Object.keys(cnt[k]).sort(function(a,b){ return cnt[k][b]-cnt[k][a]; })[0]; });
   SBO_CODES.forEach(function(x){ const k=nk(sboItem_(x[1]).name); if(!byKey[k]) byKey[k]=x[0]; });
   const codes={}, biz={};
-  const code=function(n){ const t=String(n||'').trim(); if(!t||t in codes) return; const c=byKey[nk(t)]; if(c) codes[t]=c; };
+  /* 바로팜 세트(「메라블 루비알엔 SET」)는 사방넷에 구성 3품목으로 나갑니다 — 구성 품목 코드를 다 적습니다 */
+  const code=function(n,bf){ const t=String(n||'').trim(); if(!t||t in codes) return;
+    const st=bf?bfSetOf_(t):null;   /* 홍콩 「유쎄라블 아이크림 2종 SET」 같은 다른 세트는 구성이 달라 풀지 않습니다 */
+    const c=st?st.items.map(function(x){ return byKey[nk(x)]||''; }).filter(Boolean).join(', '):byKey[nk(t)];
+    if(c) codes[t]=c; };
   const put=function(k,no,ceo){ let b=ecBiz_(no||''); if(!/^\d{3}-\d{2}-\d{5}$/.test(b)) b='';
     const c=String(ceo||'').trim(); if(b||c) biz[k]=[b,c]; };
   let M=null; try{ M=await ecMasters_(); }catch(e){}
@@ -7901,7 +7905,7 @@ async function sheetRefBuild_(){
     const L=lib.ledger[id]||{};
     Object.keys(L.months||{}).sort().forEach(function(mk){
       (L.months[mk].docs||[]).forEach(function(d){
-        (d.items||[]).forEach(function(it){ code(it.name); });
+        (d.items||[]).forEach(function(it){ code(it.name,id==='barofarm'); });
         const br=String(d.branch||'').trim(), k=id+'|'+br; if(!br) return;
         if(id==='barofarm'){ const m=d.meta||{}; if(m['사업자번호']||m['약사']) put(k,m['사업자번호'],m['약사']); return; }
         if(biz[k]) return;
