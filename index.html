@@ -5637,13 +5637,16 @@ const ITEM_ALIAS={
    빼기 전에 나간 발주·명세서에는 그대로 남아 있습니다. 그래서 이름은 계속
    알아봐야 하고(모르면 대조가 「발주서에 없음」으로 틀립니다), 대신 앞으로
    취급 품목표·신규 품목 제안·공급가 제안에는 올리지 않습니다. */
-const ITEM_DROPPED=[
-  '아쿠엑소 부스트업 앰플 클렌저'
-];
-/* 한 채널만 끊은 품목 — 유쎄라블 부스트업 앰플 클렌저는 레디영만 취급 중단이고
-   바로팜·자사몰·아쿠아메디 등은 계속 팝니다 (사용자 확인 2026-10-29) */
+const ITEM_DROPPED=[];
+/* 채널마다 끊은 품목 (사용자 확인 2026-10-29)
+   · 유쎄라블 부스트업 앰플 클렌저 — 레디영만 취급 중단, 다른 채널은 계속 팝니다
+   · 아쿠엑소 부스트업 앰플 클렌저(구명칭) — 홍콩만 나가고 나머지 채널은 안 팝니다 */
 const ITEM_DROPPED_BY={
-  ready:['유쎄라블 부스트업 앰플 클렌저']
+  ready:['유쎄라블 부스트업 앰플 클렌저','아쿠엑소 부스트업 앰플 클렌저'],
+  barofarm:['아쿠엑소 부스트업 앰플 클렌저'],
+  pharmmall:['아쿠엑소 부스트업 앰플 클렌저'],
+  aquamedi:['아쿠엑소 부스트업 앰플 클렌저'],
+  jp:['아쿠엑소 부스트업 앰플 클렌저']
 };
 const ITEM_DROPPED_AT='2026-09-18';
 /* ch 를 주면 그 채널에서 끊은 것까지, 안 주면 전 채널 공통으로 끊은 것만 봅니다 */
@@ -5681,7 +5684,8 @@ function knownItemNames(){
   const a=(typeof PRICE_LIST!=='undefined'?PRICE_LIST.map(r=>r[1]):[]);
   /* 끊은 품목도 넣습니다 — 과거 발주를 「모르는 품목」으로 두면 대조가 틀립니다 */
   return a.concat(extraItems().map(x=>x.name))
-          .concat(typeof ITEM_DROPPED!=='undefined'?ITEM_DROPPED:[]);
+          .concat(typeof ITEM_DROPPED!=='undefined'?ITEM_DROPPED:[])
+          .concat(typeof ITEM_DROPPED_BY!=='undefined'?[].concat.apply([],Object.values(ITEM_DROPPED_BY)):[]);
 }
 /* 화면에 적을 이름 — 시트·메일마다 띄어쓰기와 차수가 제각각이라
    (「유쎄라블 4d 실프팅 크림」「포어시그널 딥 멜팅 폼 클렌저」)
