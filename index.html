@@ -1464,7 +1464,23 @@ function jwtEmail(t){
   try{const b=t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
     return JSON.parse(decodeURIComponent(escape(atob(b)))).email||'';}catch(e){return '';}
 }
-function canEdit(){ return !!(session&&session.access_token); }
+function canEdit(){ return !!(session&&session.access_token&&!session.noEdit); }
+/* 로그인은 됐지만 편집자 명단(b2b_can_edit)에 없는 계정 — 로그아웃시키지 않고 보기 전용으로 둡니다.
+   예전엔 저장이 403 으로 거절되면 세션을 지워서 「로그인이 계속 풀린다」로 보였습니다. */
+function authNoEdit(){ return !!(session&&session.access_token&&session.noEdit); }
+async function authCheckPerm(){
+  if(!session||!session.access_token)return;
+  if(!(await authEnsure()))return;
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/rpc/b2b_can_edit',{method:'POST',
+      headers:{apikey:SB_KEY,Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:'{}'});
+    if(!r.ok)return;
+    const ok=(await r.json())===true;
+    if(!!session.noEdit===!ok)return;
+    session.noEdit=!ok;authSave();renderAuthBar();
+    setSync(ok?'synced':'readonly');
+  }catch(e){}
+}
 function authEmail(){ return session?session.email||'':''; }
 
 /* 로그인 후 돌아올 때 #access_token=... 을 받아 저장 */
@@ -1503,7 +1519,7 @@ async function authRefresh(){
     const d=await r.json();
     if(!d.access_token){session=null;authSave();renderAuthBar();return false;}
     session={access_token:d.access_token,refresh_token:d.refresh_token||session.refresh_token,
-      expires_at:Math.floor(Date.now()/1000)+(d.expires_in||3600),email:jwtEmail(d.access_token)};
+      expires_at:Math.floor(Date.now()/1000)+(d.expires_in||3600),email:jwtEmail(d.access_token),noEdit:session.noEdit};
     authSave();renderAuthBar();return true;
   }catch(e){return false;}
 }
@@ -1523,7 +1539,20 @@ async function writeHeaders(extra){
 function renderAuthBar(){
   const el=document.getElementById('authBar');if(!el)return;
   el.innerHTML='';
-  if(canEdit()){
+  if(authNoEdit()){
+    const w=document.createElement('div');w.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+    const b=document.createElement('span');
+    b.style.cssText='font-size:11.5px;font-weight:800;color:#F5C36B;';
+    b.textContent='👁 보기 전용';
+    const out=document.createElement('button');out.className='sync-btn';
+    out.style.cssText='width:auto;padding:5px 10px;font-size:11.5px;';
+    out.textContent='로그아웃';out.addEventListener('click',authLogout);
+    w.append(b,out);
+    const who=document.createElement('div');
+    who.style.cssText='font-size:11px;color:#98A1BC;word-break:break-all;margin-top:4px;line-height:1.5;';
+    who.textContent=authEmail()+' — 편집 권한이 없는 계정이에요. 저장하려면 정은 님께 권한을 요청해 주세요.';
+    el.append(w,who);
+  }else if(canEdit()){
     const w=document.createElement('div');w.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
     const b=document.createElement('span');
     b.style.cssText='font-size:11.5px;font-weight:800;color:#8FE3B4;';
@@ -1550,13 +1579,14 @@ function renderAuthBar(){
 let roWarned=false;
 function warnReadonly(){
   if(roWarned)return;roWarned=true;
-  showToast('읽기 전용입니다 — 좌측 하단 「편집하려면 로그인」을 눌러주세요');
+  showToast(authNoEdit()?'보기 전용 계정이에요 — 저장되지 않아요. 정은 님께 편집 권한을 요청해 주세요'
+    :'읽기 전용입니다 — 좌측 하단 「편집하려면 로그인」을 눌러주세요');
   setTimeout(()=>{roWarned=false;},8000);
 }
 
 let pendingPush=0,libPushT=null,dbPushT=null;
 let ioBusy=0,libRev=0;
-function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)',conflict:'⚠ 다른 사람이 먼저 저장함 — 최신본을 불러왔습니다',readonly:'👁 읽기 전용 (로그인하면 저장됩니다)'};el.textContent=m[s]||s;}
+function setSync(s){const el=document.getElementById('syncState');if(!el)return;const m={pull:'⟳ 불러오는 중…',synced:'✓ 최신 동기화됨',saving:'⟳ 저장 중…',saved:'✓ 저장됨 · 팀 공유완료',error:'⚠ 공유 서버 연결 실패 (로컬만 저장)',conflict:'⚠ 다른 사람이 먼저 저장함 — 최신본을 불러왔습니다',readonly:authNoEdit()?'👁 보기 전용 (편집 권한 없음)':'👁 읽기 전용 (로그인하면 저장됩니다)'};el.textContent=m[s]||s;}
 let lastRemoteAt=null;   // 마지막으로 확인한 서버 저장 시각
 async function sbGet(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=payload,updated_at',{headers:SB_H});if(!r.ok)return{ok:false,row:null};const a=await r.json();return{ok:true,row:(a&&a.length?a[0]:null)};}catch(e){return{ok:false,row:null};}}
 async function sbStamp(id){try{const r=await fetch(SB_T+'?id=eq.'+id+'&select=updated_at',{headers:SB_H});if(!r.ok)return undefined;const a=await r.json();return a&&a.length?a[0].updated_at:null;}catch(e){return undefined;}}
@@ -1565,7 +1595,8 @@ async function sbUpsert(id,payload){
   if(!h)return 'readonly';
   try{const r=await fetch(SB_T,{method:'POST',headers:h,
     body:JSON.stringify({id,payload,updated_at:new Date().toISOString()})});
-    if(r.status===401||r.status===403){session=null;authSave();renderAuthBar();return 'denied';}
+    if(r.status===403){session.noEdit=true;authSave();renderAuthBar();return 'denied';}
+    if(r.status===401){session=null;authSave();renderAuthBar();return 'denied';}
     return r.ok;}catch(e){return false;}}
 function pushLibSoon(){
   clearTimeout(libPushT);
@@ -1585,7 +1616,7 @@ function pushLibSoon(){
     if(ok===true)lastRemoteAt=await sbStamp('libraryV2');
     pendingPush=Math.max(0,pendingPush-1);
     if(ok==='readonly'){setSync('readonly');warnReadonly();}
-    else if(ok==='denied'){setSync('readonly');showToast('편집 권한이 없는 계정입니다 — 저장되지 않았습니다');}
+    else if(ok==='denied'){setSync('readonly');showToast(authNoEdit()?'보기 전용 계정이에요 — 저장되지 않았어요':'로그인이 만료됐어요 — 다시 로그인해 주세요');}
     else setSync(ok?'saved':'error');
   },600);
 }
@@ -1628,7 +1659,7 @@ setInterval(async()=>{
 },60000);
 
 function loadState(){
-  authLoad();authCatchRedirect();renderAuthBar();
+  authLoad();authCatchRedirect();renderAuthBar();authCheckPerm();
   const db=sGet('costDB');costDB=db||{...DEFAULT_DB};
   const L=sGet('libraryV2');
   if(L&&L.companies){lib=L;COMPANIES.forEach(c=>{if(!lib.companies[c.key])lib.companies[c.key]={rounds:[],activeId:null};});migrateJp();migrateVat();}
