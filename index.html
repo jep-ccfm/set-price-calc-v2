@@ -3839,8 +3839,12 @@ function parseCloveRows(rows, fileName){
   const out=[];
   for(let i=hi+1;i<rows.length;i++){
     const r=rows[i]; if(!r||!String(r[c.dt]||'').trim())continue;
-    const amt=Number(r[c.inn])||0;
-    if(amt<=0)continue;                                   // 입금만
+    let amt=Number(r[c.inn])||0, refund=false;
+    /* 입금만 — 단, 약국에 돌려준 출금(「과다입금 반환」)은 따로 표시해 그만큼 입금에서 뺍니다 (2026-10-28 생생온누리 141,900) */
+    if(amt<=0){
+      const ot=Number(r[c.out])||0, tx=String(r[c.memo]||'')+' '+String(r[c.desc]||'');
+      if(ot>0&&/반환|환불/.test(tx)){ amt=ot; refund=true; } else continue;
+    }
     let date='';
     if(typeof r[c.dt]==='number'&&r[c.dt]>20000){          // 엑셀 날짜 일련번호
       const dd=new Date(Date.UTC(1899,11,30)+r[c.dt]*86400000);
@@ -3856,7 +3860,7 @@ function parseCloveRows(rows, fileName){
     const desc=String(r[c.desc]||'').trim();
     const evid=c.evid>=0?String(r[c.evid]||'').trim():'';
     const label=c.label>=0?String(r[c.label]||'').trim():'';
-    out.push({file:fileName,date:date,amount:amt,acct:acct,
+    out.push({file:fileName,date:date,amount:amt,acct:acct,refund:refund,
               alias:String(r[c.alias]||'').trim(),payer:who||desc,desc:desc,memo:memo,evid:evid,label:label,
               /* 한 거래를 가리키는 값 — 통합 시트와 계좌별 시트에 같은 거래가 두 번 들어 있습니다 */
               uid:[acct,String(r[c.dt]),amt,c.bal>=0?String(r[c.bal]):''].join('|')});
@@ -3869,7 +3873,52 @@ function depChannelOf(row){
   if(b&&b.fixed) return b.fixed;
   const t=row.payer+' '+row.memo+' '+row.desc+' '+(row.label||'')+' '+(row.evid||'');
   for(const m of DEP_MATCH) if(m.re.test(t)) return m.id;
+  /* 아쿠아메디 소속 약국은 약국·법인 이름으로 직접 입금합니다 — 메모가 비어 있으면 「약국 외」로 빠졌습니다
+     (10/28 주식회사 한테라퓨틱스 3건) */
+  if(depAquaPid_(row)) return 'aquamedi';
   return null;
+}
+/* 입금자·적요·메모로 아쿠아메디 소속 약국 찾기 */
+/* 은행이 글자 수로 잘라 보냅니다 — 「주식회사　한테라퓨틱」(스 빠짐) · 「송재호(생생온누리약」 → 앞부분이 맞으면 같은 곳 */
+function depAquaPid_(row){
+  const toks=[];
+  /* 메모는 빼고 봅니다 — 「아쿠아메디 약국영업 B2B매출」처럼 채널 이름이 적혀 있어 지오메디(아쿠아메디)로 잘못 붙습니다 */
+  [row.payer,row.desc].forEach(function(s){
+    s=String(s||'');
+    const pn=s.match(/[(（]([^)）]+)[)）]?\s*$/); if(pn) toks.push(depNorm(pn[1]));
+    toks.push(depNorm(s.replace(/[(（][^)）]*[)）]?\s*$/,''))); toks.push(depNorm(s));
+  });
+  let best=null, bl=0;
+  aquamediPharms().forEach(function(x){
+    const inf=pharmInfoOf(x.pid);
+    [inf.corp,inf.name,x.name,String(inf.name||'').replace(/\s*[(（].*$/,'')].forEach(function(n){
+      const k=depNorm(String(n||'').replace(/약국$/,''));
+      if(k.length<3) return;
+      toks.forEach(function(t){
+        if(t.length<4) return;
+        const hit=t.indexOf(k)>=0||k.indexOf(t)===0;
+        if(hit&&k.length>bl){ best=x.pid; bl=k.length; }
+      });
+    });
+  });
+  return best;
+}
+/* 아쿠아메디 입금 → 어느 달 몫인지. 전표 한 장과 금액이 같으면 그 달,
+   아니면 그 약국의 안 받은 달부터 차례로 채웁니다 (생생온누리 1,493,800 = 8월 997,700 + 10월 354,200 + 초과 141,900).
+   [{mk, amount}] — 넘친 돈은 마지막 달에 붙이고 over 로 표시합니다. */
+function depAquaSplit_(pid,amount,paidBy){
+  const name=pharmInfoOf(pid).name||pid;
+  const months=docMonthsOf_(pid).filter(function(m){ return /^\d{4}-\d{2}$/.test(m); }).sort();
+  for(const m of months){ if(docsOf_(pid,m).some(function(d){ return Math.round(d.total||0)===amount; })) return [{mk:m,amount:amount}]; }
+  const paidOf=function(m){ return depositsOf('aquamedi').filter(function(d){ return d.mk===m&&d.store===name; }).reduce(function(a,d){ return a+(Number(d.amount)||0); },0)+(paidBy[m]||0); };
+  const parts=[]; let rest=amount;
+  months.forEach(function(m){
+    if(rest<=0) return;
+    const due=salesOf(pid,m)-paidOf(m); if(due<=0) return;
+    const p=Math.min(due,rest); parts.push({mk:m,amount:p}); rest-=p;
+  });
+  if(rest>0){ if(parts.length){ parts[parts.length-1].amount+=rest; parts[parts.length-1].over=rest; } else parts.push({mk:null,amount:rest,over:rest}); }
+  return parts;
 }
 /* 분할입금은 같은 값이 여러 번 나온다 → 중복은 접고 건수만 덧붙인다
    (6건 분할입금이 같은 날·같은 입금자면 6줄이 아니라 「날짜 ×6」 한 줄) */
@@ -3948,7 +3997,10 @@ async function importDeposits(files, logEl, onDone){
       });
       if(!raw.length)throw new Error('입금 행이 없습니다');
       const seen={};
-      raw.forEach(row=>{
+      /* 돌려준 돈 — 같은 입금자의 넘친 입금에서 뺍니다 */
+      const refunds=raw.filter(r=>r.refund);
+      const paidBy={};
+      raw.filter(r=>!r.refund).sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(row=>{
         const id=depChannelOf(row);
         if(!id){skip++;return;}                                  // 약국 채널과 무관한 입금
         const list=depositsOf(id);
@@ -3956,6 +4008,27 @@ async function importDeposits(files, logEl, onDone){
         seen[key]=(seen[key]||0)+1;                              // 파일 안에서 몇 번째인지
         const have=list.filter(x=>x.key===key).length;
         if(have>=seen[key]){dup++;return;}                       // 이미 그만큼 있으면 중복
+        const base={key:key,date:row.date,acct:row.acct,payer:row.payer,memo:row.memo||row.evid||row.desc,src:'클로브'};
+        /* 아쿠아메디 — 소속 약국을 찾아 그 약국의 달별 몫으로 나눠 담습니다 (나눈 조각도 열쇠는 같음 → 다시 올려도 중복) */
+        const apid=id==='aquamedi'?depAquaPid_(row):null;
+        if(apid){
+          const nm=pharmInfoOf(apid).name||apid;
+          const parts=depAquaSplit_(apid,row.amount,paidBy[apid]=paidBy[apid]||{});
+          const last=parts[parts.length-1];
+          if(last&&last.over){
+            const rf=refunds.filter(r=>!r.used&&r.amount===last.over&&r.date>=row.date&&depAquaPid_(r)===apid)[0];
+            if(rf){ rf.used=1; last.amount-=last.over; last.note='초과 '+fmt(last.over)+'원은 '+rf.date+' 반환'; delete last.over; }
+          }
+          parts.filter(p=>p.amount>0).forEach(p=>{
+            const mk=p.mk||depMonthOf(row);
+            paidBy[apid][mk]=(paidBy[apid][mk]||0)+p.amount;
+            list.push(Object.assign({id:uid('dep'),amount:p.amount,mk:mk,store:nm},base,
+              parts.length>1||p.note||p.over?{memo:base.memo+' · '+[parts.length>1?'입금 '+fmt(row.amount)+'원 중 '+mkLabel(mk)+'분':'',p.note||'',p.over?'초과 '+fmt(p.over)+'원':''].filter(Boolean).join(' · ')}:{}));
+            log.push('✓ '+row.date+' 아쿠아메디 · '+nm+' '+mkLabel(mk)+' '+fmt(p.amount)+'원'+(p.note?' ('+p.note+')':''));
+          });
+          ok++;
+          return;
+        }
         list.push({id:uid('dep'),key:key,date:row.date,amount:row.amount,
                    acct:row.acct,payer:row.payer,memo:row.memo||row.evid||row.desc,
                    mk:depMonthOf(row),store:depStoreOf(id,row),src:'클로브'});
