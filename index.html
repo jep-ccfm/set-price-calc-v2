@@ -14300,6 +14300,101 @@ function setLibSummary(k){
    약국·지점 이름 · 사업자번호 · 대표자 · 전화 · 주문번호 · 품목 · 화면(홈 패널·메뉴)을 한 칸에서 찾습니다.
    누르면 그 채널(아쿠아메디 소속 약국은 그 약국 화면)로 가고, 홈 패널이면 펼쳐서 그 자리로 갑니다. */
 let homeSearchQ='', homeSearchVendors=null;
+/* ---------- 수정 기록 (정은 님만) ----------
+   편집자가 여러 명이 되어 누가 무엇을 바꿨는지 알아야 합니다. 저장할 때마다 DB 트리거가
+   바뀐 곳(경로·전후 요약)을 b2b_edit_log 에 남기고, 읽기는 정은 님 계정만 열려 있습니다.
+   시트 자동 반영처럼 사람이 한 일이 아닌 변경은 기본으로 숨깁니다. */
+function editLogEsc_(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+const EDIT_LOG_OWNER='jep@mkm20201101.com';
+const EDIT_LOG_SEEN='setPriceCalc:editLogSeen';
+const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
+const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계산서',deposits:'입금',pharmInfo:'약국 정보',
+  applicants:'자사몰 가입 신청',geo:'2km 지점',companies:'세트 저장소',trash:'휴지통',ecountDone:'이카운트 반영 표시',
+  ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
+  orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',
+  bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
+  purchaseDocs:'발주서',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
+  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
+  rdRaw:'레디영 rawdata',branchStock:'지점 취급표',bfVerify:'바로팜 대조'};
+function editLogIsAuto_(c){
+  const p=String(c.p||''), top=p.split('.')[0];
+  return !!EDIT_LOG_AUTO[top]||/(^|\.)at$/.test(p);
+}
+function editLogPart_(s){
+  if(/^\d{4}-\d{2}$/.test(s)) return mkLabel(s);
+  const ph=lib.pharmInfo&&lib.pharmInfo[s]&&lib.pharmInfo[s].name;
+  const F={tel:'전화',name:'이름',addr:'주소',biz:'사업자번호',owner:'대표자',email:'이메일',note:'메모',memo:'메모',alias:'다른 이름',files:'서류',status:'상태',ecount:'이카운트 코드'};
+  return ph||CH_LABEL[s]||F[s]||s;
+}
+function editLogText_(c){
+  const parts=String(c.p||'').split('.');
+  const head=EDIT_LOG_KEY[parts[0]]||parts[0];
+  const rest=parts.slice(1).map(editLogPart_).join(' · ');
+  const a=c.a==null?'없음':c.a, b=c.b==null?'삭제':c.b;
+  const arr=/^\[\d+\]$/.test(a)&&/^\[\d+\]$/.test(b);
+  const d=arr?(function(){ const n=parseInt(b.slice(1),10)-parseInt(a.slice(1),10); return n?(n>0?'+':'')+n+'건':'내용 수정'; })()
+    :(c.a==null?'추가':c.b==null?'삭제':(/^[\[{]/.test(a)?'수정':a+' → '+b));
+  return head+(rest?' · '+rest:'')+' — '+d;
+}
+function buildEditLog_(){
+  const fp=foldPanel('✎ 다른 사람 수정 기록','<span id="editLogSum" style="color:var(--ink-mute);">불러오는 중…</span>','fold:editLog');
+  const b=fp.body;
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12.5px;color:var(--ink-soft);';
+  const opt=function(label){ const l=document.createElement('label');l.style.cssText='display:flex;gap:5px;align-items:center;cursor:pointer;';
+    const c=document.createElement('input');c.type='checkbox';l.append(c,document.createTextNode(label));bar.appendChild(l);return c; };
+  const cMine=opt('내가 한 것도 보기'), cAuto=opt('시트 자동 반영도 보기');
+  const list=document.createElement('div');
+  b.append(bar,list);
+  let rows=null;
+  const draw=function(){
+    list.innerHTML='';
+    if(!rows) return;
+    const seen=localStorage.getItem(EDIT_LOG_SEEN)||'';
+    const shown=rows.map(function(r){
+      const ch=(r.changes||[]).filter(function(c){ return cAuto.checked||!editLogIsAuto_(c); });
+      return {r:r,ch:ch};
+    }).filter(function(x){ return x.ch.length&&(cMine.checked||x.r.email!==EDIT_LOG_OWNER); });
+    if(!shown.length){ list.innerHTML='<div class="hint">최근 90일 동안 다른 사람이 바꾼 내용이 없습니다.</div>'; return; }
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th>시각</th><th>누가</th><th>무엇을</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    shown.slice(0,80).forEach(function(x){
+      const d=new Date(x.r.at), isNew=x.r.at>seen&&x.r.email!==EDIT_LOG_OWNER;
+      const tr=document.createElement('tr');
+      const td=function(h,css){ const c=document.createElement('td');c.innerHTML=h;if(css)c.style.cssText=css;tr.appendChild(c);return c; };
+      td((isNew?'<b style="color:var(--warn);">새 </b>':'')+(d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'),'white-space:nowrap;');
+      td(editLogEsc_(String(x.r.email||'시스템').split('@')[0]),'white-space:nowrap;');
+      const lines=x.ch.slice(0,6).map(function(c){ return editLogEsc_(editLogText_(c)); });
+      if(x.ch.length>6) lines.push('<span style="color:var(--ink-mute);">외 '+(x.ch.length-6)+'곳</span>');
+      td(lines.join('<br>'));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);list.appendChild(t);
+  };
+  cMine.addEventListener('change',draw);cAuto.addEventListener('change',draw);
+  /* 펼쳐서 본 순간까지를 「읽음」으로 */
+  fp.panel.querySelector('.ch-head').addEventListener('click',function(){
+    if(fp.panel.classList.contains('open')&&rows&&rows.length){
+      try{ localStorage.setItem(EDIT_LOG_SEEN,rows[0].at); }catch(e){}
+      const s=document.getElementById('editLogSum'); if(s) s.textContent='최근 '+rows.length+'번 저장';
+    }
+  });
+  (async function(){
+    const sum=function(h){ const s=document.getElementById('editLogSum'); if(s) s.innerHTML=h; };
+    const h=await writeHeaders();
+    if(!h){ sum('로그인 필요'); return; }
+    try{
+      const r=await fetch(SB_URL+'/rest/v1/b2b_edit_log?select=at,email,row_id,changes&order=at.desc&limit=300',{headers:h});
+      if(!r.ok){ sum('준비 전'); list.innerHTML='<div class="hint">수정 기록 표가 아직 없습니다 — Supabase SQL 에디터에서 「B2B대시보드_수정기록_설치.sql」 을 실행해 주세요.</div>'; return; }
+      rows=await r.json();
+    }catch(e){ sum('불러오기 실패'); return; }
+    const seen=localStorage.getItem(EDIT_LOG_SEEN)||'';
+    const fresh=rows.filter(function(r){ return r.at>seen&&r.email!==EDIT_LOG_OWNER&&(r.changes||[]).some(function(c){ return !editLogIsAuto_(c); }); }).length;
+    sum(fresh?'<span style="color:var(--warn);">새 수정 '+fresh+'건</span>':'새 수정 없음');
+    draw();
+  })();
+  return fp.panel;
+}
 function buildHomeSearch_(){
   const w=document.createElement('div');w.style.cssText='margin:0 0 18px;';
   const inp=document.createElement('input');inp.type='search';inp.className='cell-input';
@@ -14376,6 +14471,7 @@ function renderHome(){
     '<p class="sub">레디영 · 바로팜 · 자사몰 · 아쿠아메디 · 일본라방 · 홍콩의 현황을 한 화면에서 확인합니다. 카드를 클릭하면 해당 채널로 이동합니다.</p>';
   box.appendChild(head);
   box.appendChild(buildHomeSearch_());
+  if(authEmail()===EDIT_LOG_OWNER) box.appendChild(buildEditLog_());
 
   /* ---- 알림 ---- */
   const alerts=[];
