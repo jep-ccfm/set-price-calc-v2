@@ -174,6 +174,9 @@
   .ch-panel.open .ch-head .chev{transform:rotate(90deg);}
   .ch-body{display:none;padding:0 16px 16px;}
   .ch-panel.open .ch-body{display:block;}
+  .ch-panel.af>.ch-head{justify-content:flex-start;gap:10px;}
+  .ch-panel.af>.ch-head>.sec-h{margin:0;padding-left:0;flex:1;min-width:0;}
+  .ch-panel.af>.ch-head>.sec-h::before{display:none;}
   /* 일하는 차례대로 묶는 큰 덩어리 — 패널이 열 개 넘게 쌓이면 순서를 잃습니다 */
   .grp{border:1.5px solid var(--line);border-radius:14px;background:var(--panel);margin:0 0 14px;overflow:hidden;}
   .grp-h{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 17px;cursor:pointer;user-select:none;background:#FAF8F5;}
@@ -2513,11 +2516,11 @@ const CHANNEL_INFO={
   caution:'⚠ 레디영 독점 조항의 반경 2km 규정이 이 채널의 최대 제약입니다. 신규 약국 추가 시 레디영 지점과의 거리를 반드시 먼저 확인하세요. (레디영 전 지점 월 매출 1억 원 달성 후 재협상 대상)'
 };
 function buildChannelPanel(){
-  const open=localStorage.getItem('setPriceCalc:chOpen')==='1';
+  const open=foldMemGet_('setPriceCalc:chOpen')==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
   h.innerHTML='<span><span class="chev">▶</span> 📋 약국 채널 공통 정보 · 거래 조건</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">'+CHANNEL_INFO.updated+'</span>';
-  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem('setPriceCalc:chOpen',p.classList.contains('open')?'1':'0');});
+  h.addEventListener('click',()=>{p.classList.toggle('open');foldMemSet_('setPriceCalc:chOpen',p.classList.contains('open'));});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const g=document.createElement('div');g.className='ch-grid';
@@ -2856,7 +2859,7 @@ function buildRyShipList(){
       const pn=[...document.querySelectorAll('.ch-panel')].filter(function(x){
         return x.querySelector('.ch-head')&&x.querySelector('.ch-head').textContent.indexOf('↔')>=0; })[0];
       if(!pn){ showToast('대조 화면을 찾지 못했습니다'); return; }
-      if(!pn.classList.contains('open')) pn.querySelector('.ch-head').click();
+      revealFold_(pn);
       setTimeout(function(){ pn.scrollIntoView({block:'start',behavior:'smooth'}); },150);
     });
     dz.appendChild(go);
@@ -3432,7 +3435,7 @@ const BRANCH_UPDATED='2026-08-28 11:23';
 function buildPriceTable(channelKey,openDefault){
   const col=PRICE_COLS[channelKey];
   const lsKey='setPriceCalc:priceOpen:'+channelKey;
-  const open=localStorage.getItem(lsKey)===null?!!openDefault:localStorage.getItem(lsKey)==='1';
+  const open=foldMemGet_(lsKey)==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const h=document.createElement('div');h.className='ch-head';
   /* 취급을 끊은 품목은 제안할 수 없으니 표에서 뺍니다.
@@ -3440,7 +3443,7 @@ function buildPriceTable(channelKey,openDefault){
   const list=PRICE_LIST.filter(function(r){ return !droppedItem(r[1]); });
   const goneNames=PRICE_LIST.filter(function(r){ return droppedItem(r[1]); }).map(function(r){ return r[1]; });
   h.innerHTML='<span><span class="chev">▶</span> 💰 '+col.label+' 표 ('+list.length+'개 품목)</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+PRICE_UPDATED+'</span>';
-  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  h.addEventListener('click',()=>{p.classList.toggle('open');foldMemSet_(lsKey,p.classList.contains('open'));});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
@@ -3628,7 +3631,7 @@ function saveBranchSnap_(L){
 }
 function buildBranchStock(){
   const lsKey='setPriceCalc:branchOpen';
-  const open=localStorage.getItem(lsKey)==='1';   /* 기본 접힘 — 세로로 길어 월별 화면을 밀어낸다 */
+  const open=foldMemGet_(lsKey)==='1';   /* 기본 접힘 — 세로로 길어 월별 화면을 밀어낸다 */
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   let L;
   try{ L=branchStockLive(); if(canEdit()&&saveBranchSnap_(L)) persistLib(); }
@@ -3644,7 +3647,7 @@ function buildBranchStock(){
     '<span style="font-size:12px;font-weight:700;">'+
     '<span style="color:var(--ink-soft);">발주 '+(lastOrd||'-')+'까지 반영</span></span>';
   h.addEventListener('click',function(){p.classList.toggle('open');
-    localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+    foldMemSet_(lsKey,p.classList.contains('open'));});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const note=document.createElement('div');note.className='hint';note.style.marginBottom='9px';
@@ -4054,15 +4057,15 @@ async function importDeposits(files, logEl, onDone){
    일하는 차례대로 묶고, 묶음째 접습니다. 헤더에 요약을 달아 접어둔 채로도
    안에 볼 것이 있는지 알 수 있게 합니다. */
 function groupBox(no,title,sub,lsKey,openDefault){
-  const saved=lsKey?localStorage.getItem(lsKey):null;
-  const open=(saved===null)?!!openDefault:(saved==='1');
+  /* 홈 foldPanel 과 같은 규칙 — 늘 접힌 채 시작하고 펼침은 이 탭에서만 기억합니다 */
+  const open=!!lsKey&&foldMemGet_(lsKey)==='1';
   const g=document.createElement('div');g.className='grp'+(open?' open':'');
   const h=document.createElement('div');h.className='grp-h';
   h.innerHTML='<span class="grp-t"><span class="chev">▶</span>'+
     '<span class="grp-n">'+no+'</span>'+title+'</span>'+
     '<span class="grp-s">'+(sub||'')+'</span>';
   h.addEventListener('click',function(){ g.classList.toggle('open');
-    if(lsKey) localStorage.setItem(lsKey,g.classList.contains('open')?'1':'0'); });
+    if(lsKey) foldMemSet_(lsKey,g.classList.contains('open')); });
   g.appendChild(h);
   const b=document.createElement('div');b.className='grp-b';g.appendChild(b);
   return {group:g,body:b};
@@ -4237,6 +4240,43 @@ function foldPanel(titleHtml,rightHtml,lsKey,openDefault){
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';p.appendChild(b);
   return{panel:p,body:b};
+}
+function foldMemGet_(k){ try{ return sessionStorage.getItem(k); }catch(e){ return null; } }
+function foldMemSet_(k,open){ try{ sessionStorage.setItem(k,open?'1':'0'); }catch(e){} }
+/* ---------- 섹션 자동 접기 ----------
+   채널 화면은 ①~④ 묶음을 열면 그 안의 섹션 제목(.sec-h)과 표가 줄줄이 펼쳐져
+   바로팜이 1만 px 넘게 길었습니다. 화면을 그린 뒤 제목마다 다음 제목 전까지를
+   접는 상자로 감쌉니다. 이미 접히는 패널 안의 제목은 건드리지 않습니다. */
+function autoFold_(root,scope){
+  if(!root) return;
+  [...root.querySelectorAll('.sec-h')].forEach(function(h){
+    if(h.closest('.ch-panel')) return;
+    const par=h.parentElement; if(!par) return;
+    const rest=[]; let n=h.nextSibling;
+    while(n&&!(n.nodeType===1&&n.classList.contains('sec-h'))){ rest.push(n); n=n.nextSibling; }
+    if(!rest.some(function(x){ return x.nodeType===1; })) return;
+    const key='af:'+scope+':'+h.textContent.replace(/[\d,.\s]+/g,'').slice(0,40);
+    const p=document.createElement('div');p.className='ch-panel af'+(foldMemGet_(key)==='1'?' open':'');
+    const hd=document.createElement('div');hd.className='ch-head';
+    const chev=document.createElement('span');chev.className='chev';chev.textContent='▶';
+    par.insertBefore(p,h);
+    hd.append(chev,h);
+    hd.addEventListener('click',function(e){
+      if(e.target.closest('button,a,input,select,textarea,label')) return;
+      p.classList.toggle('open'); foldMemSet_(key,p.classList.contains('open')); });
+    const b=document.createElement('div');b.className='ch-body';
+    rest.forEach(function(x){ b.appendChild(x); });
+    p.append(hd,b);
+  });
+}
+/* 접힌 곳 안의 요소로 이동할 때 — 감싼 묶음·패널을 바깥부터 펼칩니다 */
+function revealFold_(el){
+  const chain=[];
+  for(let a=el; a; a=a.parentElement){
+    if(a.classList&&(a.classList.contains('ch-panel')||a.classList.contains('grp'))) chain.unshift(a); }
+  chain.forEach(function(a){
+    if(a.classList.contains('open')) return;
+    const hd=a.querySelector(':scope > .ch-head, :scope > .grp-h'); if(hd) hd.click(); });
 }
 /* ---------- 입금 나누기 ----------
    8·9월 것을 한 번에 넣는 것처럼 여러 달 대금이 한 입금으로 들어오면,
@@ -11418,12 +11458,12 @@ const BAROFARM_ITEMS=[
 ];
 function buildBarofarmItems(){
   const lsKey='setPriceCalc:bfItemsOpen';
-  const open=localStorage.getItem(lsKey)!=='0';
+  const open=foldMemGet_(lsKey)==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const soldout=BAROFARM_ITEMS.filter(r=>!r[4]).length;
   const h=document.createElement('div');h.className='ch-head';
   h.innerHTML='<span><span class="chev">▶</span> 📦 바로팜 등록 상품 ('+BAROFARM_ITEMS.length+'개'+(soldout?' · <span style="color:var(--warn)">품절 '+soldout+'</span>':'')+')</span><span style="font-size:12px;color:var(--ink-soft);font-weight:600;">갱신 '+BAROFARM_UPDATED+'</span>';
-  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  h.addEventListener('click',()=>{p.classList.toggle('open');foldMemSet_(lsKey,p.classList.contains('open'));});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const box=document.createElement('div');box.style.cssText='overflow-x:auto;';
@@ -11692,12 +11732,12 @@ function buildPurchaseDocs(id){
 function buildTaxDocs(id){
   const list=taxDocsOf(id);
   const lsKey='setPriceCalc:taxOpen:'+id;
-  const open=localStorage.getItem(lsKey)==='1';
+  const open=foldMemGet_(lsKey)==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   const sum=list.reduce((a,b)=>a+(b.total||0),0);
   const h=document.createElement('div');h.className='ch-head';
   h.innerHTML='<span><span class="chev">▶</span> 🧾 세금계산서 ('+list.length+'건)</span><span style="font-size:12px;color:var(--ink-soft);font-weight:700;font-family:var(--mono);">합계 '+fmt(sum)+'원</span>';
-  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  h.addEventListener('click',()=>{p.classList.toggle('open');foldMemSet_(lsKey,p.classList.contains('open'));});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const bar=document.createElement('div');bar.style.cssText='display:flex;justify-content:flex-end;margin-bottom:9px;';
@@ -14727,7 +14767,7 @@ function buildChannelGeo(id,label){
   const g=geoStore();
   const wrap=document.createElement('div');
   const lsKey='setPriceCalc:chGeo:'+id;
-  const open=localStorage.getItem(lsKey)==='1';
+  const open=foldMemGet_(lsKey)==='1';
   const p=document.createElement('div');p.className='ch-panel'+(open?' open':'');
   let okC=0,ngC=0,unC=0;
   list.forEach(x=>{
@@ -14741,7 +14781,7 @@ function buildChannelGeo(id,label){
     (okC?'<span style="color:var(--good);">가능 '+okC+'</span> ':'')+
     (ngC?'<span style="color:var(--warn);">불가 '+ngC+'</span> ':'')+
     (unC?'<span style="color:var(--ink-soft);">미판정 '+unC+'</span>':'')+'</span>';
-  h.addEventListener('click',()=>{p.classList.toggle('open');localStorage.setItem(lsKey,p.classList.contains('open')?'1':'0');});
+  h.addEventListener('click',()=>{p.classList.toggle('open');foldMemSet_(lsKey,p.classList.contains('open'));});
   p.appendChild(h);
   const b=document.createElement('div');b.className='ch-body';
   const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-bottom:9px;flex-wrap:wrap;';
@@ -14846,11 +14886,11 @@ function renderPharm(view){
 
   // 상세 정보 토글
   const dKey='setPriceCalc:phDetail:'+pid;
-  const dOpen=localStorage.getItem(dKey)==='1';
+  const dOpen=foldMemGet_(dKey)==='1';
   const dp=document.createElement('div');dp.className='ch-panel'+(dOpen?' open':'');dp.style.marginTop='10px';
   const dh=document.createElement('div');dh.className='ch-head';
   dh.innerHTML='<span><span class="chev">▶</span> 상세 정보 (사업자·계약·계좌·비고)</span>';
-  dh.addEventListener('click',()=>{dp.classList.toggle('open');localStorage.setItem(dKey,dp.classList.contains('open')?'1':'0');});
+  dh.addEventListener('click',()=>{dp.classList.toggle('open');foldMemSet_(dKey,dp.classList.contains('open'));});
   dp.appendChild(dh);
   const db2=document.createElement('div');db2.className='ch-body';
   const ig2=document.createElement('div');ig2.className='info-grid';
@@ -15135,6 +15175,13 @@ function switchView(view){
   window.scrollTo(0,0);
 }
 document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
+/* 채널·약국·세트 화면은 다시 그릴 때마다 섹션을 접습니다 (autoFold_) — 업로드 뒤 다시 그리는 곳이 많아 함수째 감쌉니다 */
+[['renderChannel','view-channel'],['renderPharm','view-pharm'],['renderCompany','view-company']].forEach(function(x){
+  const f=window[x[0]];
+  window[x[0]]=function(v){ const r=f.apply(this,arguments);
+    try{ autoFold_(document.getElementById(x[1]),String(v)); }catch(e){}
+    return r; };
+});
 /* 좁은 화면에서 메뉴를 접었다 폈다 — 넓은 화면에서는 CSS 가 단추를 숨깁니다 */
 (function(){
   const sb=document.querySelector('.sidebar'), tg=document.getElementById('navToggle');
