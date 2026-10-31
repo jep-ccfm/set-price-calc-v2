@@ -160,6 +160,9 @@
   .lightbox iframe{width:100%;height:82vh;border:none;border-radius:8px;background:#fff;}
   .lb-bar{display:flex;gap:10px;align-items:center;color:#fff;font-size:12.5px;}
   .lb-bar a{color:#FFD84D;font-weight:700;text-decoration:none;}
+  .lb-sheet{width:100%;height:82vh;overflow:auto;background:#fff;border-radius:8px;padding:12px;font-size:12px;color:#111;}
+  .lb-sheet table{border-collapse:collapse;}
+  .lb-sheet td{border:1px solid #DDE1EA;padding:3px 7px;white-space:nowrap;}
   .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   @media(max-width:560px){.form-grid{grid-template-columns:1fr;}}
   .form-grid .fg-full{grid-column:1/-1;}
@@ -1903,6 +1906,8 @@ function renderCompany(k){
     '<p class="sub">'+meta.desc+'</p>';
   box.appendChild(head);
   if(k==='ready')document.getElementById('readyCtrBtn').addEventListener('click',openReadyContract);
+  /* 해외 채널은 묶음 번호가 없어 보관함을 맨 위에 둡니다 */
+  if(k==='jp'||k==='hk')box.appendChild(buildChDocs_(k,''));
 
   // 레디영: 정산 시트 + 월별 거래명세서 원장
   // 홍콩: 발주서(XLSX) 업로드 → 월별 집계
@@ -1978,6 +1983,7 @@ function renderCompany(k){
     const sh2=document.createElement('div');sh2.className='sec-h';sh2.style.marginTop='0';
     sh2.textContent='세트 제안 저장소 (차수별)';g4.body.appendChild(sh2);
     box.appendChild(g4.group);
+    box.appendChild(buildChDocs_('ready',5));
     /* 아래 공통 코드가 그리는 세트 제안 저장소도 ④ 안에 담습니다 */
     box=g4.body;
   }
@@ -2523,6 +2529,229 @@ function openLightbox(rec){
   lb.onclick=e=>{if(e.target===lb||e.target===bar||e.target===cl||e.target===nm)lb.hidden=true;};
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){const lb=document.getElementById('lightbox');if(lb&&!lb.hidden)lb.hidden=true;}});
+
+/* ---------- 채널 서류 보관함 (2026-10-31) ----------
+   채널마다 받은 발주서 · 보낸 거래명세서 원본 파일을 그대로 보관하고, 언제든 다시 열어 보고 내려받습니다.
+   매출 집계(거래명세서 원장)와는 따로입니다 — 여기 올린 파일은 숫자에 안 들어갑니다.
+   파일은 비공개 버킷 b2b-docs 에 둡니다. 열기 = 회사 계정(@mkm20201101.com) 로그인, 올리기·지우기 = 편집 명단(b2b_can_edit).
+   목록(파일명 · 월 · 메모)은 lib.chDocs[채널] 에 둡니다. */
+const DOC_BUCKET='b2b-docs';
+const CHDOC_KINDS={po:'발주서',st:'거래명세서'};
+const chDocFilt_={};   /* 채널 → {kind, mk} — 다시 그려도 고른 칸 유지 */
+function chDocsOf(id){ lib.chDocs=lib.chDocs||{}; lib.chDocs[id]=lib.chDocs[id]||[]; return lib.chDocs[id]; }
+function chDocSize_(n){ n=Number(n)||0; return n>=1048576?(n/1048576).toFixed(1)+'MB':Math.max(1,Math.round(n/1024))+'KB'; }
+async function chDocUpload_(id,file){
+  /* 스토리지 키는 ASCII 만 받습니다 — 원래 파일명은 목록에 보관 */
+  const m=file.name.match(/\.[A-Za-z0-9]{1,8}$/);
+  const path=id+'/'+Date.now()+'_'+Math.random().toString(36).slice(2,8)+(m?m[0].toLowerCase():'');
+  const h=await writeHeaders({'Content-Type':file.type||'application/octet-stream'});
+  if(!h)throw new Error('편집 권한이 있는 계정으로 로그인하세요');
+  const r=await fetch(SB_URL+'/storage/v1/object/'+DOC_BUCKET+'/'+encPath(path),{method:'POST',headers:h,body:file});
+  if(r.status===401||r.status===403)throw new Error('업로드 권한이 없습니다 (로그인 계정 확인)');
+  if(r.status===413)throw new Error('파일이 너무 큽니다 (50MB까지)');
+  if(!r.ok){
+    /* 권한 막힘도 400 으로 옵니다 (row-level security) */
+    const t=await r.text().catch(()=>'');
+    throw new Error(/security|Unauthorized/i.test(t)?'업로드 권한이 없습니다 (편집 명단 계정인지 확인)':'업로드 실패 ('+r.status+')');
+  }
+  return path;
+}
+async function chDocBlob_(rec){
+  if(!session||!session.access_token||!(await authEnsure()))
+    throw new Error('왼쪽 아래에서 회사 구글 계정으로 로그인해야 열 수 있어요');
+  const r=await fetch(SB_URL+'/storage/v1/object/authenticated/'+DOC_BUCKET+'/'+encPath(rec.path),
+    {headers:{apikey:SB_KEY,Authorization:'Bearer '+session.access_token}});
+  if(r.status===400||r.status===404)throw new Error('파일을 찾을 수 없어요 (회사 계정인지 확인)');
+  if(!r.ok)throw new Error('열기 실패 ('+r.status+')');
+  const b=await r.blob();
+  return new Blob([b],{type:rec.type||b.type||'application/octet-stream'});
+}
+async function chDocDelete_(rec){
+  const h=await writeHeaders();if(!h)return;
+  try{await fetch(SB_URL+'/storage/v1/object/'+DOC_BUCKET+'/'+encPath(rec.path),{method:'DELETE',headers:h});}catch(e){}
+}
+function chDocSave_(rec,b){
+  const u=URL.createObjectURL(b);
+  const a=document.createElement('a');a.href=u;a.download=rec.name;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),60000);
+}
+async function chDocDownload_(rec){
+  try{ chDocSave_(rec,await chDocBlob_(rec)); }catch(e){ showToast(e.message); }
+}
+/* 미리보기 — 사진 · PDF 는 그대로, 엑셀은 표로 그려 줍니다 */
+async function chDocView_(rec){
+  let b; try{ b=await chDocBlob_(rec); }catch(e){ showToast(e.message); return; }
+  const u=URL.createObjectURL(b);
+  const lb=document.getElementById('lightbox');lb.innerHTML='';lb.hidden=false;
+  if(isImgRec(rec)){const im=document.createElement('img');im.src=u;lb.appendChild(im);}
+  else if(isPdfRec(rec)){const fr=document.createElement('iframe');fr.src=u;lb.appendChild(fr);}
+  else if(/\.(xlsx|xlsm|xls|csv)$/i.test(rec.name)&&typeof XLSX!=='undefined'){
+    const sh=document.createElement('div');sh.className='lb-sheet';
+    try{
+      const wb=XLSX.read(await b.arrayBuffer(),{type:'array'});
+      const tabs=document.createElement('div');tabs.style.cssText='display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;';
+      const pane=document.createElement('div');
+      const show=n=>{pane.innerHTML=XLSX.utils.sheet_to_html(wb.Sheets[n],{header:'',footer:''});
+        [...tabs.children].forEach(x=>x.classList.toggle('active',x.textContent===n));};
+      if(wb.SheetNames.length>1)wb.SheetNames.forEach(n=>{
+        const t=document.createElement('button');t.className='round-pill';t.textContent=n;
+        t.addEventListener('click',()=>show(n));tabs.appendChild(t);});
+      sh.append(tabs,pane);show(wb.SheetNames[0]);
+    }catch(e){sh.textContent='엑셀을 읽지 못했어요 — 내려받아서 열어 주세요.';}
+    lb.appendChild(sh);
+  }
+  else{const d=document.createElement('div');d.style.color='#fff';d.textContent='미리보기를 지원하지 않는 형식이에요. 내려받아서 열어 주세요.';lb.appendChild(d);}
+  const bar=document.createElement('div');bar.className='lb-bar';
+  const nm=document.createElement('span');nm.textContent=rec.name;
+  const a=document.createElement('a');a.href=u;a.download=rec.name;a.textContent='⬇ 내려받기';
+  const cl=document.createElement('span');cl.style.opacity='.6';cl.textContent='배경 클릭 또는 ESC로 닫기';
+  bar.append(nm,a,cl);lb.appendChild(bar);
+  lb.onclick=e=>{if(e.target===lb||e.target===bar||e.target===cl||e.target===nm){lb.hidden=true;setTimeout(()=>URL.revokeObjectURL(u),1000);}};
+}
+/* 채널 화면에 붙이는 묶음 — no 가 비면 번호 동그라미를 뺍니다 (홍콩 · 일본라방은 묶음 번호가 없음) */
+function buildChDocs_(id,no){
+  const list=chDocsOf(id);
+  const nPo=list.filter(d=>d.kind==='po').length;
+  const g=groupBox(no||'','🗂 발주서 · 거래명세서 보관함',
+    list.length?('발주서 '+nPo+' · 거래명세서 '+(list.length-nPo)):'<span style="color:var(--ink-mute);">아직 없음</span>',
+    'setPriceCalc:grpDocs_'+id,false);
+  if(!no){const n=g.group.querySelector('.grp-n');if(n)n.remove();}
+  g.body.appendChild(chDocsBody_(id));
+  return g.group;
+}
+function chDocsBody_(id){
+  const wrap=document.createElement('div');
+  const F=chDocFilt_[id]=chDocFilt_[id]||{kind:'',mk:''};
+  function draw(){
+    wrap.innerHTML='';
+    const list=chDocsOf(id);
+    const nt=document.createElement('div');nt.className='hint';nt.style.margin='0 0 10px';
+    nt.innerHTML='받은 <b>발주서</b>와 보낸 <b>거래명세서</b> 원본을 그대로 보관해요. 엑셀 · PDF · 사진 모두 돼요. '+
+      '<span style="color:var(--ink-soft);">여기 올린 파일은 매출 집계에 들어가지 않아요.</span>'+
+      (!session?'<br>🔒 파일을 열거나 내려받으려면 왼쪽 아래에서 <b>회사 구글 계정</b>으로 로그인하세요.':'');
+    wrap.appendChild(nt);
+
+    /* 올리기 — 편집 명단만 */
+    if(canEdit()){
+      const uz=document.createElement('div');uz.className='up-zone';uz.style.cssText='margin:0 0 12px;text-align:left;';
+      const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;';
+      const sKind=document.createElement('select');sKind.className='cell-input';sKind.style.cssText='padding:7px 8px;width:auto;';
+      Object.keys(CHDOC_KINDS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=CHDOC_KINDS[k];sKind.appendChild(o);});
+      if(F.kind)sKind.value=F.kind;
+      const iMk=document.createElement('input');iMk.type='month';iMk.className='cell-input';iMk.style.cssText='padding:6px 8px;width:auto;';
+      const now=new Date();iMk.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+      iMk.title='어느 달 서류인지';
+      const iMemo=document.createElement('input');iMemo.className='cell-input';iMemo.style.cssText='padding:7px 8px;flex:1;min-width:160px;';
+      iMemo.placeholder='메모 (약국 · 지점 · 발주번호 등, 선택)';
+      const fi=document.createElement('input');fi.type='file';fi.multiple=true;fi.hidden=true;
+      const b=document.createElement('button');b.className='up-btn';b.textContent='📎 파일 선택해서 올리기';
+      row.append(sKind,iMk,iMemo,b);
+      const dz=document.createElement('div');dz.className='uz-desc';dz.style.marginTop='8px';
+      dz.textContent='종류 · 월을 고르고 파일을 고르거나 이 칸에 끌어다 놓으세요. 여러 개를 한 번에 올려도 돼요.';
+      const log=document.createElement('div');log.className='up-log';
+      uz.append(row,dz,fi,log);
+      async function up(files){
+        files=[...(files||[])];if(!files.length)return;
+        const mk=iMk.value||'',kind=sKind.value,memo=iMemo.value.trim();
+        log.classList.add('show');log.textContent='';ioBusy++;b.disabled=true;
+        let ok=0;
+        for(const f of files){
+          const ln=document.createElement('div');ln.textContent='올리는 중… '+f.name;log.appendChild(ln);
+          try{
+            const path=await chDocUpload_(id,f);
+            chDocsOf(id).push({id:uid('cd'),kind,name:f.name,path,type:f.type||'',size:f.size,mk,memo,
+              at:new Date().toISOString(),by:authEmail()});
+            ln.textContent='✓ '+f.name;ok++;
+          }catch(e){ln.textContent='✕ '+f.name+' — '+e.message;}
+        }
+        ioBusy=Math.max(0,ioBusy-1);b.disabled=false;fi.value='';
+        if(ok){F.kind='';F.mk='';persistLib();showToast(CHDOC_KINDS[kind]+' '+ok+'개를 보관했어요');
+          const keep=log;draw();wrap.querySelector('.up-zone').replaceChild(keep,wrap.querySelector('.up-log'));}
+      }
+      b.addEventListener('click',()=>fi.click());
+      fi.addEventListener('change',e=>up(e.target.files));
+      uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('drag');});
+      uz.addEventListener('dragleave',()=>uz.classList.remove('drag'));
+      uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');up(e.dataTransfer.files);});
+      wrap.appendChild(uz);
+    }else if(authNoEdit()){
+      const n2=document.createElement('div');n2.className='hint';n2.style.margin='0 0 10px';
+      n2.textContent='보기 전용 계정이라 파일 올리기 · 지우기는 할 수 없어요. 열어 보기 · 내려받기는 돼요.';
+      wrap.appendChild(n2);
+    }
+
+    if(!list.length){
+      const e=document.createElement('div');e.className='empty-box';e.textContent='아직 보관한 서류가 없어요.';
+      wrap.appendChild(e);return;
+    }
+
+    /* 거르기 — 종류 · 월 */
+    const fr=document.createElement('div');fr.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;';
+    [['','전체'],['po','발주서'],['st','거래명세서']].forEach(([k,lab])=>{
+      const n=k?list.filter(d=>d.kind===k).length:list.length;
+      const p=document.createElement('button');p.className='round-pill'+(F.kind===k?' active':'');
+      p.textContent=lab+' '+n;p.addEventListener('click',()=>{F.kind=k;draw();});fr.appendChild(p);
+    });
+    const months=[...new Set(list.map(d=>d.mk||''))].sort().reverse();
+    const sMk=document.createElement('select');sMk.className='cell-input';sMk.style.cssText='padding:6px 8px;margin-left:auto;width:auto;';
+    [['','모든 달']].concat(months.map(m=>[m,m||'(월 없음)'])).forEach(([v,t])=>{
+      const o=document.createElement('option');o.value=v;o.textContent=t;sMk.appendChild(o);});
+    sMk.value=months.indexOf(F.mk)>=0?F.mk:'';
+    sMk.addEventListener('change',()=>{F.mk=sMk.value;draw();});
+    fr.appendChild(sMk);wrap.appendChild(fr);
+
+    const rows=list.filter(d=>(!F.kind||d.kind===F.kind)&&(!F.mk||(d.mk||'')===F.mk))
+      .sort((a,b)=>String(b.mk||'').localeCompare(String(a.mk||''))||String(b.at||'').localeCompare(String(a.at||'')));
+    const tw=document.createElement('div');tw.style.cssText='overflow-x:auto;';
+    const t=document.createElement('table');t.className='led-table';t.style.minWidth='640px';
+    t.innerHTML='<thead><tr><th style="width:78px;">월</th><th style="width:84px;">종류</th><th>파일</th>'+
+      '<th style="width:120px;">올린 날</th><th style="width:190px;"></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    rows.forEach(d=>{
+      const tr=document.createElement('tr');
+      const c1=document.createElement('td');c1.textContent=d.mk||'-';c1.style.cssText='font-size:12.5px;white-space:nowrap;';
+      const c2=document.createElement('td');c2.textContent=CHDOC_KINDS[d.kind]||d.kind;
+      c2.style.cssText='font-size:12.5px;font-weight:700;white-space:nowrap;color:'+(d.kind==='po'?'var(--accent)':'var(--good)')+';';
+      const c3=document.createElement('td');
+      const nm=document.createElement('a');nm.href='#';nm.textContent=d.name;nm.style.cssText='font-weight:700;font-size:12.5px;word-break:break-all;';
+      nm.addEventListener('click',e=>{e.preventDefault();chDocView_(d);});
+      const sub=document.createElement('div');sub.style.cssText='color:var(--ink-soft);font-size:11.5px;margin-top:2px;';
+      sub.textContent=chDocSize_(d.size)+(d.memo?' · '+d.memo:'');
+      c3.append(nm,sub);
+      const c4=document.createElement('td');c4.style.cssText='font-size:11.5px;color:var(--ink-soft);white-space:nowrap;';
+      c4.textContent=String(d.at||'').slice(0,10);
+      if(d.by){const w=document.createElement('div');w.textContent=String(d.by).split('@')[0];c4.appendChild(w);}
+      const c5=document.createElement('td');c5.style.whiteSpace='nowrap';
+      const bv=document.createElement('button');bv.className='icon-btn';bv.textContent='👁 보기';
+      bv.addEventListener('click',()=>chDocView_(d));
+      const bd=document.createElement('button');bd.className='icon-btn';bd.style.marginLeft='4px';bd.textContent='⬇ 받기';
+      bd.addEventListener('click',()=>chDocDownload_(d));
+      c5.append(bv,bd);
+      if(canEdit()){
+        const be=document.createElement('button');be.className='icon-btn';be.style.marginLeft='4px';be.textContent='✎';be.title='월 · 메모 고치기';
+        be.addEventListener('click',()=>{
+          const mk=prompt('어느 달 서류인가요? (예: 2026-10)',d.mk||'');if(mk===null)return;
+          if(mk.trim()&&!/^\d{4}-\d{2}$/.test(mk.trim())){showToast('월은 2026-10 처럼 적어 주세요');return;}
+          const memo=prompt('메모',d.memo||'');if(memo===null)return;
+          d.mk=mk.trim();d.memo=memo.trim();persistLib();draw();
+        });
+        const bx=document.createElement('button');bx.className='icon-btn';bx.style.marginLeft='4px';bx.textContent='✕';bx.title='휴지통으로';
+        bx.addEventListener('click',()=>{
+          if(!confirm(d.name+String.fromCharCode(10)+'휴지통으로 옮길까요? (휴지통에서 되돌릴 수 있어요)'))return;
+          trashPush('chDoc',String(d.name).replace(/[<>]/g,''),(CH_LABEL[id]||id)+' · '+(CHDOC_KINDS[d.kind]||'')+' · '+(d.mk||''),{id},d);
+          const l=chDocsOf(id),i=l.indexOf(d);if(i>=0)l.splice(i,1);
+          persistLib();draw();showToast('휴지통으로 옮겼어요');
+        });
+        c5.append(be,bx);
+      }
+      tr.append(c1,c2,c3,c4,c5);tb.appendChild(tr);
+    });
+    if(!rows.length){const tr=document.createElement('tr');tr.innerHTML='<td colspan="5" style="text-align:center;color:var(--ink-mute);">고른 조건에 맞는 서류가 없어요</td>';tb.appendChild(tr);}
+    t.appendChild(tb);tw.appendChild(t);wrap.appendChild(tw);
+  }
+  draw();
+  return wrap;
+}
 
 /* ============================================================
    약국 채널 공통 정보 · 발주 관리
@@ -10194,6 +10423,7 @@ function renderChannel(view){
     g4.body.appendChild(buildBarofarmItems());
     g4.body.appendChild(buildChannelGeo('barofarm','바로팜'));
     box.appendChild(g4.group);
+    box.appendChild(buildChDocs_('barofarm',5));
     return;
   }
   if(meta.id==='aquamedi'){
@@ -10232,6 +10462,7 @@ function renderChannel(view){
     g4.body.appendChild(buildPartners('aquamedi','아쿠아메디'));
     g4.body.appendChild(buildChannelGeo('aquamedi','아쿠아메디'));
     box.appendChild(g4.group);
+    box.appendChild(buildChDocs_('aquamedi',5));
     return;
   }
   if(meta.id==='pharmmall'){
@@ -10276,6 +10507,7 @@ function renderChannel(view){
     g4.body.appendChild(buildPartners('pharmmall','자사몰 약사 전용관'));
     g4.body.appendChild(buildChannelGeo('pharmmall','자사몰'));
     box.appendChild(g4.group);
+    box.appendChild(buildChDocs_('pharmmall',5));
     return;
   }
   /* 위 세 채널은 저마다 묶음으로 끝냅니다 — 아래는 새 채널이 생겼을 때의 기본형입니다 */
@@ -10285,6 +10517,7 @@ function renderChannel(view){
   box.appendChild(buildDeposits(meta.id));
   const lh=document.createElement('div');lh.className='sec-h';lh.textContent='거래명세서 (월별 집계)';box.appendChild(lh);
   box.appendChild(buildLedger(meta.id,{}));
+  box.appendChild(buildChDocs_(meta.id,''));
 }
 
 /* ---------- 자사몰 약국별 화면 ---------- */
@@ -12348,7 +12581,7 @@ function geoNgText_(rows){
 const TRASH_KINDS={
   round:'차수', config:'세트 구성', ledgerMonth:'월별 거래명세서', ledgerDoc:'거래명세서',
   order:'발주', taxDoc:'세금계산서', geoSite:'레디영 지점', applicant:'약사 가입신청', partner:'거래처',
-  pharmFile:'약국 첨부서류', saleRow:'판매 집계 행', deposit:'입금 기록'
+  pharmFile:'약국 첨부서류', saleRow:'판매 집계 행', deposit:'입금 기록', chDoc:'보관 서류'
 };
 const CH_LABEL={ready:'레디영',hk:'홍콩',jp:'일본라방',barofarm:'바로팜',pharmmall:'자사몰 약사 전용관',
   aquamedi:'아쿠아메디',sinsa:'신사 타워약국',apgujeong:'압구정 생생 온누리약국'};
@@ -12440,6 +12673,11 @@ function trashRestore(entry){
       if(inf.files.some(x=>x.path===d.path))throw new Error('이미 복구되어 있습니다');
       inf.files.push(d);break;
     }
+    case 'chDoc':{
+      const l=chDocsOf(c.id);
+      if(l.some(x=>x.path===d.path))throw new Error('이미 복구되어 있습니다');
+      l.push(d);break;
+    }
     default: throw new Error('복구할 수 없는 항목입니다');
   }
 }
@@ -12451,6 +12689,7 @@ async function trashPurge(entry){
   if(entry.kind==='taxDoc'&&d&&d.file&&d.file.path)files.push(d.file);
   if(entry.kind==='applicant')(d.files||[]).forEach(f=>{if(f.path)files.push(f);});
   for(const f of files){try{await deletePharmFile(f);}catch(e){}}
+  if(entry.kind==='chDoc'&&d&&d.path)await chDocDelete_(d);   /* 보관함 파일은 비공개 버킷에 있습니다 */
 }
 /* ---------- 휴지통 화면 ---------- */
 function renderTrash(){
@@ -14408,7 +14647,7 @@ const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계�
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
   orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
-  purchaseDocs:'발주서',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
+  purchaseDocs:'발주서',chDocs:'서류 보관함',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
   rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
   rdRaw:'레디영 rawdata',branchStock:'지점 취급표',bfVerify:'바로팜 대조'};
 function editLogIsAuto_(c){
