@@ -6265,7 +6265,7 @@ const ENTRY_RULES=[
 /* 약국 관련 같은데 규칙에 안 걸린 메모는 버리지 않고 알려줍니다 */
 const ENTRY_LOOKS_PHARM=/약국|바로팜|자사몰|아쿠아|레디영/;
 /* 테스터·샘플·무상은 발주가 아닙니다 */
-const ENTRY_FREE=/테스터|샘플|무상|증정|체험단|이벤트|당첨|협업|지급건/;
+const ENTRY_FREE=/테스터|샘플|무상|증정|체험단|이벤트|당첨|협업|협찬|지급건/;
 /* 관리메모1 에 「약국공급+테스터1」 처럼 적기도 합니다. 이건 무상건이 아니라
    유상 발주에 테스터를 하나 얹은 것입니다. 통째로 걸러내면 그 지점의 배송요청이
    통째로 사라져 「출고 요청 전」 으로 잘못 잡힙니다 (명동플래그쉽 9/02·9/07·9/18).
@@ -6993,8 +6993,34 @@ function sboOrderBtn_(chId,getRows){
 function sboMerge(store,lines,oldInv){
   const rows=store.rows.map(function(x){ return Object.assign({},x); });
   const at={}; rows.forEach(function(x,i){ at[x.k]=i; });
-  const st={add:0,upd:0,del:0,dup:0,cancel:0,notB2B:0,same:0}, warn=[], seen={}, gone={}, jp={};
+  const st={add:0,upd:0,del:0,dup:0,cancel:0,notB2B:0,same:0,split:0}, warn=[], seen={}, gone={}, jp={};
   const w=function(t){ if(!seen[t]){ seen[t]=1; warn.push(t); } };
+  /* 송장 분리 (2026-11-02) — 사방넷은 한 주문 줄을 송장 여러 장으로 나눠 내보내기도 합니다
+     (10/16 명동플래그쉽 실프팅 60+30, 10/29 일본라방 나노샷 120+120+53).
+     열쇠가 「오더코드|상품코드」 하나라 뒷줄이 앞줄을 덮어써 수량이 빠졌고, 대조에 「수량 다름」이 떴습니다.
+     같은 열쇠 줄이 여럿이면 송장번호 순으로 #2 · #3 을 붙여 따로 담습니다.
+     엑셀 두 개를 한 번에 올리면 같은 줄이 겹치므로, 열쇠마다 가장 나중 파일(__f)의 줄만 씁니다. */
+  const baseK=function(L){ return L['오더코드']+'|'+L['상품코드']; };
+  const live={};
+  lines.forEach(function(L){
+    if(!L['오더코드']&&!L['상품코드']) return;
+    if(/취소/.test(L['진행상태']||'')) return;
+    const k=baseK(L), f=L.__f||0, g=live[k];
+    if(!g||f>g.f) live[k]={f:f,ls:[L]};
+    else if(f===g.f) g.ls.push(L);
+  });
+  const keyOf=new Map();
+  Object.keys(live).forEach(function(k){
+    const ls=live[k].ls;
+    ls.sort(function(a,b){ return sboDigits_(a['송장번호']).localeCompare(sboDigits_(b['송장번호'])); });
+    ls.forEach(function(L,i){ keyOf.set(L,i?k+'#'+(i+1):k); });
+    if(ls.length>1) st.split++;
+    /* 전에 더 잘게 나뉘어 담겼던 조각은 지웁니다 (#3 까지 있었는데 이번엔 둘) */
+    rows.forEach(function(x){
+      const m=String(x.k).match(/#(\d+)$/);
+      if(m&&String(x.k).slice(0,-m[0].length)===k&&Number(m[1])>ls.length) gone[x.k]=1;
+    });
+  });
   lines.forEach(function(L){
     if(!L['오더코드']&&!L['상품코드']) return;
     const type=L['발주 타입']||'';
@@ -7003,14 +7029,21 @@ function sboMerge(store,lines,oldInv){
     const isInf=/인플루언서|체험단/.test(type+' '+memoAll);
     /* 아쿠아메디는 발주타입 이름에 B2B 가 안 붙을 수도 있어 채널 이름으로도 받습니다 */
     if(!isInf&&!/B2B/i.test(type)&&!/아쿠아|개인약국/.test(type)){ st.notB2B++; return; }
-    const k=L['오더코드']+'|'+L['상품코드'];
+    const cancel=/취소/.test(L['진행상태']||'');
+    /* 겹친 파일의 옛 줄 — 같은 열쇠를 나중 파일이 다시 가져왔습니다 */
+    if(!cancel&&!keyOf.has(L)){ st.same++; return; }
+    const k=cancel?baseK(L):keyOf.get(L);
     /* 받는분이 잘려 들어오기도 합니다 (「대학비타민약」 / 주문자 「대학비타민약국」) — 그럴 땐 주문자 이름 */
     let who=String(L['받는분 이름']||L['주문자 이름']||'').trim();
     const orderer=String(L['주문자 이름']||'').trim();
     if(orderer.length>who.length&&orderer.replace(/\s/g,'').indexOf(who.replace(/\s/g,''))===0) who=orderer;
-    if(/취소/.test(L['진행상태']||'')){
+    if(cancel){
       st.cancel++;
-      if((k in at)&&!gone[k]){ gone[k]=1; st.del++; }
+      /* 나뉜 송장 중 한 장만 취소된 것 — 살아 있는 줄이 있으면 지우지 않습니다 */
+      if(live[k]) return;
+      Object.keys(at).forEach(function(x){
+        if((x===k||x.indexOf(k+'#')===0)&&!gone[x]){ gone[x]=1; st.del++; }
+      });
       return;
     }
     const it=sboItem_(L['출고상품명']);
@@ -7063,8 +7096,11 @@ async function sboUpload(files,logEl){
   if(!arr.length){ showToast('엑셀(.xlsx) 파일이 없습니다'); return false; }
   logEl.classList.add('show'); logEl.textContent='사방넷 엑셀을 읽는 중…';
   let lines=[];
-  for(const f of arr){
-    try{ lines=lines.concat(await sboReadFile_(f)); }
+  /* 파일 이름(출고조회_날짜시각)순 — 겹치는 줄은 나중 파일 것을 씁니다 (sboMerge) */
+  arr.sort(function(a,b){ return a.name.localeCompare(b.name); });
+  for(let fi=0;fi<arr.length;fi++){
+    const f=arr[fi];
+    try{ lines=lines.concat((await sboReadFile_(f)).map(function(L){ L.__f=fi; return L; })); }
     catch(e){ logEl.textContent='✕ '+e.message; showToast(e.message); return false; }
   }
   /* 9월까지 배송요청시트에 적힌 송장+품목 — 겹치는 줄을 거르는 데 씁니다 */
@@ -7095,7 +7131,8 @@ async function sboUpload(files,logEl){
     if(ok!==true){ logEl.textContent='✕ 저장하지 못했습니다 — 다시 로그인한 뒤 올려주세요'; showToast('저장 실패'); return false; }
   }
   const out=['사방넷 '+lines.length+'줄 읽음 → 담아 둔 출고 '+res.rows.length+'줄',
-    '   새로 담음 '+s.add+' · 송장 채움 '+s.upd+(s.del?' · 취소로 지움 '+s.del:''),
+    '   새로 담음 '+s.add+' · 송장 채움 '+s.upd+(s.del?' · 취소로 지움 '+s.del:'')+
+      (s.split?' · 송장 나뉜 품목 '+s.split+'건(합쳐 셈)':''),
     '   9월 배송요청시트와 겹침 '+s.dup+' · 출고취소 '+s.cancel+
       (s.same?' · 이미 담김 '+s.same:'')+(s.notB2B?' · B2B 아님 '+s.notB2B:'')];
   if(res.warn.length){ out.push('','⚠ 확인 필요'); res.warn.slice(0,12).forEach(function(x){ out.push('   · '+x); }); }
@@ -7138,6 +7175,7 @@ async function fetchEntryRows(opts){
       put(c.date,x.d); put(c.recv,x.r); put(c.addr,x.a); put(c.tel,x.t); put(c.odate,x.od);
       put(c.memo,x.m); put(c.item,x.i); put(c.qty,String(x.q)); put(c.inv,x.v);
       put(c.bigo,x.b); put(c.msg,x.msg); put(cc,x.cr);
+      a.sbo=1;   /* 사방넷 출고 줄 표시 — 관리메모1 칸엔 채널 이름(「약국 공급」)이 들어갑니다 */
       out.push(a);
     });
     if(sheetErr&&!so.rows.length) throw new Error(sheetErr);
@@ -7827,7 +7865,8 @@ async function ecLines_(ch,mk){
       if(r.m!=='약국 공급'||!r.v) return;
       const d=String(r.fin||r.d||''); if(d.slice(0,7)!==mk||d<EC_CUTOVER) return;
       const memo=String(r.b||'')+' '+String(r.msg||'');
-      const free=/테스터|디피|샘플|인플루언서|체험단|무상/.test(memo), paid=/공급|발주|판매/.test(memo);
+      /* 협찬 — 10/12 제주애월 「박한별 협찬 관련 퀵 배송」 2개가 매출로 잡혔습니다 */
+      const free=/테스터|디피|샘플|인플루언서|체험단|무상|협찬/.test(memo), paid=/공급|발주|판매/.test(memo);
       if(free&&!paid){ skipped.push(r.r+' '+r.i+' ×'+r.q+' (무상: '+memo.trim()+')'); return; }
       const it=ecItem_(M,r.i); const price=it?it.price:0;
       const total=price*(r.q||0), supply=Math.round(total/1.1);
@@ -8057,7 +8096,8 @@ async function rySheetLines_(){
     o.vst=!hit||hit.st==='extra'?'none':hit.st;
     o.name=o.plain||itemLabel(o.item);
     const prev=S[o.key];
-    o.state=!prev?'new':(prev.q!==o.qty||prev.tot!==o.supply+o.vat||prev.vc!==o.vcode||prev.code!==o.code)?'chg':'done';
+    /* 발주 대조 결과(vst)가 바뀌어도 다시 씁니다 — 송장 분리 건이 고쳐진 뒤에도 시트에 「발주와 다름」이 남았습니다 */
+    o.state=!prev?'new':(prev.q!==o.qty||prev.tot!==o.supply+o.vat||prev.vc!==o.vcode||prev.code!==o.code||(prev.vst&&prev.vst!=='man'&&prev.vst!==o.vst))?'chg':'done';
   });
   out.waiting=vr.filter(function(v){ return v.st==='wait'||v.st==='miss'; });
   return out;
@@ -8082,6 +8122,14 @@ async function sheetAutoSync_(){
     const L=await rySheetLines_();
     const todo=L.filter(function(o){ return o.state!=='done'&&o.vcode; });
     if(todo.length){ const R=rySheetOf_(); todo.forEach(function(o){ R.rows[o.key]=rySheetRow_(o); }); R.at=new Date().toISOString(); ryN=todo.length; changed++; }
+    /* 나중에 무상(협찬·테스터)으로 가른 출고 줄은 시트에서도 뺍니다 — 담기만 하고 지우지 않아
+       10/12 제주애월 협찬 2개(28,600)가 매출로 남아 있었습니다. 사방넷 출고 줄은 그대로인데 판매입력 줄에서 빠진 것만 지웁니다.
+       한꺼번에 많이 빠지면(10줄 넘게) 무언가 잘못 읽은 것이라 손대지 않습니다. */
+    const live={}; L.forEach(function(o){ live[o.key]=1; });
+    const so=await sboLoad(), src={};
+    (so.rows||[]).forEach(function(r){ if(r.m==='약국 공급'&&r.v) src['ry|'+r.k]=1; });
+    const R2=rySheetOf_(), drop=Object.keys(R2.rows).filter(function(k){ return src[k]&&!live[k]; });
+    if(drop.length&&drop.length<=10){ drop.forEach(function(k){ delete R2.rows[k]; }); R2.at=new Date().toISOString(); changed++; }
   }catch(e){}
   try{
     const now=sboToday_().slice(0,7), rows={};
@@ -9326,6 +9374,13 @@ async function ryVerifyRows(got0){
     const rule=ENTRY_RULES.find(x=>x.re.test(memo));
     if(!rule||rule.pid!=='ready') return;
     if(entryFreeOnly_(memo)) return;                  /* 순수 테스터·샘플 건만 뺍니다 */
+    /* 사방넷 출고 줄은 관리메모1 칸이 늘 「약국 공급」이라 위에서 못 거릅니다. 테스터·협찬은 비고·배송메시지에 적혀 옵니다
+       (10/22 두타몰 · 10/23 부산 테스터, 10/12 제주애월 협찬이 「발주서에 없음」으로 떴습니다).
+       정기 발주는 비고에 「발주 날짜」가 붙어 있어 걸리지 않습니다 — 발주에 테스터를 얹은 건은 아래 freeQty_ 가 뺍니다. */
+    if(r.sbo){
+      const note=entryKey_(String(c.bigo>=0?r[c.bigo]||'':'')+' '+String(c.msg>=0?r[c.msg]||'':''));
+      if(ENTRY_FREE.test(note)&&!/공급|판매|발주/.test(note)) return;
+    }
     let store=ryStoreKey(r[c.recv]);
     /* 온라인몰·창고 물량은 수취인이 담당자 이름입니다. 그런데 관리메모1 에
        발주처가 그대로 적혀 있습니다 — 「레디영 G마켓 온라인몰」.
