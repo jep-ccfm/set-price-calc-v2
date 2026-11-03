@@ -6941,7 +6941,7 @@ async function sboOrderXlsx(chId,rows,opt){
     const setN=r.setName||'', u=r.setOnly?'세트':'';
     const v={'상품고유코드':c?c[0]:'','판매상품명':c?c[1]:r.item,'수량':String((r.qty||0)+bonus||''),'배송방식':'택배',
       '주문자 이름':r.store,'받는분 이름':r.store,'전화번호1':sboTel_(r.tel)||'','우편번호':pl?pl.z:'',
-      '주소1':a1,'주소2':a2,'주문번호':r.ono||'',
+      '주소1':a1,'주소2':a2,'배송메세지':r.msg||'','주문번호':r.ono||'',
       '관리메모1':r.memo1||([bonus?bfPromo_().label:'',setN?'바로팜 '+setN+(r.setOnly?'':' 포함'):''].filter(Boolean).join(' · ')||(r.date?'발주 '+r.date:'')),
       '관리메모2':r.memo2||((bonus||setN)?((r.date?'발주 '+r.date+' · ':'')+(r.setOnly?setN+' ':'')+'주문 '+r.qty+u+(r.mix?' ('+r.mix+')':'')+(bonus?' + 증정 '+bonus+u:'')):''),
       '발주 타입':sboTypeOf_(chId)||'','출고희망일':ship};
@@ -10264,6 +10264,8 @@ function infApplyShip_(so){
     const hit=((so&&so.rows)||[]).filter(function(r){ return r.no===ono&&r.v; });
     if(!hit.length) return;
     const h=hit.sort(function(a,b){ return String(b.fin||b.d).localeCompare(String(a.fin||a.d)); })[0];
+    /* 안전재고만 실은 건(사람 없음)도 출고됐는지 알 수 있게 주문번호에 남깁니다 */
+    if(!O[ono].ship){ O[ono].ship={date:h.fin||h.d||'',inv:h.v,carrier:h.cr||''}; n++; }
     (O[ono].keys||[]).forEach(function(k){
       if(S[k]&&S[k].inv) return;
       S[k]={date:h.fin||h.d||'',inv:h.v,carrier:h.cr||'',ono:ono,at:new Date().toISOString()}; n++;
@@ -10278,6 +10280,106 @@ function infStatus_(p){
   const O=infOut_();
   for(const ono of Object.keys(O)) if((O[ono].keys||[]).indexOf(p.key)>=0) return {k:'sent',t:'사방넷 엑셀 받음 ('+String(O[ono].at||'').slice(5,10).replace('-','/')+') · 출고 대기',ono:ono};
   return {k:'wait',t:'출고 전'};
+}
+/* ---------- 지점 안전재고 (2026-11-03) ----------
+   레디영이 11/2 단톡에서 정한 방식 — 지점마다 인플루언서 제공품을 미리 쌓아 두고(세트별 안전재고),
+   매주 화요일 실물 재고를 확인해 3개 이하면 더 보내 달라고 합니다. 박스 겉면에 「인플루언서 제공품」 표기 요청.
+   예약이 주로 잡히는 명동·홍대·성수만, 세트(포어시그널 3종 / 루비알엔 2종)마다 목표 3세트(사용자 결정).
+   lib.infSafe = {target:{지점:{A,B}}, stock:{지점:{A,B}}, chk:{지점:'실사 날짜'}}
+   매장 보유는 보낼 때 더하고, 레디영이 알려 준 실사 수량을 넣으면 그 값으로 바꿉니다.
+   보낼 수량 = 목표 − 매장 보유 (손으로 고칠 수 있음). 체험단 1인 1세트 출고와 같은 주문번호로 묶어 한 번에 나갑니다. */
+const INF_SETS=[{k:'A',label:'포어시그널 3종',items:['포어시그널 딥 멜팅 폼클렌저','포어시그널 타이트락셀 앰플','포어시그널 셀텐자 크림']},
+  {k:'B',label:'루비알엔 2종',items:['루비알엔 앰플 클렌저','루비알엔 피코샷 크림']}];
+const INF_SAFE_STORES=['명동점','홍대점','성수점'];
+const INF_SAFE_DEF=3;
+function infSafe_(){ lib.infSafe=lib.infSafe||{}; const s=lib.infSafe; s.target=s.target||{}; s.stock=s.stock||{}; s.chk=s.chk||{}; return s; }
+function infSafeTarget_(st,k){ const t=(infSafe_().target[st]||{})[k]; return t==null?INF_SAFE_DEF:Number(t)||0; }
+function infSafeStock_(st,k){ return Number((infSafe_().stock[st]||{})[k])||0; }
+let infSafePlan={};   /* 이번에 보낼 수량을 손으로 고친 값 — 지점|세트 → 수량 (화면을 떠나면 다시 계산) */
+function infSafeSend_(st,k){
+  const p=infSafePlan[st+'|'+k];
+  if(p!=null) return Math.max(0,Number(p)||0);
+  return Math.max(0,infSafeTarget_(st,k)-infSafeStock_(st,k));
+}
+function infSafeBox_(){
+  const wrap=document.createElement('div');
+  wrap.style.cssText='margin-bottom:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#FBFAF7;';
+  const h=document.createElement('div');h.style.cssText='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;';
+  h.innerHTML='<b style="font-size:13px;">🧺 지점 안전재고</b><span class="hint">세트마다 목표 '+INF_SAFE_DEF+'세트 · 화요일 실사 수량을 「매장 보유」에 넣으면 보낼 수량이 다시 계산됩니다 · 「📤 사방넷 발주 엑셀」에 같이 들어갑니다</span>';
+  wrap.appendChild(h);
+  const t=document.createElement('table');t.className='led-table';
+  t.innerHTML='<thead><tr><th>지점 → 받는 곳</th><th>세트</th><th>목표</th><th>매장 보유</th><th>이번에 보낼</th><th>구성 (세트당 1개씩)</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  const num=function(v,onSet,w){
+    const i=document.createElement('input');i.type='number';i.min='0';i.className='cell-input';i.value=v;i.style.cssText='width:'+(w||64)+'px;padding:4px 6px;text-align:right;';
+    i.addEventListener('change',function(){ if(!canEdit()){ showToast('보기 전용입니다'); i.value=v; return; } onSet(Math.max(0,parseInt(i.value,10)||0)); });
+    return i;
+  };
+  INF_SAFE_STORES.forEach(function(st){
+    const d=infDest_(st);
+    INF_SETS.forEach(function(S,si){
+      const tr=document.createElement('tr');
+      if(si===0&&tb.children.length) tr.style.borderTop='2px solid var(--line)';
+      if(si===0){
+        const td0=document.createElement('td');td0.rowSpan=INF_SETS.length;td0.style.verticalAlign='top';
+        const chk=infSafe_().chk[st];
+        td0.innerHTML='<b>'+st+'</b><div style="font-size:11.5px;color:var(--ink-soft);">→ '+d.recv+'</div>'+
+          '<div style="font-size:11px;color:var(--ink-mute);">'+(chk?'실사 '+String(chk).slice(5).replace('-','/'):'실사 기록 없음')+'</div>';
+        tr.appendChild(td0);
+      }
+      const stock=infSafeStock_(st,S.k), send=infSafeSend_(st,S.k);
+      const c1=document.createElement('td');c1.textContent=S.label;tr.appendChild(c1);
+      const c2=document.createElement('td');c2.appendChild(num(infSafeTarget_(st,S.k),function(n){
+        const s=infSafe_(); s.target[st]=Object.assign({},s.target[st]||{}); s.target[st][S.k]=n;
+        delete infSafePlan[st+'|'+S.k]; persistLib(); refreshCurrentView(); }));tr.appendChild(c2);
+      const c3=document.createElement('td');
+      c3.appendChild(num(stock,function(n){
+        const s=infSafe_(); s.stock[st]=Object.assign({},s.stock[st]||{}); s.stock[st][S.k]=n; s.chk[st]=sboToday_();
+        delete infSafePlan[st+'|'+S.k]; persistLib(); refreshCurrentView(); }));
+      if(stock<=3) { const w=document.createElement('div');w.style.cssText='font-size:11px;color:var(--warn);font-weight:700;';w.textContent=stock?'3개 이하 — 보충':'비어 있음';c3.appendChild(w); }
+      tr.appendChild(c3);
+      const c4=document.createElement('td');
+      const si4=num(send,function(n){ infSafePlan[st+'|'+S.k]=n; refreshCurrentView(); });
+      si4.title='이번 엑셀에 넣을 세트 수 — 목표 − 매장 보유가 기본값입니다';
+      if(send) si4.style.fontWeight='700';
+      c4.appendChild(si4);tr.appendChild(c4);
+      const c5=document.createElement('td');c5.style.fontSize='12px';c5.style.color='var(--ink-soft)';c5.textContent=S.items.join(' · ');tr.appendChild(c5);
+      tb.appendChild(tr);
+    });
+  });
+  t.appendChild(tb);
+  const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t);wrap.appendChild(bx);
+  /* 최근 보낸 안전재고 — 출고 전이면 되돌릴 수 있습니다 (엑셀만 받고 사방넷에 안 올렸을 때) */
+  const O=infOut_();
+  const sent=Object.keys(O).filter(function(o){ return O[o].safe; }).sort(function(a,b){ return String(O[b].at).localeCompare(String(O[a].at)); }).slice(0,6);
+  if(sent.length){
+    const ul=document.createElement('div');ul.style.cssText='margin-top:8px;font-size:12px;display:flex;flex-direction:column;gap:4px;';
+    sent.forEach(function(ono){
+      const o=O[ono], sp=INF_SETS.filter(function(S){ return o.safe[S.k]; }).map(function(S){ return S.label+'×'+o.safe[S.k]; }).join(', ');
+      const line=document.createElement('div');line.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+      const tx=document.createElement('span');
+      tx.innerHTML=String(o.at||'').slice(5,10).replace('-','/')+' · <b>'+(o.recv||o.store)+'</b> 안전재고 '+sp+' · '+
+        (o.ship?'<span style="color:var(--good);font-weight:700;">출고 '+String(o.ship.date||'').slice(5).replace('-','/')+' '+(o.ship.carrier||'')+' '+o.ship.inv+'</span>':
+          '<span style="color:#8A5300;font-weight:700;">사방넷 엑셀 받음 · 출고 대기</span>')+' <span style="color:var(--ink-mute);">'+ono+'</span>';
+      line.appendChild(tx);
+      if(!o.ship&&canEdit()){
+        const x=document.createElement('button');x.className='icon-btn';x.style.fontSize='11px';x.textContent='↺ 되돌리기';
+        x.title='사방넷에 안 올렸으면 매장 보유에서 빼고 이 기록을 지웁니다';
+        x.addEventListener('click',function(){
+          const s=infSafe_(), sk=INF_SAFE_STORES.filter(function(st){ return infDest_(st).recv===o.recv; })[0]||o.store;
+          s.stock[sk]=Object.assign({},s.stock[sk]||{});
+          Object.keys(o.safe).forEach(function(k){ s.stock[sk][k]=Math.max(0,(Number(s.stock[sk][k])||0)-o.safe[k]); });
+          delete o.safe;
+          if(!(o.keys||[]).length) delete O[ono];
+          persistLib(); refreshCurrentView();
+        });
+        line.appendChild(x);
+      }
+      ul.appendChild(line);
+    });
+    wrap.appendChild(ul);
+  }
+  return wrap;
 }
 let infShowDone=false;
 /* ---------- 방문 기간 고르기 (2026-10-16) ----------
@@ -10370,6 +10472,7 @@ function renderInfluencer_(box){
       }
       body.appendChild(rb);
     }
+    body.appendChild(infSafeBox_());
     const h=document.createElement('div');h.className='sec-h';
     const hs=document.createElement('span');hs.textContent='📋 매장 수령 체험단 (기간 안 '+pick.length+'명 / 전체 '+pickAll.length+'명)';h.appendChild(hs);
     const tools=document.createElement('div');tools.className='sh-tools';
@@ -10378,29 +10481,52 @@ function renderInfluencer_(box){
     xb.addEventListener('click',async function(){
       if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 받아주세요'); return; }
       const todo=pick.filter(function(p){ return p.st.k==='wait'; });
-      if(!todo.length){ showToast('고른 방문 기간 안에 새로 보낼 사람이 없습니다'); return; }
+      /* 지점 안전재고 — 같은 지점 체험단 출고와 한 주문번호로 묶습니다 */
+      const safe={};
+      INF_SAFE_STORES.forEach(function(st){ INF_SETS.forEach(function(S){
+        const n=infSafeSend_(st,S.k); if(n){ (safe[st]=safe[st]||{})[S.k]=n; } }); });
+      if(!todo.length&&!Object.keys(safe).length){ showToast('고른 방문 기간 안에 새로 보낼 사람도, 보낼 안전재고도 없습니다'); return; }
+      /* 받는 곳(○○레디영)으로 묶어야 시트의 「명동점」과 안전재고의 「명동점」이 한 건이 됩니다 */
       const by={};
-      todo.forEach(function(p){ (by[p.store]=by[p.store]||[]).push(p); });
+      const grp=function(st){ const d=infDest_(st); return by[d.recv]=by[d.recv]||{st:st,d:d,ps:[],safe:null}; };
+      todo.forEach(function(p){ grp(p.store).ps.push(p); });
+      Object.keys(safe).forEach(function(st){ grp(st).safe=safe[st]; });
       const ymd=sboToday_().replace(/-/g,'').slice(2);
       const rows=[], outs=[];
-      Object.keys(by).forEach(function(st){
-        const ps=by[st], d=infDest_(st);
+      Object.keys(by).forEach(function(rk){
+        const g=by[rk], ps=g.ps, d=g.d, st=g.st;
         let ono='INF'+ymd+'-'+infNorm_(d.recv).replace(/레디영$/,'');
         let k2=2; while(infOut_()[ono]) ono=ono.replace(/_\d+$/,'')+'_'+(k2++);
         const cnt={};
         ps.forEach(function(p){ p.items.forEach(function(it){ cnt[it]=(cnt[it]||0)+1; }); });
+        const sp=[];
+        INF_SETS.forEach(function(S){ const n=(g.safe||{})[S.k]; if(!n) return;
+          S.items.forEach(function(it){ cnt[it]=(cnt[it]||0)+n; }); sp.push(S.label+'×'+n); });
         const dates=ps.map(function(p){ return p.date; }).filter(Boolean).sort();
-        const memo2='방문 '+(dates[0]?dates[0].slice(5).replace('-','/'):'?')+(dates.length>1&&dates[dates.length-1]!==dates[0]?'~'+dates[dates.length-1].slice(5).replace('-','/'):'')+
-          ' · '+ps.length+'명 ('+ps.slice(0,3).map(function(p){ return p.name; }).join(', ')+(ps.length>3?' 외':'')+')';
+        const memo2=[ps.length?'방문 '+(dates[0]?dates[0].slice(5).replace('-','/'):'?')+(dates.length>1&&dates[dates.length-1]!==dates[0]?'~'+dates[dates.length-1].slice(5).replace('-','/'):'')+
+          ' · '+ps.length+'명 ('+ps.slice(0,3).map(function(p){ return p.name; }).join(', ')+(ps.length>3?' 외':'')+')':'',
+          sp.length?'안전재고 '+sp.join(', '):''].filter(Boolean).join(' / ');
+        /* 박스 겉면 표기 — 레디영 요청(11/2). 배송메세지에 넣어 송장·박스에 찍히게 */
         Object.keys(cnt).forEach(function(it){
-          rows.push({store:d.recv,addr:d.addr,tel:d.tel,item:it,qty:cnt[it],ono:ono,date:'',memo1:'인플루언서 체험단 매장수령',memo2:memo2});
+          rows.push({store:d.recv,addr:d.addr,tel:d.tel,item:it,qty:cnt[it],ono:ono,date:'',
+            memo1:'인플루언서 제공품 · 매장수령',memo2:memo2,msg:'인플루언서 제공품 (매장 재고와 따로 보관)'});
         });
-        outs.push({ono:ono,keys:ps.map(function(p){ return p.key; }),store:st,recv:d.recv});
+        outs.push({ono:ono,keys:ps.map(function(p){ return p.key; }),store:st,recv:d.recv,safe:g.safe});
       });
       const res=await sboOrderXlsx('influencer',rows);
       if(!res) return;
-      const O=infOut_(), at=new Date().toISOString();
-      outs.forEach(function(o){ O[o.ono]={keys:o.keys,store:o.store,recv:o.recv,at:at}; });
+      const O=infOut_(), at=new Date().toISOString(), S0=infSafe_();
+      outs.forEach(function(o){
+        O[o.ono]={keys:o.keys,store:o.store,recv:o.recv,at:at};
+        if(o.safe){
+          O[o.ono].safe=o.safe;
+          /* 매장 보유에 바로 더합니다 — 사방넷에 안 올렸으면 아래 「되돌리기」 */
+          const sk=INF_SAFE_STORES.filter(function(x){ return infDest_(x).recv===o.recv; })[0]||o.store;
+          S0.stock[sk]=Object.assign({},S0.stock[sk]||{});
+          Object.keys(o.safe).forEach(function(k){ S0.stock[sk][k]=(Number(S0.stock[sk][k])||0)+o.safe[k]; });
+        }
+      });
+      infSafePlan={};
       persistLib(); refreshCurrentView();
     });
     tools.appendChild(xb);
@@ -10437,7 +10563,7 @@ function renderInfluencer_(box){
           x.addEventListener('click',function(){
             const O=infOut_()[p.st.ono]; if(!O) return;
             O.keys=(O.keys||[]).filter(function(k){ return k!==p.key; });
-            if(!O.keys.length) delete infOut_()[p.st.ono];
+            if(!O.keys.length&&!O.safe) delete infOut_()[p.st.ono];   /* 안전재고가 같이 실렸으면 기록은 남깁니다 */
             persistLib(); refreshCurrentView();
           });
           td.appendChild(x);
@@ -14721,7 +14847,7 @@ const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,sheetRef:1,mallTrack:1,entryShipped:1,r
 const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계산서',deposits:'입금',pharmInfo:'약국 정보',
   applicants:'자사몰 가입 신청',geo:'2km 지점',companies:'세트 저장소',trash:'휴지통',ecountDone:'이카운트 반영 표시',
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
-  orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',
+  orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',infSafe:'인플루언서 안전재고',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
   purchaseDocs:'발주서',chDocs:'서류 보관함',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
   rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
