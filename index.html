@@ -5860,7 +5860,11 @@ const ITEM_ALIAS={
      「＋ 발주 등록」에 이렇게 적은 10/08 생생온누리 건이 단가 0원으로 떴습니다 (2026-10-28) */
   '포어시그널앰플':'포어시그널 타이트락셀 앰플',
   '포어시그널크림':'포어시그널 셀텐자 크림',
-  '포어시그널클렌저':'포어시그널 딥 멜팅 폼클렌저'
+  '포어시그널클렌저':'포어시그널 딥 멜팅 폼클렌저',
+  /* 일본라방 세트 구성에 줄여 적은 이름 — 이카운트 판매입력이 「품목표에 없음」으로 막혔습니다 (10/29·10/30, 2026-11-03).
+     사방넷 출고로는 나노샷 앰플(M300KR)·액티브 캡슐 크림(M301KR)이 같은 수량으로 나갔습니다 */
+  '비타터닝앰플':'비타터닝 나노샷 앰플',
+  '비타터닝크림':'비타터닝 액티브 캡슐 크림'
 };
 /* ---------- 취급을 끊은 품목 ----------
    빼기 전에 나간 발주·명세서에는 그대로 남아 있습니다. 그래서 이름은 계속
@@ -6323,9 +6327,25 @@ function pharmNameHit_(pid,fallback,recvKey){
     const a=entryKey_(x); return a&&a===recvKey;
   });
 }
+/* 체인 약국 — 지점 이름이 무엇이든 사업자번호가 있는 본사 카드 하나로 (2026-11-03).
+   베리뉴 지점(홍대 레드로드·홍대점)이 출고될 때마다 사업자번호 없는 빈 카드가 저절로 생겨,
+   카톡 발주(본사 카드)와 출고가 짝을 못 지어 이카운트 판매입력에 같은 건이 두 번 떴습니다.
+   체인 = 약국별 공급가 표(AQ_PRICE_BY)에 있는 이름 — 지점마다 값이 같은 한 사업자입니다 */
+function aquaChainPid_(recvKey){
+  for(const c in AQ_PRICE_BY){
+    const ck=entryKey_(c); if(!ck||recvKey.indexOf(ck)<0) continue;
+    const hit=aquaAdded().filter(function(x){
+      return String(pharmInfoOf(x.pid).biz||'').trim()&&
+        pharmNames_(x.pid,x.name).some(function(n){ return entryKey_(n).indexOf(ck)>=0; });
+    })[0];
+    if(hit) return hit.pid;
+  }
+  return '';
+}
 function entryAquaPid_(recv){
   const k=entryKey_(recv);
   if(!k) return 'aquamedi';
+  const ch=aquaChainPid_(k); if(ch) return ch;
   /* 긴 이름부터 봐야 「온누리약국」이 「생생온누리약국」을 가로채지 않습니다 */
   const added=aquaAdded().slice().sort(function(a,b){
     const ln=function(x){ return Math.max.apply(null,pharmNames_(x.pid,x.name).map(function(n){ return entryKey_(n).length; }).concat([0])); };
@@ -7890,6 +7910,7 @@ async function ecLines_(ch,mk){
     const ph=aquamediPharms().map(function(x){ const inf=pharmInfoOf(x.pid); return {pid:x.pid,name:inf.name||x.name,corp:inf.corp||'',biz:inf.biz||'',k:entryKey_(inf.name||x.name)}; })
       .sort(function(a,b){ return b.k.length-a.k.length; });
     const pharmOf=function(recv){ const rk=entryKey_(recv);
+      const cp=aquaChainPid_(rk); if(cp){ const c=ph.filter(function(x){ return x.pid===cp; })[0]; if(c) return c; }
       return ph.filter(function(x){ return pharmNameHit_(x.pid,x.name,rk); })[0]||null; };
     const nk=function(n){ let mi=null; try{ mi=matchItem(n); }catch(e){} return itemKey(mi&&mi.name?mi.name:n); };
     const dayGap=function(a,b){ const x=Date.parse(a), y=Date.parse(b); return (isNaN(x)||isNaN(y))?999:Math.abs(Math.round((y-x)/86400000)); };
