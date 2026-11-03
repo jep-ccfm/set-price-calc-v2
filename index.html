@@ -7747,7 +7747,7 @@ async function kkoEcount_(pid,P,date,asXlsx){
    대시보드에 사방넷 출고·주문 금액이 다 있으니 여기서 같은 19열 표를 만듭니다.
      · 레디영   = 사방넷 출고(약국 공급) · 레디영 공급가 · 무상(테스터·디피·인플루언서) 제외
      · 자사몰   = 10월 주문 중 출고된 것 · 출고일 · 실제 주문 금액
-     · 바로팜   = 같은 방식 (5+1 증정분은 주문에 없으므로 자동 제외)
+     · 바로팜   = 같은 방식 + 5+1 증정분은 0원 줄로 따로 (재고가 실제로 나가므로 · 2026-11-03)
      · 아쿠아메디는 거래명세서를 이카운트에서 끊으므로 이미 들어가 있습니다 — 여기서 안 만듭니다.
    거래처표·품목표(완제품 코드)는 기존 자동화와 같은 「레디영 매출 시트」 마스터를 그대로 읽습니다.
    양식: 일자·순번·거래처코드·거래처명·담당자·출하창고(00000)·거래유형(11)·주문번호·품목코드·품목명·규격·
@@ -8052,10 +8052,17 @@ async function ecLines_(ch,mk){
         const meta=d.meta||{};
         const si=(lib.storeInfo||{})[d.branch]||{};
         const biz=ch==='barofarm'?meta['사업자번호']:(si.bizNo||'');
+        /* 바로팜 5+1 증정 (2026-11-03) — 증정분도 실제로 나간 재고라 이카운트에 수량이 들어가야 합니다.
+           사방넷 발주 엑셀과 같은 셈법: 한 주문 안에서 낱개 + 세트 속 같은 품목을 합쳐 5개마다 1개.
+           금액은 주문 줄에 이미 다 들어 있으니 증정분은 0원 줄로 따로 붙입니다 — 이미 올린 주문 줄은 그대로 둡니다. */
+        const bfSum={};
+        const bfAdd=function(nm,q){ if(ch!=='barofarm'||!q) return; const k=itemKey(itemLabel(nm));
+          bfSum[k]=bfSum[k]||{name:nm,q:0}; bfSum[k].q+=q; };
         (d.items||[]).forEach(function(it){
           const q=Number(it.qty)||0, sup=Number(it.supply)||0, vt=Number(it.vat)||0;
           /* 바로팜 세트 → 세 품목으로 풀고, 세트 금액은 품목 단가 비율로 나눕니다 */
           const st=ch==='barofarm'?bfSetOf_(it.name):null;
+          if(st) st.items.forEach(function(nm){ bfAdd(nm,q); }); else bfAdd(it.name,q);
           if(st){
             /* 비율은 바로팜 낱개 판매가(PRICE_LIST) — 품목표엔 단가가 빈 품목이 있습니다 */
             const W=st.items.map(function(nm){ const mi=matchItem(nm); const p=PRICE_LIST.filter(function(x){ return mi&&x[1]===mi.name; })[0]; return (p&&((String(d.date||'')<BF_PRICE_FROM&&BF_PRICE_PREV[p[1]])||p[5]))||1; });
@@ -8073,6 +8080,12 @@ async function ecLines_(ch,mk){
           push({key:ch.slice(0,2)+'|'+d.serial+'|'+itemKey(it.name),date:sd,vcode:biz?ecBiz_(biz):'',
             vname:(ch==='pharmmall'?(si.biz||d.branch):d.branch)||'',ono:(ch==='barofarm'?'BF':'')+d.serial,item:it.name,qty:q,
             unit:q?Math.round(sup/q):0,supply:sup,vat:vt,memo:'주문 '+d.date,warn:''});
+        });
+        Object.keys(bfSum).forEach(function(k){
+          const b=bfSum[k], fq=bfBonus_(b.q,d.date); if(!fq) return;
+          push({key:'ba|'+d.serial+'|bonus|'+k,date:sd,vcode:biz?ecBiz_(biz):'',vname:d.branch||'',ono:'BF'+d.serial,
+            item:b.name,qty:fq,unit:0,supply:0,vat:0,
+            memo:bfPromo_().label+' 증정 · 주문 '+d.date+' · '+b.q+'개 주문 → '+fq+'개 증정',warn:''});
         });
       });
     });
