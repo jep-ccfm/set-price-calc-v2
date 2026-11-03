@@ -6584,6 +6584,20 @@ function bfSetOf_(name){
   const t=String(name||''); if(!/SET|세트/i.test(t)) return null;
   return BF_SETS.filter(function(s){ return s.re.test(t); })[0]||null;
 }
+/* 한 주문의 5+1 증정 — {품목열쇠: {name, q}} (2026-11-03). 낱개와 세트 속 같은 품목을 합쳐 5개마다 1개.
+   주문 취소로 금액이 0이 된 품목은 셈에서 뺍니다. 이카운트 판매입력과 통합매출 시트(lib.bfFree)가 같이 씁니다.
+   name = 처음 나온 이름 — 세트는 구성 품목 이름, 낱개는 주문 엑셀 이름 */
+function bfFreeOf_(d){
+  const sum={}, nm={};
+  (d.items||[]).forEach(function(it){
+    if(!(Number(it.supply)||0)&&!(Number(it.vat)||0)) return;
+    const q=Number(it.qty)||0, st=bfSetOf_(it.name);
+    (st?st.items:[it.name]).forEach(function(n){ const k=itemKey(itemLabel(n)); sum[k]=(sum[k]||0)+q; if(!nm[k]) nm[k]=n; });
+  });
+  const out={};
+  Object.keys(sum).forEach(function(k){ const f=bfBonus_(sum[k],d.date); if(f) out[k]={name:nm[k],q:f}; });
+  return out;
+}
 /* ---------- 세트 홍보물 (이벤트 혜택 3 · 11월부터 순차 발송) ----------
    10월 세트 주문 약국에 —
    · X배너: 약국 · 세트마다 첫 구매 때 1개 (그 세트 X배너). 한국어 공통 + 중/영/일 중 하나 — 결제 「요청사항」에 적어 옵니다
@@ -8062,13 +8076,7 @@ async function ecLines_(ch,mk){
         const bfGone=function(it){ return ch==='barofarm'&&!(Number(it.supply)||0)&&!(Number(it.vat)||0); };
         (d.items||[]).forEach(function(it){ if(bfGone(it)) skipped.push((d.branch||'')+' '+it.name+' ×'+it.qty+' (주문 취소 · 금액 0)'); });
         const bfLeft={};
-        if(ch==='barofarm'){
-          const sum={};
-          const add=function(nm,q){ const k=itemKey(itemLabel(nm)); sum[k]=(sum[k]||0)+q; };
-          (d.items||[]).forEach(function(it){ if(bfGone(it)) return; const q=Number(it.qty)||0, st=bfSetOf_(it.name);
-            if(st) st.items.forEach(function(nm){ add(nm,q); }); else add(it.name,q); });
-          Object.keys(sum).forEach(function(k){ bfLeft[k]=bfBonus_(sum[k],d.date); });
-        }
+        if(ch==='barofarm'){ const F=bfFreeOf_(d); Object.keys(F).forEach(function(k){ bfLeft[k]=F[k].q; }); }
         const bfTake=function(nm){ const k=itemKey(itemLabel(nm)), n=bfLeft[k]||0; bfLeft[k]=0; return n; };
         const bfMemo=function(fq,q,u){ return fq?' · '+bfPromo_().label+' 주문 '+q+(u||'')+' + 증정 '+fq+(u||''):''; };
         (d.items||[]).forEach(function(it){
@@ -8190,6 +8198,15 @@ async function sheetAutoSync_(){
     const R=await sheetRefBuild_(), o=lib.sheetRef||{};
     if(JSON.stringify(o.codes||{})!==JSON.stringify(R.codes)||JSON.stringify(o.biz||{})!==JSON.stringify(R.biz)){
       lib.sheetRef={at:new Date().toISOString(),codes:R.codes,biz:R.biz}; changed++; }
+  }catch(e){}
+  /* 바로팜 5+1 증정 — 통합매출 시트가 0원 줄로 넣어 수량·원가에 잡습니다 (gs v6.8). {주문번호: [[품목명, 수량], …]} */
+  try{
+    const docs={}, BL=(lib.ledger&&lib.ledger.barofarm)||{months:{}};
+    Object.keys(BL.months||{}).forEach(function(m){ (BL.months[m].docs||[]).forEach(function(d){
+      const F=bfFreeOf_(d), a=Object.keys(F).map(function(k){ return [F[k].name,F[k].q]; });
+      if(a.length&&d.serial) docs[d.serial]=a; }); });
+    const o=lib.bfFree||{};
+    if(JSON.stringify(o.docs||{})!==JSON.stringify(docs)){ lib.bfFree={at:new Date().toISOString(),docs:docs}; changed++; }
   }catch(e){}
   if(changed){ persistLib(); if(ryN) showToast('레디영 출고 '+ryN+'줄을 매출 시트로 넘겼습니다'); }
 }
@@ -14901,14 +14918,14 @@ let homeSearchQ='', homeSearchVendors=null;
 function editLogEsc_(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 const EDIT_LOG_OWNER='jep@mkm20201101.com';
 const EDIT_LOG_SEEN='setPriceCalc:editLogSeen';
-const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,sheetRef:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
+const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,sheetRef:1,bfFree:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
 const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계산서',deposits:'입금',pharmInfo:'약국 정보',
   applicants:'자사몰 가입 신청',geo:'2km 지점',companies:'세트 저장소',trash:'휴지통',ecountDone:'이카운트 반영 표시',
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
   orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',infSafe:'인플루언서 안전재고',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
   purchaseDocs:'발주서',chDocs:'서류 보관함',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
-  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
+  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',bfFree:'바로팜 5+1 증정',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
   rdRaw:'레디영 rawdata',branchStock:'지점 취급표',bfVerify:'바로팜 대조'};
 function editLogIsAuto_(c){
   const p=String(c.p||''), top=p.split('.')[0];
