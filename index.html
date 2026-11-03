@@ -7747,7 +7747,7 @@ async function kkoEcount_(pid,P,date,asXlsx){
    대시보드에 사방넷 출고·주문 금액이 다 있으니 여기서 같은 19열 표를 만듭니다.
      · 레디영   = 사방넷 출고(약국 공급) · 레디영 공급가 · 무상(테스터·디피·인플루언서) 제외
      · 자사몰   = 10월 주문 중 출고된 것 · 출고일 · 실제 주문 금액
-     · 바로팜   = 같은 방식 + 5+1 증정분은 0원 줄로 따로 (재고가 실제로 나가므로 · 2026-11-03)
+     · 바로팜   = 같은 방식 + 5+1 증정분은 주문 줄 수량에 합침 (재고가 실제로 나가므로 · 금액 그대로 · 2026-11-03)
      · 아쿠아메디는 거래명세서를 이카운트에서 끊으므로 이미 들어가 있습니다 — 여기서 안 만듭니다.
    거래처표·품목표(완제품 코드)는 기존 자동화와 같은 「레디영 매출 시트」 마스터를 그대로 읽습니다.
    양식: 일자·순번·거래처코드·거래처명·담당자·출하창고(00000)·거래유형(11)·주문번호·품목코드·품목명·규격·
@@ -7755,6 +7755,7 @@ async function kkoEcount_(pid,P,date,asXlsx){
    ============================================================ */
 const EC_HUB_ID='1R7KZpSo90SMAPjq5U-gu4XvxvJKne7snky1xOMdZMYw';
 const EC_CUTOVER='2026-10-01';
+const EC_BF_FREE_FROM='2026-11-03';   /* 이날까지 「올림」 표시한 바로팜 줄은 5+1 증정이 빠진 채 올라갔습니다 */
 const EC_HEADERS=['일자','순번','거래처코드','거래처명','담당자','출하창고','거래유형','주문번호','품목코드','품목명','규격',
   '수량','단가','외화금액','공급가액','부가세','적요','생산전표생성','시리얼/로트'];
 const EC_CH=[{id:'ready',label:'레디영'},{id:'pharmmall',label:'자사몰 약사전용관'},{id:'barofarm',label:'바로팜'},
@@ -8054,15 +8055,22 @@ async function ecLines_(ch,mk){
         const biz=ch==='barofarm'?meta['사업자번호']:(si.bizNo||'');
         /* 바로팜 5+1 증정 (2026-11-03) — 증정분도 실제로 나간 재고라 이카운트에 수량이 들어가야 합니다.
            사방넷 발주 엑셀과 같은 셈법: 한 주문 안에서 낱개 + 세트 속 같은 품목을 합쳐 5개마다 1개.
-           금액은 주문 줄에 이미 다 들어 있으니 증정분은 0원 줄로 따로 붙입니다 — 이미 올린 주문 줄은 그대로 둡니다. */
-        const bfSum={};
-        const bfAdd=function(nm,q){ if(ch!=='barofarm'||!q) return; const k=itemKey(itemLabel(nm));
-          bfSum[k]=bfSum[k]||{name:nm,q:0}; bfSum[k].q+=q; };
+           증정분은 그 품목 주문 줄 수량에 합칩니다 (사용자 결정) — 금액은 그대로, 단가만 낮아집니다.
+           낱개와 세트에 같은 품목이 있으면 먼저 나오는 줄 하나에 몰아 붙입니다. */
+        const bfLeft={};
+        if(ch==='barofarm'){
+          const sum={};
+          const add=function(nm,q){ const k=itemKey(itemLabel(nm)); sum[k]=(sum[k]||0)+q; };
+          (d.items||[]).forEach(function(it){ const q=Number(it.qty)||0, st=bfSetOf_(it.name);
+            if(st) st.items.forEach(function(nm){ add(nm,q); }); else add(it.name,q); });
+          Object.keys(sum).forEach(function(k){ bfLeft[k]=bfBonus_(sum[k],d.date); });
+        }
+        const bfTake=function(nm){ const k=itemKey(itemLabel(nm)), n=bfLeft[k]||0; bfLeft[k]=0; return n; };
+        const bfMemo=function(fq,q,u){ return fq?' · '+bfPromo_().label+' 주문 '+q+(u||'')+' + 증정 '+fq+(u||''):''; };
         (d.items||[]).forEach(function(it){
           const q=Number(it.qty)||0, sup=Number(it.supply)||0, vt=Number(it.vat)||0;
           /* 바로팜 세트 → 세 품목으로 풀고, 세트 금액은 품목 단가 비율로 나눕니다 */
           const st=ch==='barofarm'?bfSetOf_(it.name):null;
-          if(st) st.items.forEach(function(nm){ bfAdd(nm,q); }); else bfAdd(it.name,q);
           if(st){
             /* 비율은 바로팜 낱개 판매가(PRICE_LIST) — 품목표엔 단가가 빈 품목이 있습니다 */
             const W=st.items.map(function(nm){ const mi=matchItem(nm); const p=PRICE_LIST.filter(function(x){ return mi&&x[1]===mi.name; })[0]; return (p&&((String(d.date||'')<BF_PRICE_FROM&&BF_PRICE_PREV[p[1]])||p[5]))||1; });
@@ -8071,21 +8079,17 @@ async function ecLines_(ch,mk){
             st.items.forEach(function(nm,i){
               const last=i===st.items.length-1;
               const s1=last?rs:Math.round(sup*W[i]/ws), v1=last?rv:Math.round(vt*W[i]/ws); rs-=s1; rv-=v1;
+              const fq=bfTake(nm), n=q+fq;
               push({key:'ba|'+d.serial+'|'+itemKey(it.name)+'|'+itemKey(nm),date:sd,vcode:biz?ecBiz_(biz):'',
-                vname:d.branch||'',ono:'BF'+d.serial,item:nm,qty:q,unit:q?Math.round(s1/q):0,supply:s1,vat:v1,
-                memo:'주문 '+d.date+' · '+it.name+' '+q+'세트 나눔',warn:''});
+                vname:d.branch||'',ono:'BF'+d.serial,item:nm,qty:n,unit:n?Math.round(s1/n):0,supply:s1,vat:v1,free:fq,
+                memo:'주문 '+d.date+' · '+it.name+' '+q+'세트 나눔'+bfMemo(fq,q),warn:''});
             });
             return;
           }
+          const fq=ch==='barofarm'?bfTake(it.name):0, n=q+fq;
           push({key:ch.slice(0,2)+'|'+d.serial+'|'+itemKey(it.name),date:sd,vcode:biz?ecBiz_(biz):'',
-            vname:(ch==='pharmmall'?(si.biz||d.branch):d.branch)||'',ono:(ch==='barofarm'?'BF':'')+d.serial,item:it.name,qty:q,
-            unit:q?Math.round(sup/q):0,supply:sup,vat:vt,memo:'주문 '+d.date,warn:''});
-        });
-        Object.keys(bfSum).forEach(function(k){
-          const b=bfSum[k], fq=bfBonus_(b.q,d.date); if(!fq) return;
-          push({key:'ba|'+d.serial+'|bonus|'+k,date:sd,vcode:biz?ecBiz_(biz):'',vname:d.branch||'',ono:'BF'+d.serial,
-            item:b.name,qty:fq,unit:0,supply:0,vat:0,
-            memo:bfPromo_().label+' 증정 · 주문 '+d.date+' · '+b.q+'개 주문 → '+fq+'개 증정',warn:''});
+            vname:(ch==='pharmmall'?(si.biz||d.branch):d.branch)||'',ono:(ch==='barofarm'?'BF':'')+d.serial,item:it.name,qty:n,
+            unit:n?Math.round(sup/n):0,supply:sup,vat:vt,free:fq,memo:'주문 '+d.date+bfMemo(fq,q),warn:''});
         });
       });
     });
@@ -8702,6 +8706,42 @@ function buildEcountPanel_(){
       const w=document.createElement('div');w.className='hint';w.style.cssText='color:var(--warn);margin-bottom:6px;';
       w.textContent='⚠ 확인 필요 '+warnN+'줄 — 거래처코드·품목코드가 없으면 이카운트에서 막히거나 엉뚱한 품목(반제품)이 잡힐 수 있습니다.';
       body.appendChild(w);
+    }
+    /* 바로팜 5+1 증정 — 2026-11-03 까지는 주문 수량만 올렸습니다. 그 전표는 이카운트에서 지우고
+       증정을 합친 수량으로 새로 올립니다 (사용자 결정). 지웠다고 누르면 그 전표의 모든 줄(증정 없는 세트 줄 포함)이
+       다시 「올릴 줄」로 돌아오고, lib.ecBfFixed 에 적어 이 목록에 다시 안 뜹니다. */
+    if(ecView.ch==='barofarm'){
+      const FX=lib.ecBfFixed=lib.ecBfFixed||{};
+      const gk=function(o){ return o.date+'|'+(o.vcode||o.vname); };
+      const bad={};
+      res.lines.forEach(function(o){ if(o.free>0&&D[o.key]&&D[o.key]<=EC_BF_FREE_FROM&&!FX[o.key]) bad[gk(o)]=1; });
+      const grp=[];
+      res.lines.forEach(function(o){ const k=gk(o); if(!bad[k]) return;
+        let g=grp.filter(function(x){ return x.k===k; })[0];
+        if(!g){ g={k:k,date:o.date,v:o.vname,amt:0,free:0,lines:[]}; grp.push(g); }
+        g.amt+=o.supply+o.vat; g.free+=o.free||0; g.lines.push(o); });
+      if(grp.length){
+        const bx=document.createElement('div');
+        bx.style.cssText='border:1px solid #E8C48A;background:#FFF8EC;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;';
+        const fq=grp.reduce(function(a,g){ return a+g.free; },0);
+        bx.innerHTML='<b style="color:#8A5300;">🎁 5+1 증정이 빠진 채 올라간 전표 '+grp.length+'개 (증정 '+fmt(fq)+'개)</b>'+
+          '<div class="hint" style="margin:4px 0 8px;">① 이카운트에서 아래 전표를 지웁니다 (날짜 · 거래처 · 합계로 찾기) → ② 「지웠어요」 → '+
+          '③ 그 전표 줄이 증정을 합친 수량으로 위 「올릴 줄」에 다시 뜹니다 — 📋 표 복사로 올리고 「✔ 올린 걸로 표시」. 금액은 그대로입니다.</div>';
+        const tb=document.createElement('div');tb.style.cssText='max-height:240px;overflow:auto;';
+        tb.innerHTML='<table class="tbl" style="font-size:12px;"><thead><tr><th>일자</th><th>거래처</th><th style="text-align:right;">합계</th><th style="text-align:right;">줄</th><th style="text-align:right;">증정</th></tr></thead><tbody>'+
+          grp.map(function(g){ return '<tr><td>'+g.date+'</td><td>'+settleEsc_(g.v||'')+'</td><td class="num-cell">'+fmt(g.amt)+'</td><td class="num-cell">'+g.lines.length+'</td><td class="num-cell" style="color:#8A5300;font-weight:600;">'+fmt(g.free)+'</td></tr>'; }).join('')+'</tbody></table>';
+        bx.appendChild(tb);
+        const bt=document.createElement('div');bt.style.cssText='display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;';
+        const x2=document.createElement('button');x2.className='icon-btn';x2.textContent='✔ 이카운트에서 지웠어요 — 다시 올릴 줄로';
+        x2.addEventListener('click',function(){
+          if(!canEdit()){ showToast('보기 전용입니다'); return; }
+          if(!confirm('전표 '+grp.length+'개를 이카운트에서 지웠나요? 그 줄들을 다시 「올릴 줄」로 돌립니다.')) return;
+          const at=new Date().toISOString().slice(0,10);
+          grp.forEach(function(g){ g.lines.forEach(function(o){ delete D[o.key]; FX[o.key]=at; }); });
+          persistLib(); showToast('다시 올릴 줄로 돌렸습니다 — 표 복사로 올려 주세요'); draw();
+        });
+        bt.append(x2); bx.appendChild(bt); body.appendChild(bx);
+      }
     }
     if(res.skipped.length){
       const w2=document.createElement('div');w2.className='hint';w2.style.marginBottom='6px';
