@@ -8057,17 +8057,22 @@ async function ecLines_(ch,mk){
            사방넷 발주 엑셀과 같은 셈법: 한 주문 안에서 낱개 + 세트 속 같은 품목을 합쳐 5개마다 1개.
            증정분은 그 품목 주문 줄 수량에 합칩니다 (사용자 결정) — 금액은 그대로, 단가만 낮아집니다.
            낱개와 세트에 같은 품목이 있으면 먼저 나오는 줄 하나에 몰아 붙입니다. */
+        /* 품목 일부 취소 — 주문 엑셀을 다시 올리면 수량은 남고 금액만 0 이 됩니다 (10/25 서면올데이 루비알엔 겔 마스크 20).
+           출고도 안 됐으니 이카운트·증정 셈에서 뺍니다 (2026-11-03) */
+        const bfGone=function(it){ return ch==='barofarm'&&!(Number(it.supply)||0)&&!(Number(it.vat)||0); };
+        (d.items||[]).forEach(function(it){ if(bfGone(it)) skipped.push((d.branch||'')+' '+it.name+' ×'+it.qty+' (주문 취소 · 금액 0)'); });
         const bfLeft={};
         if(ch==='barofarm'){
           const sum={};
           const add=function(nm,q){ const k=itemKey(itemLabel(nm)); sum[k]=(sum[k]||0)+q; };
-          (d.items||[]).forEach(function(it){ const q=Number(it.qty)||0, st=bfSetOf_(it.name);
+          (d.items||[]).forEach(function(it){ if(bfGone(it)) return; const q=Number(it.qty)||0, st=bfSetOf_(it.name);
             if(st) st.items.forEach(function(nm){ add(nm,q); }); else add(it.name,q); });
           Object.keys(sum).forEach(function(k){ bfLeft[k]=bfBonus_(sum[k],d.date); });
         }
         const bfTake=function(nm){ const k=itemKey(itemLabel(nm)), n=bfLeft[k]||0; bfLeft[k]=0; return n; };
         const bfMemo=function(fq,q,u){ return fq?' · '+bfPromo_().label+' 주문 '+q+(u||'')+' + 증정 '+fq+(u||''):''; };
         (d.items||[]).forEach(function(it){
+          if(bfGone(it)) return;
           const q=Number(it.qty)||0, sup=Number(it.supply)||0, vt=Number(it.vat)||0;
           /* 바로팜 세트 → 세 품목으로 풀고, 세트 금액은 품목 단가 비율로 나눕니다 */
           const st=ch==='barofarm'?bfSetOf_(it.name):null;
