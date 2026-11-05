@@ -10510,6 +10510,19 @@ function renderInfluencer_(box){
     try{ if(canEdit()&&infApplyShip_(await sboLoad())) persistLib(); }catch(e){}
     const pickAll=list.filter(function(p){ return /매장/.test(p.supply); });
     pickAll.forEach(function(p){ p.st=infStatus_(p); p.items=infItems_(p.item); });
+    /* 같은 사람 · 같은 지점이 3일 안에 두 줄 — 시트에 방문일만 바꿔 한 번 더 적힌 경우입니다 (2026-11-05).
+       열쇠가 「이름|날짜|지점」이라 두 줄이 따로 잡혀 한 세트를 더 보냈습니다(11/3 명동 tzuhengwu 11/10·11/11).
+       이미 보냈거나 먼저 오는 줄 하나만 두고, 나머지 「출고 전」 줄은 엑셀에서 빼고 「중복?」으로 보여 줍니다. */
+    {
+      const dd=function(a,b){ const x=Date.parse(a), y=Date.parse(b); return (isNaN(x)||isNaN(y))?99:Math.abs(x-y)/86400000; };
+      const rank=function(p){ return p.st.k==='done'?0:p.st.k==='sent'?1:2; };
+      const seen={};
+      pickAll.slice().sort(function(a,b){ return rank(a)-rank(b)||String(a.date).localeCompare(String(b.date)); }).forEach(function(p){
+        const k=infNorm_(p.name)+'|'+infNorm_(p.store), prev=(seen[k]||[]).filter(function(q){ return dd(q.date,p.date)<=3; })[0];
+        if(prev&&p.st.k==='wait') p.st={k:'dup',t:'중복? — 같은 사람 '+String(prev.date).slice(5).replace('-','/')+' 방문 줄과 겹쳐 엑셀에서 뺌'};
+        (seen[k]=seen[k]||[]).push(p);
+      });
+    }
     /* 고른 방문 기간 안의 사람만 */
     const R=infRange_();
     const pick=pickAll.filter(function(p){ return infInRange_(p,R); });
