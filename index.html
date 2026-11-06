@@ -7926,7 +7926,11 @@ async function ecLines_(ch,mk){
       .sort(function(a,b){ return b.k.length-a.k.length; });
     const pharmOf=function(recv){ const rk=entryKey_(recv);
       const cp=aquaChainPid_(rk); if(cp){ const c=ph.filter(function(x){ return x.pid===cp; })[0]; if(c) return c; }
-      return ph.filter(function(x){ return pharmNameHit_(x.pid,x.name,rk); })[0]||null; };
+      const hit=ph.filter(function(x){ return pharmNameHit_(x.pid,x.name,rk); })[0];
+      if(hit) return hit;
+      /* 받는 사람 칸에 카톡 문구가 붙어 오는 경우 — 「생생온누리약국 발주 추가합니다」 (11/04).
+         괄호(지역)를 뗀 약국 이름이 통째로 들어 있으면 그 약국으로 봅니다 */
+      return ph.filter(function(x){ const b=entryKey_(String(x.name||'').replace(/[(（][^)）]*[)）]/g,'')); return b.length>=4&&rk.indexOf(b)>=0; })[0]||null; };
     const nk=function(n){ let mi=null; try{ mi=matchItem(n); }catch(e){} return itemKey(mi&&mi.name?mi.name:n); };
     const dayGap=function(a,b){ const x=Date.parse(a), y=Date.parse(b); return (isNaN(x)||isNaN(y))?999:Math.abs(Math.round((y-x)/86400000)); };
     /* 카톡 발주는 지점을 괄호에 적습니다 — 「베리뉴약국(해운대점)」.
@@ -7990,14 +7994,19 @@ async function ecLines_(ch,mk){
             return !e.br||rk.indexOf(e.br)>=0;   /* 지점이 적혀 있으면 그 지점 출고하고만 */
           })
           .sort(function(a,b){ return ((a.sk===rk)?0:1)-((b.sk===rk)?0:1)||dayGap(a.date,x.d)-dayGap(b.date,x.d); });
-        if(cand.length){ cand[0].rem-=q; absorbed[r.k]=cand[0]; }
+        if(cand.length){ cand[0].rem-=q; absorbed[r.k]=cand[0];
+          /* 짝지은 사방넷 주문번호·송장을 발주 줄에 남깁니다 — 통합매출 시트 「문서번호」가 「대시보드 카톡 …」으로만 나와
+             재무가 WMS 출고조회에서 못 찾았습니다 (2026-11-06) */
+          (cand[0].ships=cand[0].ships||[]).push({no:String(r.no||''),v:String(r.v||'')}); }
       });
     /* 이 달 카톡 발주 줄 */
     kk.forEach(function(e){
       if(e.date.slice(0,7)!==mk) return;
       const price=aqPriceOf_(e.store,e.name), sup=price*e.q, vt=Math.round(sup*0.1);
-      push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),pid:e.p.pid,recv:e.store,date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:'',
-        item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:(e.o.src?'카톡':'수기')+' 발주 '+e.date+' · '+e.store,tag:e.o.src?'카톡':'수기',
+      const uq=function(a){ return a.filter(function(x,i){ return x&&a.indexOf(x)===i; }); };
+      const sNo=uq((e.ships||[]).map(function(s){ return s.no; })), sInv=uq((e.ships||[]).map(function(s){ return s.v; }));
+      push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),pid:e.p.pid,recv:e.store,date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:sNo.join(', '),
+        item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:(e.o.src?'카톡':'수기')+' 발주 '+e.date+' · '+e.store+(sInv.length?' · 사방넷 송장 '+sInv.join(', '):' · 사방넷 출고 기록 없음'),tag:e.o.src?'카톡':'수기',
         warn:price?'':'아쿠아메디 단가 없음'});
     });
     /* 이 달 사방넷 출고 줄 — 카톡 발주와 합친 건은 뺍니다 */
