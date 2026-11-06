@@ -8005,8 +8005,8 @@ async function ecLines_(ch,mk){
       const price=aqPriceOf_(e.store,e.name), sup=price*e.q, vt=Math.round(sup*0.1);
       const uq=function(a){ return a.filter(function(x,i){ return x&&a.indexOf(x)===i; }); };
       const sNo=uq((e.ships||[]).map(function(s){ return s.no; })), sInv=uq((e.ships||[]).map(function(s){ return s.v; }));
-      push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),pid:e.p.pid,recv:e.store,date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:sNo.join(', '),
-        item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:(e.o.src?'카톡':'수기')+' 발주 '+e.date+' · '+e.store+(sInv.length?' · 사방넷 송장 '+sInv.join(', '):' · 사방넷 출고 기록 없음'),tag:e.o.src?'카톡':'수기',
+      push({key:'kk|'+e.o.id+'|'+e.ii+'|'+itemKey(e.name),pid:e.p.pid,recv:e.store,date:e.date,vcode:e.p.biz?ecBiz_(e.p.biz):'',vname:e.p.corp||e.p.name,ono:sNo.join(', ')||String(e.o.ship||''),
+        item:e.name,qty:e.q,unit:price,supply:sup,vat:vt,memo:(e.o.src?'카톡':'수기')+' 발주 '+e.date+' · '+e.store+(sInv.length?' · 사방넷 송장 '+sInv.join(', '):(e.o.ship?' · '+e.o.ship:' · 사방넷 출고 기록 없음')),tag:e.o.src?'카톡':'수기',
         warn:price?'':'아쿠아메디 단가 없음'});
     });
     /* 이 달 사방넷 출고 줄 — 카톡 발주와 합친 건은 뺍니다 */
