@@ -10406,12 +10406,25 @@ function infApplyShip_(so){
   });
   return n;
 }
+/* 일정만 바뀐 사람 (2026-11-09) — 시트가 방문날짜를 최종 날짜 한 줄로 고치면 열쇠(성함|날짜|지점)가 바뀝니다.
+   같은 성함 · 같은 지점이 14일 안 다른 날짜로 이미 나갔으면 같은 사람으로 봐 다시 보내지 않습니다. */
+function infSameKey_(key,cand){
+  const a=String(key).split('|'), b=String(cand).split('|');
+  if(a.length<3||b.length<3||a[0]!==b[0]||a[2]!==b[2]||a[1]===b[1]) return false;
+  const x=Date.parse(a[1]), y=Date.parse(b[1]);
+  return !isNaN(x)&&!isNaN(y)&&Math.abs(x-y)<=14*86400000;
+}
 function infStatus_(p){
-  const S=infShip_()[p.key];
+  const SS=infShip_();
+  const S=SS[p.key];
   if(S&&S.inv) return {k:'done',t:'출고 '+String(S.date||'').slice(5).replace('-','/')+' · '+(S.carrier?S.carrier+' ':'')+S.inv};
   if(p.sheetShip) return {k:'done',t:p.sheetShip};
   const O=infOut_();
   for(const ono of Object.keys(O)) if((O[ono].keys||[]).indexOf(p.key)>=0) return {k:'sent',t:'사방넷 엑셀 받음 ('+String(O[ono].at||'').slice(5,10).replace('-','/')+') · 출고 대기',ono:ono};
+  const mv=Object.keys(SS).filter(function(k){ return SS[k]&&SS[k].inv&&infSameKey_(p.key,k); })[0];
+  if(mv){ const M=SS[mv]; return {k:'done',t:'출고 '+String(M.date||'').slice(5).replace('-','/')+' · '+(M.carrier?M.carrier+' ':'')+M.inv+' (방문일 '+mv.split('|')[1].slice(5).replace('-','/')+' → 변경)'}; }
+  for(const ono of Object.keys(O)){ const k2=(O[ono].keys||[]).filter(function(k){ return infSameKey_(p.key,k); })[0];
+    if(k2) return {k:'sent',t:'사방넷 엑셀 받음 ('+String(O[ono].at||'').slice(5,10).replace('-','/')+') · 출고 대기 (방문일 변경)',ono:ono}; }
   return {k:'wait',t:'출고 전'};
 }
 /* ---------- 지점 안전재고 (2026-11-03) ----------
