@@ -10382,6 +10382,7 @@ async function infFetch_(){
 }
 /* 받는 곳 — 레디영 지점 (이름은 사방넷에 쓰던 「○○레디영」) */
 function infDest_(store){
+  store=String(store||"").replace(/플래그십/g,"플래그쉽");   /* 시트 「명동 플래그십점」 ↔ 지점표 「명동플래그쉽」 */
   const site=findSite(ryStoreKey(store))||findSite(store);
   const base=(site?site.name:store).replace(/\(.*\)/,'').replace(/점$/,'').trim();
   const recv=base+'레디영';
