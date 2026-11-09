@@ -10365,7 +10365,7 @@ async function infFetch_(){
     const H=rows[hi].map(function(x){ return String(x||'').replace(/\s+/g,''); });
     const ix=function(re){ for(let i=0;i<H.length;i++) if(re.test(H[i])) return i; return -1; };
     const c={store:ix(/^지점/)>=0?ix(/^지점/):0,name:ix(/성함/),tel:ix(/연락처/),date:ix(/방문날짜/),nat:ix(/국가/),
-      sns:ix(/SNS계정ID/),supply:ix(/제품제공/),item:ix(/품목/),ship:ix(/제품배송/)};
+      sns:ix(/SNS계정ID/),supply:ix(/제품제공/),item:ix(/품목/),ship:ix(/제품배송|출고확인/)};   /* 기존 전지점 탭은 「출고확인」 */
     /* 날짜 칸은 제목이 빠져서 옵니다(gviz 가 날짜형 칸의 머리글을 버림) — 날짜 모양 값이 있는 칸을 씁니다 */
     if(c.date<0){ for(let j=0;j<(rows[hi+1]||[]).length&&c.date<0;j++){ if(rows.slice(hi+1,hi+6).some(function(r){ return /\d{4}\s*[.\-\/]\s*\d{1,2}\s*[.\-\/]\s*\d{1,2}/.test(String(r[j]||'')); })) c.date=j; } }
     for(let i=hi+1;i<rows.length;i++){
