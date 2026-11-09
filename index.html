@@ -10785,6 +10785,8 @@ const SAMPLE_ITEMS=(function(){
   /* 루솔브 — 메라블 판매 품목표엔 없지만 사무실 샘플로 둡니다 (2026-11-09 실사).
      사방넷 상품코드를 아직 몰라 비워 둡니다 — 비슷한 메라블 품목 코드로 잘못 잡히지 않게 code:'' */
   ['루솔브 샴푸','루솔브 트리트먼트','루솔브 토닉','루솔브 앰플'].forEach(function(n){ out.push({name:n,brand:'루솔브',base:n,code:''}); });
+  /* 아쿠엑소 — 사방넷 마스터 M996KR 「아쿠엑소 부스트업 앰플 클렌저 150ml」 (2026-11-09 실사 8개) */
+  out.push({name:'아쿠엑소 부스트업 앰플 클렌저',brand:'아쿠엑소',base:'아쿠엑소 부스트업 앰플 클렌저',code:['M996KR','아쿠엑소 부스트업 앰플 클렌저 150ml']});
   return out;
 })();
 function sampleItemOf_(n){ return SAMPLE_ITEMS.filter(function(x){ return x.name===n; })[0]||null; }
