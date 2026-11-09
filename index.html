@@ -10760,12 +10760,32 @@ const SAMPLE_MIN_DEF=10;
 const SAMPLE_T={out:{ic:'📤',l:'출고'},loan:{ic:'📸',l:'대여'},in:{ic:'📥',l:'입고'},count:{ic:'📋',l:'실사'}};
 function sampleRO_(){ const s=(lib&&lib.sample)||{}; return {items:s.items||{},log:s.log||[],extra:s.extra||[],orders:s.orders||[],ship:s.ship||null}; }
 function sample_(){ lib.sample=lib.sample||{}; const s=lib.sample; s.items=s.items||{}; s.log=s.log||[]; s.extra=s.extra||[]; return s; }
+/* 샘플 품목 — 판매 품목표에 소용량·매입 구분을 더했습니다 (2026-11-09 사용자 요청).
+   base = 판매 품목명, spec = 사방넷 상품을 고를 용량 (루비알엔 클렌저 33ml = M004KR · 볼륨필인 11ml = M209KR).
+   900 아이크림 5ml · 클렌징 패드 3매입/10매입은 사방넷 상품코드를 아직 몰라 엑셀에서 코드 칸이 비면 사방넷에서 골라 주세요. */
+const SAMPLE_ITEMS=(function(){
+  const out=[];
+  PRICE_LIST.forEach(function(p){
+    const n=p[1], b=p[0];
+    if(n==='클리어 클렌징 패드'){
+      out.push({name:'클리어 클렌징 패드 3매입',brand:b,base:n,spec:'3매'});
+      out.push({name:'클리어 클렌징 패드 10매입',brand:b,base:n,spec:'10매'});
+      return;
+    }
+    out.push({name:n,brand:b,base:n});
+    if(n==='루비알엔 앰플 클렌저') out.push({name:'루비알엔 앰플 클렌저 33ml (소용량)',brand:b,base:n,spec:'33ml'});
+    if(n==='유쎄라블 2X 볼륨필인 앰플') out.push({name:'유쎄라블 2X 볼륨필인 앰플 11ml (소용량)',brand:b,base:n,spec:'11ml'});
+    if(n==='유쎄라블 리프팅샷 900 아이크림') out.push({name:'유쎄라블 리프팅샷 900 아이크림 5ml (소용량)',brand:b,base:n,spec:'5ml'});
+  });
+  return out;
+})();
+function sampleItemOf_(n){ return SAMPLE_ITEMS.filter(function(x){ return x.name===n; })[0]||null; }
 function sampleNames_(){
-  const s=sampleRO_(), a=PRICE_LIST.map(function(p){ return p[1]; });
+  const s=sampleRO_(), a=SAMPLE_ITEMS.map(function(x){ return x.name; });
   s.extra.concat(Object.keys(s.items)).forEach(function(n){ if(n&&a.indexOf(n)<0) a.push(n); });
   return a;
 }
-function sampleBrand_(n){ const p=PRICE_LIST.filter(function(x){ return x[1]===n; })[0]; return p?p[0]:'기타'; }
+function sampleBrand_(n){ const x=sampleItemOf_(n); return x?x.brand:'기타'; }
 function sampleQty_(n){ const it=sampleRO_().items[n]; return (it&&it.qty!=null)?(Number(it.qty)||0):null; }
 function sampleMin_(n){ const it=sampleRO_().items[n]; return (it&&it.min!=null&&it.min!=='')?Number(it.min)||0:SAMPLE_MIN_DEF; }
 function sampleLoans_(n){ return sampleRO_().log.filter(function(l){ return l.t==='loan'&&!l.back&&(!n||l.item===n); }); }
@@ -10803,7 +10823,7 @@ let samplePlan={};   /* 품목 → 이번 주문 수량 (화면을 떠나면 다
 function sampleAutoArrive_(so){
   const L=lib&&lib.sample; if(!L||!(L.orders||[]).some(function(o){ return !o.arrived&&o.ono; })) return 0;
   const S=sample_(), rows=(so&&so.rows)||[];
-  const k=function(nm){ let mi=null; try{ mi=matchItem(nm); }catch(e){} return itemKey(mi&&mi.name?mi.name:nm); };
+  const k=function(nm){ const si=sampleItemOf_(nm); if(si) nm=si.base; let mi=null; try{ mi=matchItem(nm); }catch(e){} return itemKey(mi&&mi.name?mi.name:nm); };
   let n=0;
   S.orders.forEach(function(o){
     if(o.arrived||!o.ono) return;
@@ -10811,7 +10831,9 @@ function sampleAutoArrive_(so){
     if(!rs.length) return;
     const r0=rs[0], at=new Date().toISOString();
     const got=(o.items||[]).map(function(x){
-      const q=rs.filter(function(r){ return k(r.i)===k(x.item); }).reduce(function(a,r){ return a+(Number(r.q)||0); },0);
+      /* 원본과 소용량은 출고 기록에서 구분이 안 될 수 있어, 같은 품목이 둘이면 주문 수량을 씁니다 */
+      const same=(o.items||[]).filter(function(y){ return k(y.item)===k(x.item); }).length>1;
+      const q=same?0:rs.filter(function(r){ return k(r.i)===k(x.item); }).reduce(function(a,r){ return a+(Number(r.q)||0); },0);
       return {item:x.item,qty:q||Number(x.qty)||0};
     });
     got.forEach(function(x){
@@ -10958,7 +10980,7 @@ function sampleOrderBox_(){
     const ono='SMP'+ymd+'-'+k;
     const memo=mI.value.trim();
     if(ty&&ty!==sboTypeOf_('sample')){ lib.sboType=Object.assign({},lib.sboType||{},{sample:ty}); }
-    const rows=items.map(function(x){ return {store:recv,addr:addr,tel:tel,item:x.item,qty:x.qty,ono:ono,date:day,
+    const rows=items.map(function(x){ const si=sampleItemOf_(x.item)||{}; return {store:recv,addr:addr,tel:tel,item:si.base||x.item,spec:si.spec||'',qty:x.qty,ono:ono,date:day,
       memo1:'내부샘플 주문 · '+by,memo2:(day.slice(5).replace('-','/')+' '+by+' 주문'+(memo?' · '+memo:'')),msg:'내부 샘플'}; });
     const res=await sboOrderXlsx('sample',rows,copy?{copy:true}:{});
     if(!res) return;
