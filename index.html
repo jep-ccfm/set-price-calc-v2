@@ -1041,6 +1041,7 @@
       <button class="nav-item" data-view="ch_aquamedi"><span class="ic">💧</span>아쿠아메디</button>
       <button class="nav-item" data-view="ch_influencer"><span class="ic">🎁</span>인플루언서</button>
       <div class="nav-section">부가기능</div>
+      <button class="nav-item" data-view="ch_sample"><span class="ic">🧪</span>내부샘플<span class="badge" id="badge-sample" hidden>0</span></button>
       <button class="nav-item" data-view="geo"><span class="ic">📍</span>2km 규약 검사</button>
       <button class="nav-item" data-view="trash"><span class="ic">🗑️</span>휴지통<span class="badge" id="badge-trash">0</span></button>
     </nav>
@@ -1718,6 +1719,9 @@ function updateBadges(){
   COMPANIES.forEach(c=>{const b=document.getElementById('badge-'+c.key);if(b)b.textContent=streamsOf(c.key).reduce((n,s)=>n+(s.rounds||[]).length,0);});
   const tb=document.getElementById('badge-trash');
   if(tb){const n=((lib&&lib.trash)||[]).length;tb.textContent=n;tb.hidden=!n;}
+  /* 내부샘플 — 기준 미만 품목 수 */
+  const sb=document.getElementById('badge-sample');
+  if(sb){let n=0;try{n=sampleLow_().filter(function(x){ return !sampleOrdering_(x); }).length;}catch(e){}sb.textContent=n;sb.hidden=!n;if(n)sb.style.background='#E5484D';}
 }
 
 function updateRuBtns(){
@@ -6961,7 +6965,7 @@ async function sboOrderXlsx(chId,rows,opt){
       '발주 타입':sboTypeOf_(chId)||'','출고희망일':ship};
     aoa.push(SBO_ORDER_HEAD.map(function(h){ return v[h]==null?'':String(v[h]); }));
   });
-  const tag0=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId==='influencer'?'인플루언서':chId==='aquamedi'?'아쿠아메디':chId;
+  const tag0=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId==='influencer'?'인플루언서':chId==='aquamedi'?'아쿠아메디':chId==='sample'?'내부샘플':chId;
   /* 표 복사 — 제목줄 없이 사방넷 발주등록 칸 순서 그대로 */
   if(opt.copy){
     const nc0=Object.keys(noCode), nz0=Object.keys(noZip);
@@ -6974,7 +6978,7 @@ async function sboOrderXlsx(chId,rows,opt){
   Object.keys(ws).forEach(function(k){ if(k[0]!=='!'&&ws[k]) ws[k].t='s'; });
   ws['!cols']=SBO_ORDER_HEAD.map(function(h){ return {wch:/주소|상품명/.test(h)?36:/메모/.test(h)?12:14}; });
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'발주등록');
-  const tag=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId==='influencer'?'인플루언서':chId==='aquamedi'?'아쿠아메디':chId;
+  const tag=chId==='ready'?'레디영':chId==='pharmmall'?'자사몰 약사전용관':chId==='barofarm'?'바로팜':chId==='influencer'?'인플루언서':chId==='aquamedi'?'아쿠아메디':chId==='sample'?'내부샘플':chId;
   XLSX.writeFile(wb,'사방넷_발주등록_'+tag+'_'+ship.replace(/-/g,'')+'.xlsx');
   const warn=[];
   const nc=Object.keys(noCode), nz=Object.keys(noZip);
@@ -10291,7 +10295,8 @@ const CHANNELS=[
   {key:'ch_barofarm',id:'barofarm',name:'바로팜',ic:'🛒',desc:'약국 유통 플랫폼 바로팜 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
   {key:'ch_pharmmall',id:'pharmmall',name:'자사몰 약사 전용관',ic:'🏬',desc:'자사몰 내 약사 전용관 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
   {key:'ch_aquamedi',id:'aquamedi',name:'아쿠아메디',ic:'💧',desc:'아쿠아메디 소속 약국 — 발주·거래 내역과 서류를 약국별로 관리합니다.'},
-  {key:'ch_influencer',id:'influencer',name:'인플루언서',ic:'🎁',desc:'인플루언서 체험단 — 「매장 수령」 제품을 레디영 지점으로 보내고 출고일·송장을 체험단 시트에 남깁니다.'}
+  {key:'ch_influencer',id:'influencer',name:'인플루언서',ic:'🎁',desc:'인플루언서 체험단 — 「매장 수령」 제품을 레디영 지점으로 보내고 출고일·송장을 체험단 시트에 남깁니다.'},
+  {key:'ch_sample',id:'sample',name:'내부샘플',ic:'🧪',desc:'사무실 샘플 재고 — 출고·대여(촬영 등)·입고를 한곳에 적고, 기준 미만이면 주문 필요로 알려 줍니다.',eyebrow:'부가기능'}
 ];
 /* 아쿠아메디 소속 약국 — 붙박이 둘 + 나중에 넣은 곳 */
 function aquamediPharms(){
@@ -10734,13 +10739,449 @@ function renderInfluencer_(box){
     const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t);body.appendChild(bx);
   })();
 }
+/* ============================================================
+   내부샘플 (2026-11-09)
+   사무실에 두는 샘플 재고. 정은 · rjs · pms 세 사람에게 따로 요청이 들어와
+   누가 얼마를 내줬는지 서로 몰랐습니다 → 한 화면에서 같이 봅니다.
+     📤 출고  — 나간 이유를 적으면 재고에서 바로 빠집니다
+     📸 대여  — 촬영 등으로 잠깐 빌려 간 것. 그만큼 재고에서 빠졌다가 「↩ 돌리기」로 돌아옵니다
+     📥 입고  — 주문한 샘플이 들어왔을 때
+     📋 실사  — 실제로 세어 본 수량으로 맞춤 (처음 시작할 때도 이걸로)
+   품목마다 기준(기본 10개) 아래로 내려가면 주문 필요로 표시하고, 왼쪽 메뉴에 개수를 띄웁니다.
+   lib.sample = {items:{품목:{qty,min}}, extra:[직접 넣은 품목], log:[{id,at,by,t,item,qty,why,prev,back:{at,by}}]}
+   ============================================================ */
+const SAMPLE_MIN_DEF=10;
+const SAMPLE_T={out:{ic:'📤',l:'출고'},loan:{ic:'📸',l:'대여'},in:{ic:'📥',l:'입고'},count:{ic:'📋',l:'실사'}};
+function sampleRO_(){ const s=(lib&&lib.sample)||{}; return {items:s.items||{},log:s.log||[],extra:s.extra||[],orders:s.orders||[],ship:s.ship||null}; }
+function sample_(){ lib.sample=lib.sample||{}; const s=lib.sample; s.items=s.items||{}; s.log=s.log||[]; s.extra=s.extra||[]; return s; }
+function sampleNames_(){
+  const s=sampleRO_(), a=PRICE_LIST.map(function(p){ return p[1]; });
+  s.extra.concat(Object.keys(s.items)).forEach(function(n){ if(n&&a.indexOf(n)<0) a.push(n); });
+  return a;
+}
+function sampleBrand_(n){ const p=PRICE_LIST.filter(function(x){ return x[1]===n; })[0]; return p?p[0]:'기타'; }
+function sampleQty_(n){ const it=sampleRO_().items[n]; return (it&&it.qty!=null)?(Number(it.qty)||0):null; }
+function sampleMin_(n){ const it=sampleRO_().items[n]; return (it&&it.min!=null&&it.min!=='')?Number(it.min)||0:SAMPLE_MIN_DEF; }
+function sampleLoans_(n){ return sampleRO_().log.filter(function(l){ return l.t==='loan'&&!l.back&&(!n||l.item===n); }); }
+function sampleLow_(){ return sampleNames_().filter(function(n){ const q=sampleQty_(n); return q!=null&&q<sampleMin_(n); }); }
+function sampleWho_(){ return String(authEmail()||'').split('@')[0]||'?'; }
+function sampleWhen_(iso){ const d=new Date(iso); if(isNaN(d)) return ''; return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+/* 재고 변화 — sign +1 은 기록할 때, −1 은 취소할 때 */
+function sampleApply_(s,l,sign){
+  const it=s.items[l.item]=s.items[l.item]||{qty:0};
+  const q=Number(l.qty)||0; let d=0;
+  if(l.t==='out') d=-q;
+  else if(l.t==='loan') d=l.back?0:-q;          /* 이미 돌아온 대여를 취소하면 재고 변화 없음 */
+  else if(l.t==='in') d=q;
+  else if(l.t==='count') d=q-(Number(l.prev)||0);
+  it.qty=(Number(it.qty)||0)+sign*d;
+}
+/* 세 사람이 같이 쓰므로 적기 직전에 최신본을 받아 그 위에 적습니다 — 남의 기록을 덮지 않게 */
+async function sampleDo_(fn){
+  if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 기록할 수 있어요'); return false; }
+  if(!pendingPush){ try{ await syncPull(true); }catch(e){} }
+  const r=fn(sample_());
+  if(r===false){ refreshCurrentView(); return false; }
+  persistLib(); refreshCurrentView(); return true;
+}
+/* ---------- 내부샘플 주문 (2026-11-09) ----------
+   기준 미만이면 주문합니다. 몇 개 · 누가 · 언제 주문했는지 남기고, 사방넷 발주등록 엑셀을 바로 받습니다.
+   받는 곳(본사 사무실)과 사방넷 발주 타입은 한 번 넣으면 저장됩니다.
+   lib.sample.orders = [{id,at,by,ono,items:[{item,qty}],memo,recv,tel,addr,arrived:{at,by}}]
+   주문번호 SMP날짜-n 으로 넣어, 사방넷 출고 엑셀이 올라오면 송장이 옆에 보입니다.
+   물건이 오면 「📥 입고 처리」 — 주문 수량이 재고에 더해집니다(수량을 고쳐서 받을 수도 있음). */
+const SAMPLE_ADDR_DEF='서울 금천구 디지털로9길 47, 한신IT타워2차 1004호 (브랜드사업1본부)';
+let samplePlan={};   /* 품목 → 이번 주문 수량 (화면을 떠나면 다시 계산) */
+function sampleOrders_(open){ return (sampleRO_().orders||[]).filter(function(o){ return open?!o.arrived:true; }); }
+function sampleOrdering_(n){ return sampleOrders_(true).reduce(function(a,o){ (o.items||[]).forEach(function(x){ if(x.item===n) a+=Number(x.qty)||0; }); return a; },0); }
+function sampleShipCfg_(){ const c=(sampleRO_().ship)||{}; return {recv:c.recv||'',tel:c.tel||'',addr:c.addr||SAMPLE_ADDR_DEF}; }
+function sampleSuggest_(n){
+  /* 기준 미만이면 기준의 두 배가 되도록 (주문 중인 수량은 빼고) */
+  const q=sampleQty_(n), mn=sampleMin_(n);
+  if(q==null||q>=mn) return 0;
+  return Math.max(0,mn*2-q-sampleOrdering_(n));
+}
+function sampleOrderBox_(){
+  const wrap=document.createElement('div');
+  const open=sampleOrders_(true);
+  const h=document.createElement('div');h.className='sec-h';
+  const hs=document.createElement('span');hs.textContent='🛒 주문 ('+(open.length?'입고 대기 '+open.length+'건':'입고 대기 없음')+')';h.appendChild(hs);wrap.appendChild(h);
+
+  /* 입고 대기 */
+  if(open.length){
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th>주문</th><th>누가</th><th>품목 · 수량</th><th>메모</th><th>사방넷 출고</th><th></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    open.forEach(function(o){
+      const tr=document.createElement('tr');
+      const c0=document.createElement('td');c0.innerHTML='<div style="font-weight:700;"></div><div style="font-size:11px;color:var(--ink-mute);"></div>';
+      c0.firstChild.textContent=sampleWhen_(o.at);c0.lastChild.textContent=o.ono||'';tr.appendChild(c0);
+      const c1=document.createElement('td');c1.textContent=o.by||'';tr.appendChild(c1);
+      const c2=document.createElement('td');c2.style.fontSize='12px';c2.textContent=(o.items||[]).map(function(x){ return x.item+' '+x.qty; }).join(' · ');tr.appendChild(c2);
+      const c3=document.createElement('td');c3.style.fontSize='12px';c3.textContent=o.memo||'';tr.appendChild(c3);
+      const c4=document.createElement('td');c4.style.cssText='font-size:12px;color:var(--ink-mute);';c4.textContent='확인 중…';tr.appendChild(c4);
+      (async function(){ try{ const so=await sboLoad();
+        const rs=(so.rows||[]).filter(function(r){ return r.no===o.ono&&r.v; });
+        if(rs.length){ const r=rs[0]; c4.style.color='var(--good)';c4.style.fontWeight='700';c4.textContent=String(r.fin||r.d||'').slice(5).replace('-','/')+' 출고 · '+(r.cr?r.cr+' ':'')+r.v; }
+        else c4.textContent='아직 출고 기록 없음';
+      }catch(e){ c4.textContent=''; } })();
+      const c5=document.createElement('td');c5.style.whiteSpace='nowrap';
+      if(canEdit()){
+        const b=document.createElement('button');b.className='icon-btn';b.style.fontWeight='700';b.textContent='📥 입고 처리';
+        b.title='물건이 오면 누르세요 — 주문 수량이 재고에 더해집니다. 덜 왔으면 수량을 고쳐서 넣을 수 있습니다';
+        b.addEventListener('click',async function(){
+          const got=[];
+          for(const x of (o.items||[])){
+            const v=prompt(x.item+' — 들어온 수량 (주문 '+x.qty+'개)',String(x.qty));
+            if(v===null) return;
+            const n=Math.max(0,parseInt(v,10)||0); if(n) got.push({item:x.item,qty:n});
+          }
+          await sampleDo_(function(s){
+            const oo=(s.orders||[]).filter(function(z){ return z.id===o.id; })[0];
+            if(!oo||oo.arrived){ showToast('이미 입고 처리된 주문입니다'); return false; }
+            const at=new Date().toISOString(), by=sampleWho_();
+            got.forEach(function(x){
+              const l={id:'s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),at:at,by:by,t:'in',item:x.item,qty:x.qty,why:'주문 입고 '+(oo.ono||'')+' ('+sampleWhen_(oo.at)+' '+(oo.by||'')+' 주문)',order:oo.id};
+              sampleApply_(s,l,1); s.log.unshift(l);
+            });
+            oo.arrived={at:at,by:by,items:got};
+            return true;
+          });
+          showToast('입고 처리했습니다 — 재고에 더했습니다');
+        });
+        const x=document.createElement('button');x.className='icon-btn';x.style.fontSize='11px';x.textContent='✕';
+        x.title='주문을 취소했거나 잘못 넣었을 때 — 이 주문 기록을 지웁니다 (재고는 그대로)';
+        x.addEventListener('click',async function(){
+          if(!confirm('이 주문 기록을 지울까요?\n'+(o.items||[]).map(function(z){ return z.item+' '+z.qty; }).join(', '))) return;
+          await sampleDo_(function(s){ s.orders=(s.orders||[]).filter(function(z){ return z.id!==o.id; }); return true; });
+        });
+        c5.append(b,x);
+      }
+      tr.appendChild(c5);tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;margin-bottom:10px;';bx.appendChild(t);wrap.appendChild(bx);
+  }
+
+  /* 새 주문 */
+  const fm=document.createElement('div');
+  fm.style.cssText='margin-bottom:16px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#FBFAF7;';
+  const names=sampleNames_();
+  const lowN=names.filter(function(n){ return sampleSuggest_(n)>0; });
+  const t0=document.createElement('div');t0.style.cssText='display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px;';
+  t0.innerHTML='<b style="font-size:13px;">✍️ 새 주문</b><span class="hint"></span>';
+  t0.lastChild.textContent=lowN.length?'기준 미만 '+lowN.length+'품목은 기준의 두 배가 되게 수량을 미리 넣었습니다 (주문 중인 수량은 뺌) — 고쳐도 됩니다':'수량을 넣은 품목만 주문됩니다';
+  fm.appendChild(t0);
+  const t=document.createElement('table');t.className='led-table';
+  t.innerHTML='<thead><tr><th>품목</th><th style="text-align:right;">현재</th><th style="text-align:right;">기준</th><th style="text-align:right;">주문 중</th><th style="text-align:right;">이번 주문</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  const val=function(n){ return samplePlan[n]!=null?samplePlan[n]:sampleSuggest_(n); };
+  /* 기준 미만 · 이미 수량을 넣은 품목을 위로 */
+  names.slice().sort(function(a,b){ return (val(b)>0?1:0)-(val(a)>0?1:0); }).forEach(function(n){
+    const q=sampleQty_(n), mn=sampleMin_(n), og=sampleOrdering_(n);
+    const tr=document.createElement('tr'); if(q!=null&&q<mn) tr.className='smp-low';
+    const c0=document.createElement('td');c0.textContent=n;tr.appendChild(c0);
+    const c1=document.createElement('td');c1.style.cssText='text-align:right;font-family:var(--mono);';c1.textContent=q==null?'—':q;tr.appendChild(c1);
+    const c2=document.createElement('td');c2.style.cssText='text-align:right;font-family:var(--mono);color:var(--ink-mute);';c2.textContent=mn;tr.appendChild(c2);
+    const c3=document.createElement('td');c3.style.cssText='text-align:right;font-family:var(--mono);color:#8A5300;';c3.textContent=og||'';tr.appendChild(c3);
+    const c4=document.createElement('td');c4.style.textAlign='right';
+    const qi=document.createElement('input');qi.type='number';qi.min='0';qi.className='cell-input';qi.style.cssText='width:70px;padding:4px 6px;text-align:right;';
+    const v=val(n); qi.value=v||''; if(v) qi.style.fontWeight='800';
+    qi.addEventListener('input',function(){ samplePlan[n]=Math.max(0,parseInt(qi.value,10)||0); });
+    c4.appendChild(qi);tr.appendChild(c4);tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;max-height:340px;overflow-y:auto;';bx.appendChild(t);fm.appendChild(bx);
+
+  const sc=sampleShipCfg_();
+  const r2=document.createElement('div');r2.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;';
+  const inp=function(ph,v,w){ const i=document.createElement('input');i.className='cell-input';i.placeholder=ph;i.value=v||'';i.style.cssText='padding:6px 8px;width:'+w+'px;';return i; };
+  const byI=inp('주문자',sampleWho_(),110), dI=document.createElement('input');dI.type='date';dI.className='cell-input';dI.style.padding='5px 7px';dI.value=sboToday_();
+  const rI=inp('받는 분 이름',sc.recv,120), tI=inp('연락처',sc.tel,130), aI=inp('받는 주소',sc.addr,360), mI=inp('메모 (예: 11/12 촬영 대비)','',220);
+  const lab=function(t){ const s=document.createElement('span');s.className='hint';s.textContent=t;return s; };
+  r2.append(lab('주문자'),byI,lab('주문일'),dI,lab('받는 곳'),rI,tI,aI,mI);
+  fm.appendChild(r2);
+  const r3=document.createElement('div');r3.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;';
+  const tyI=inp('사방넷 발주 타입',sboTypeOf_('sample'),200);
+  tyI.title='사방넷 발주등록의 발주 타입 — 사방넷에 만든 이름과 같게. 한 번 넣으면 저장됩니다';
+  const go=document.createElement('button');go.className='icon-btn';go.style.cssText='font-weight:800;padding:7px 14px;';go.textContent='📤 주문 기록 + 사방넷 발주 엑셀';
+  const cp=document.createElement('button');cp.className='icon-btn';cp.textContent='📋 표 복사로 받기';
+  cp.title='엑셀 파일 대신 사방넷 발주등록 칸 순서대로 복사합니다';
+  const run=async function(copy){
+    if(!canEdit()){ showToast('보기 전용입니다 — 로그인 후 주문할 수 있어요'); return; }
+    const items=names.map(function(n){ return {item:n,qty:val(n)}; }).filter(function(x){ return x.qty>0; });
+    if(!items.length){ showToast('주문할 수량을 넣어 주세요'); return; }
+    const by=byI.value.trim()||sampleWho_(), day=dI.value||sboToday_();
+    const recv=rI.value.trim(), tel=tI.value.trim(), addr=aI.value.trim();
+    if(!recv||!addr){ showToast('받는 분 이름과 주소를 넣어 주세요'); return; }
+    const ty=tyI.value.trim();
+    const S0=sampleRO_();
+    const ymd=day.replace(/-/g,'').slice(2);
+    let k=1; while((S0.orders||[]).some(function(o){ return o.ono==='SMP'+ymd+'-'+k; })) k++;
+    const ono='SMP'+ymd+'-'+k;
+    const memo=mI.value.trim();
+    if(ty&&ty!==sboTypeOf_('sample')){ lib.sboType=Object.assign({},lib.sboType||{},{sample:ty}); }
+    const rows=items.map(function(x){ return {store:recv,addr:addr,tel:tel,item:x.item,qty:x.qty,ono:ono,date:day,
+      memo1:'내부샘플 주문 · '+by,memo2:(day.slice(5).replace('-','/')+' '+by+' 주문'+(memo?' · '+memo:'')),msg:'내부 샘플'}; });
+    const res=await sboOrderXlsx('sample',rows,copy?{copy:true}:{});
+    if(!res) return;
+    await sampleDo_(function(s){
+      /* 최신본을 받아 온 뒤라 발주 타입도 여기서 다시 적습니다 */
+      if(ty) lib.sboType=Object.assign({},lib.sboType||{},{sample:ty});
+      s.ship={recv:recv,tel:tel,addr:addr};
+      s.orders=s.orders||[];
+      s.orders.unshift({id:'o'+Date.now().toString(36),at:new Date(day+'T'+new Date().toTimeString().slice(0,8)).toISOString(),by:by,ono:ono,items:items,memo:memo,recv:recv});
+      return true;
+    });
+    samplePlan={};
+    showToast('주문 기록했습니다 — '+ono+' · '+items.length+'품목');
+  };
+  go.addEventListener('click',function(){ run(false); });
+  cp.addEventListener('click',function(){ run(true); });
+  r3.append(lab('발주 타입'),tyI,go,cp);
+  fm.appendChild(r3);
+  wrap.appendChild(fm);
+
+  /* 지난 주문 */
+  const done=sampleOrders_(false).filter(function(o){ return o.arrived; }).slice(0,10);
+  if(done.length){
+    const d=document.createElement('details');d.style.marginBottom='14px';
+    d.innerHTML='<summary class="hint" style="cursor:pointer;">입고 끝난 주문 '+done.length+'건</summary>';
+    const ul=document.createElement('div');ul.style.cssText='font-size:12px;margin-top:6px;display:flex;flex-direction:column;gap:3px;';
+    done.forEach(function(o){ const li=document.createElement('div');
+      li.textContent=sampleWhen_(o.at)+' '+(o.by||'')+' 주문 '+(o.ono||'')+' → '+sampleWhen_(o.arrived.at)+' '+(o.arrived.by||'')+' 입고 · '+(o.arrived.items||o.items||[]).map(function(x){ return x.item+' '+x.qty; }).join(', ');
+      ul.appendChild(li); });
+    d.appendChild(ul);wrap.appendChild(d);
+  }
+  return wrap;
+}
+
+let sampleForm={item:'',t:'out',qty:'',why:''};
+let sampleLogAll=false;
+function renderSample_(box){
+  const S=sampleRO_(), names=sampleNames_(), low=sampleLow_(), loans=sampleLoans_();
+  const css=document.createElement('style');
+  css.textContent='.smp-seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}'+
+    '.smp-seg button{border:0;background:#fff;padding:7px 11px;font-size:12.5px;cursor:pointer;font-weight:600;color:var(--ink-soft);}'+
+    '.smp-seg button+button{border-left:1px solid var(--line);}'+
+    '.smp-seg button.on{background:var(--ink);color:#fff;}'+
+    '.smp-low td{background:#FFF4F2;}'+
+    '.smp-name{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;}';
+  box.appendChild(css);
+  const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='12px';
+  nt.innerHTML='사무실 샘플 재고를 <b>정은 · rjs · pms</b>가 같이 봅니다. 내줄 때마다 아래에서 <b>출고</b>(사유) 또는 <b>대여</b>(촬영 등 — 돌려받으면 「↩ 돌리기」)로 적으면 재고에 바로 반영됩니다.<br>'+
+    '품목마다 <b>기준 '+SAMPLE_MIN_DEF+'개 미만</b>이면 「주문 필요」로 표시되고, <b>🛒 주문</b>에서 누가·언제·몇 개를 적으면 사방넷 발주 엑셀이 바로 나옵니다. 처음엔 <b>📋 실사</b>로 지금 있는 수량을 넣어 주세요. 품목 이름을 누르면 아래 입력칸에 바로 들어갑니다.';
+  box.appendChild(nt);
+
+  /* 주문 필요 */
+  if(low.length){
+    const b=document.createElement('div');
+    b.style.cssText='margin-bottom:12px;padding:10px 12px;border:1px solid #F2B8AE;border-radius:10px;background:#FFF4F2;font-size:13px;';
+    b.innerHTML='<b style="color:var(--warn);">🔔 주문 필요 '+low.length+'품목</b> <span class="hint">(기준 미만)</span><div style="margin-top:4px;line-height:1.7;"></div>';
+    b.lastChild.textContent=low.map(function(n){ const og=sampleOrdering_(n); return n+' '+sampleQty_(n)+'개'+(og?' (주문 중 '+og+')':''); }).join(' · ');
+    box.appendChild(b);
+  }
+
+  /* 기록하기 */
+  const fm=document.createElement('div');
+  fm.style.cssText='margin-bottom:14px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#FBFAF7;display:flex;flex-direction:column;gap:9px;';
+  const r1=document.createElement('div');r1.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
+  const t0=document.createElement('b');t0.style.fontSize='13px';t0.textContent='✍️ 기록하기';r1.appendChild(t0);
+  const seg=document.createElement('div');seg.className='smp-seg';
+  Object.keys(SAMPLE_T).forEach(function(k){
+    const b=document.createElement('button');b.type='button';b.textContent=SAMPLE_T[k].ic+' '+SAMPLE_T[k].l;
+    if(sampleForm.t===k) b.className='on';
+    b.addEventListener('click',function(){ sampleForm.t=k; refreshCurrentView(); });
+    seg.appendChild(b);
+  });
+  r1.appendChild(seg);
+  const hint=document.createElement('span');hint.className='hint';
+  hint.textContent={out:'나간 수량만큼 재고에서 빠집니다',loan:'잠깐 빠졌다가 돌려받으면 「↩ 돌리기」',in:'들어온 수량만큼 재고에 더합니다',count:'세어 본 수량으로 재고를 맞춥니다'}[sampleForm.t];
+  r1.appendChild(hint);
+  fm.appendChild(r1);
+  const r2=document.createElement('div');r2.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
+  const sel=document.createElement('select');sel.className='cell-input';sel.style.cssText='padding:6px 8px;min-width:230px;';
+  sel.innerHTML='<option value="">품목 선택</option>';
+  names.forEach(function(n){ const o=document.createElement('option');o.value=n;const q=sampleQty_(n);o.textContent=n+(q!=null?' (재고 '+q+')':'');sel.appendChild(o); });
+  sel.value=sampleForm.item||'';
+  sel.addEventListener('change',function(){ sampleForm.item=sel.value; });
+  const qi=document.createElement('input');qi.type='number';qi.min='0';qi.className='cell-input';qi.placeholder=sampleForm.t==='count'?'지금 수량':'수량';
+  qi.style.cssText='width:90px;padding:6px 8px;text-align:right;';qi.value=sampleForm.qty;
+  qi.addEventListener('input',function(){ sampleForm.qty=qi.value; });
+  const wi=document.createElement('input');wi.className='cell-input';wi.style.cssText='flex:1;min-width:220px;padding:6px 8px;';
+  wi.placeholder={out:'사유 — 예) 미팅 샘플 (아쿠아메디 대표님)',loan:'사유 — 예) 11/12 상세페이지 촬영',in:'메모 — 예) 11/9 주문분 입고',count:'메모 — 예) 11/9 실사'}[sampleForm.t];
+  wi.value=sampleForm.why;
+  wi.addEventListener('input',function(){ sampleForm.why=wi.value; });
+  const go=document.createElement('button');go.className='icon-btn';go.style.cssText='font-weight:800;padding:7px 14px;';
+  go.textContent=SAMPLE_T[sampleForm.t].ic+' '+SAMPLE_T[sampleForm.t].l+' 기록';
+  go.addEventListener('click',async function(){
+    const item=sel.value, q=parseInt(qi.value,10), why=wi.value.trim(), t=sampleForm.t;
+    if(!item){ showToast('품목을 고르세요'); return; }
+    if(isNaN(q)||q<0||(t!=='count'&&q===0)){ showToast('수량을 넣으세요'); return; }
+    if((t==='out'||t==='loan')&&!why){ showToast('어디에 · 왜 나가는지 사유를 적어 주세요'); wi.focus(); return; }
+    go.disabled=true;
+    const ok=await sampleDo_(function(s){
+      const cur=(s.items[item]&&s.items[item].qty!=null)?Number(s.items[item].qty)||0:null;
+      if((t==='out'||t==='loan')&&(cur==null||cur<q)){
+        showToast(cur==null?'재고가 아직 없습니다 — 먼저 📋 실사로 지금 수량을 넣어 주세요':'재고('+cur+'개)보다 많습니다 — 실사로 수량을 먼저 맞춰 주세요');
+        return false;
+      }
+      const l={id:'s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),at:new Date().toISOString(),by:sampleWho_(),t:t,item:item,qty:q,why:why};
+      if(t==='count') l.prev=cur==null?0:cur;
+      sampleApply_(s,l,1);
+      s.log.unshift(l);
+      if(s.log.length>2000) s.log.length=2000;
+      return true;
+    });
+    if(ok){ showToast(SAMPLE_T[t].l+' 기록 — '+item+' '+q+'개'); sampleForm.qty=''; sampleForm.why=''; refreshCurrentView(); }
+    go.disabled=false;
+  });
+  r2.append(sel,qi,wi,go);
+  fm.appendChild(r2);
+  box.appendChild(fm);
+
+  /* 대여 중 */
+  {
+    const h=document.createElement('div');h.className='sec-h';
+    const hs=document.createElement('span');hs.textContent='📸 대여 중 ('+loans.length+'건)';h.appendChild(hs);box.appendChild(h);
+    if(!loans.length){ const e=document.createElement('div');e.className='hint';e.style.marginBottom='12px';e.textContent='빌려 간 샘플이 없습니다.';box.appendChild(e); }
+    else {
+      const t=document.createElement('table');t.className='led-table';
+      t.innerHTML='<thead><tr><th>빌려 간 날</th><th>품목</th><th>수량</th><th>사유</th><th>기록</th><th></th></tr></thead>';
+      const tb=document.createElement('tbody');
+      loans.forEach(function(l){
+        const tr=document.createElement('tr');
+        [sampleWhen_(l.at),l.item,l.qty+'개',l.why||'',l.by||''].forEach(function(v,i){ const td=document.createElement('td');td.textContent=v;if(i===2)td.style.fontWeight='700';tr.appendChild(td); });
+        const td=document.createElement('td');
+        const b=document.createElement('button');b.className='icon-btn';b.style.fontWeight='700';b.textContent='↩ 돌리기';
+        b.title='돌려받았으면 누르세요 — 재고에 다시 더해집니다';
+        b.addEventListener('click',async function(){
+          b.disabled=true;
+          await sampleDo_(function(s){
+            const x=s.log.filter(function(z){ return z.id===l.id; })[0];
+            if(!x||x.back){ showToast('이미 돌려받은 건입니다'); return false; }
+            const it=s.items[x.item]=s.items[x.item]||{qty:0};
+            it.qty=(Number(it.qty)||0)+(Number(x.qty)||0);
+            x.back={at:new Date().toISOString(),by:sampleWho_()};
+            return true;
+          });
+          showToast('돌려받음 — '+l.item+' '+l.qty+'개 재고로');
+        });
+        td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;margin-bottom:12px;';bx.appendChild(t);box.appendChild(bx);
+    }
+  }
+
+  box.appendChild(sampleOrderBox_());
+
+  /* 재고 */
+  {
+    const h=document.createElement('div');h.className='sec-h';
+    const hs=document.createElement('span');
+    const tot=names.reduce(function(a,n){ return a+(sampleQty_(n)||0); },0);
+    hs.textContent='📦 현재 재고 ('+names.filter(function(n){ return sampleQty_(n)!=null; }).length+'품목 · '+tot+'개)';
+    h.appendChild(hs);box.appendChild(h);
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th>브랜드</th><th>품목</th><th style="text-align:right;">현재 재고</th><th style="text-align:right;">대여 중</th><th style="text-align:right;">기준</th><th>상태</th><th>마지막 기록</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    names.forEach(function(n){
+      const q=sampleQty_(n), mn=sampleMin_(n), lo=sampleLoans_(n).reduce(function(a,l){ return a+(Number(l.qty)||0); },0);
+      const last=S.log.filter(function(l){ return l.item===n; })[0];
+      const tr=document.createElement('tr');
+      if(q!=null&&q<mn) tr.className='smp-low';
+      const c0=document.createElement('td');c0.style.color='var(--ink-mute)';c0.style.fontSize='12px';c0.textContent=sampleBrand_(n);tr.appendChild(c0);
+      const c1=document.createElement('td');const sp=document.createElement('span');sp.className='smp-name';sp.textContent=n;
+      sp.title='아래 기록하기 칸에 넣기';sp.addEventListener('click',function(){ sampleForm.item=n; refreshCurrentView(); window.scrollTo({top:0,behavior:'smooth'}); });
+      c1.appendChild(sp);tr.appendChild(c1);
+      const c2=document.createElement('td');c2.style.cssText='text-align:right;font-weight:800;font-family:var(--mono);';c2.textContent=q==null?'—':q;tr.appendChild(c2);
+      const c3=document.createElement('td');c3.style.cssText='text-align:right;font-family:var(--mono);color:#8A5300;';c3.textContent=lo?lo:'';tr.appendChild(c3);
+      const c4=document.createElement('td');c4.style.textAlign='right';
+      const mi=document.createElement('input');mi.type='number';mi.min='0';mi.className='cell-input';mi.value=mn;mi.style.cssText='width:56px;padding:3px 5px;text-align:right;';
+      mi.title='이 개수 미만이면 「주문 필요」';
+      mi.addEventListener('change',async function(){
+        const v=Math.max(0,parseInt(mi.value,10)||0);
+        await sampleDo_(function(s){ const it=s.items[n]=s.items[n]||{}; it.min=v; return true; });
+      });
+      c4.appendChild(mi);tr.appendChild(c4);
+      const c5=document.createElement('td');c5.style.cssText='font-size:12px;font-weight:700;';
+      if(q==null){ c5.style.color='var(--ink-mute)';c5.textContent='실사 전'; }
+      else if(q<mn){ const og=sampleOrdering_(n); c5.style.color=og?'#8A5300':'var(--warn)';c5.textContent=og?'🛒 주문 중 '+og+'개':'🔔 주문 필요'; }
+      else { c5.style.color='var(--good)';c5.textContent='충분'; }
+      tr.appendChild(c5);
+      const c6=document.createElement('td');c6.style.cssText='font-size:11.5px;color:var(--ink-soft);';
+      c6.textContent=last?sampleWhen_(last.at)+' '+SAMPLE_T[last.t].l+' '+last.qty+' · '+(last.by||''):'';
+      tr.appendChild(c6);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t);box.appendChild(bx);
+    /* 표에 없는 품목 추가 */
+    const ad=document.createElement('div');ad.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 16px;';
+    const ai=document.createElement('input');ai.className='cell-input';ai.placeholder='목록에 없는 샘플 (예: 메라블 브로슈어)';ai.style.cssText='width:260px;padding:6px 8px;';
+    const ab=document.createElement('button');ab.className='icon-btn';ab.textContent='＋ 품목 추가';
+    ab.addEventListener('click',async function(){
+      const v=ai.value.trim(); if(!v) return;
+      if(names.indexOf(v)>=0){ showToast('이미 있는 품목입니다'); return; }
+      await sampleDo_(function(s){ if(s.extra.indexOf(v)<0) s.extra.push(v); return true; });
+    });
+    ad.append(ai,ab);box.appendChild(ad);
+  }
+
+  /* 기록 */
+  {
+    const h=document.createElement('div');h.className='sec-h';
+    const hs=document.createElement('span');hs.textContent='🗒️ 기록 ('+S.log.length+'건)';h.appendChild(hs);
+    if(S.log.length>30){
+      const tools=document.createElement('div');tools.className='sh-tools';
+      const tg=document.createElement('button');tg.className='icon-btn';tg.textContent=sampleLogAll?'최근 30건만':'전체 보기';
+      tg.addEventListener('click',function(){ sampleLogAll=!sampleLogAll; refreshCurrentView(); });
+      tools.appendChild(tg);h.appendChild(tools);
+    }
+    box.appendChild(h);
+    if(!S.log.length){ const e=document.createElement('div');e.className='hint';e.textContent='아직 기록이 없습니다.';box.appendChild(e); return; }
+    const t=document.createElement('table');t.className='led-table';
+    t.innerHTML='<thead><tr><th>언제</th><th>누가</th><th>구분</th><th>품목</th><th style="text-align:right;">수량</th><th>사유 · 메모</th><th></th></tr></thead>';
+    const tb=document.createElement('tbody');
+    (sampleLogAll?S.log:S.log.slice(0,30)).forEach(function(l){
+      const tr=document.createElement('tr');
+      const T=SAMPLE_T[l.t]||{ic:'',l:l.t};
+      const st=l.t==='loan'?(l.back?' · ↩ '+sampleWhen_(l.back.at)+' 돌려받음':' · 대여 중'):(l.t==='count'?' (전 '+(l.prev||0)+'개)':'');
+      [sampleWhen_(l.at),l.by||'',T.ic+' '+T.l,l.item,(l.t==='out'||l.t==='loan'?'−':l.t==='in'?'+':'=')+l.qty,(l.why||'')+st].forEach(function(v,i){
+        const td=document.createElement('td');td.textContent=v;
+        if(i===4){ td.style.cssText='text-align:right;font-family:var(--mono);font-weight:700;'; }
+        if(i===5) td.style.fontSize='12px';
+        tr.appendChild(td);
+      });
+      const td=document.createElement('td');
+      const x=document.createElement('button');x.className='icon-btn';x.style.fontSize='11px';x.textContent='✕ 취소';
+      x.title='잘못 적었으면 이 기록을 지우고 재고를 되돌립니다';
+      x.addEventListener('click',async function(){
+        if(!confirm('이 기록을 취소할까요?\n'+T.l+' · '+l.item+' '+l.qty+'개'+(l.why?' · '+l.why:'')+'\n재고가 기록 전으로 돌아갑니다.')) return;
+        await sampleDo_(function(s){
+          const i=s.log.findIndex(function(z){ return z.id===l.id; });
+          if(i<0) return false;
+          sampleApply_(s,s.log[i],-1);
+          s.log.splice(i,1);
+          return true;
+        });
+      });
+      td.appendChild(x);tr.appendChild(td);tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;';bx.appendChild(t);box.appendChild(bx);
+  }
+}
+
 function renderChannel(view){
   const meta=channelMeta(view);if(!meta)return;
   const box=document.getElementById('view-channel');box.innerHTML='';
   const head=document.createElement('header');head.className='page-head';
-  head.innerHTML='<div class="eyebrow">약국 채널</div><h1><span class="flag">'+meta.ic+'</span>'+meta.name+'</h1><p class="sub">'+meta.desc+'</p>';
+  head.innerHTML='<div class="eyebrow">'+(meta.eyebrow||'약국 채널')+'</div><h1><span class="flag">'+meta.ic+'</span>'+meta.name+'</h1><p class="sub">'+meta.desc+'</p>';
   box.appendChild(head);
   if(meta.id==='influencer'){ renderInfluencer_(box); return; }
+  if(meta.id==='sample'){ renderSample_(box); return; }
   /* 판매가표는 매일 보는 것이 아닙니다 — 묶음이 있는 채널은 ④ 참고자료 안에 둡니다 */
   const GROUPED_CH={barofarm:1,pharmmall:1,aquamedi:1};
   if(PRICE_COLS[meta.id]&&!GROUPED_CH[meta.id]) box.appendChild(buildPriceTable(meta.id,true));
@@ -15006,7 +15447,7 @@ const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,exSheet:1,sheetRef:1,bfFree:1,mallTrack
 const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계산서',deposits:'입금',pharmInfo:'약국 정보',
   applicants:'자사몰 가입 신청',geo:'2km 지점',companies:'세트 저장소',trash:'휴지통',ecountDone:'이카운트 반영 표시',
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
-  orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',infSafe:'인플루언서 안전재고',
+  orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',infSafe:'인플루언서 안전재고',sample:'내부샘플',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
   purchaseDocs:'발주서',chDocs:'서류 보관함',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
   rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',bfFree:'바로팜 5+1 증정',exSheet:'영세 거래처 시트',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
