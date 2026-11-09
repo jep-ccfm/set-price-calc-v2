@@ -6527,7 +6527,8 @@ const SBO_CODES=[
   ['M401KR','메라블 클리어 클렌징 패드(15매입)']
 ];
 /* 아쿠아메디 = 사방넷 출고 엑셀에 찍힌 발주 타입 그대로 (2026-10-28 확인 — 19줄 전부 「온라인B2B_아쿠아메디」) */
-const SBO_TYPE={ready:'오프라인B2B_레디영', pharmmall:'온라인B2B_자사몰 약사전용관', barofarm:'온라인B2B_바로팜', aquamedi:'온라인B2B_아쿠아메디'};
+const SBO_TYPE={ready:'오프라인B2B_레디영', pharmmall:'온라인B2B_자사몰 약사전용관', barofarm:'온라인B2B_바로팜', aquamedi:'온라인B2B_아쿠아메디',
+  sample:'무상출고'};   /* 내부샘플 — 발주 타입은 무상출고, 관리메모1 에 「내부샘플」 (2026-11-09 사용자 확인) */
 /* 우리 품목명 → [상품코드, 사방넷 상품명] */
 function sboCodeMap_(so){
   const m={};
@@ -10763,14 +10764,15 @@ function sampleRO_(){ const s=(lib&&lib.sample)||{}; return {items:s.items||{},l
 function sample_(){ lib.sample=lib.sample||{}; const s=lib.sample; s.items=s.items||{}; s.log=s.log||[]; s.extra=s.extra||[]; return s; }
 /* 샘플 품목 — 판매 품목표에 소용량·매입 구분을 더했습니다 (2026-11-09 사용자 요청).
    base = 판매 품목명, spec = 사방넷 상품을 고를 용량 (루비알엔 클렌저 33ml = M004KR · 볼륨필인 11ml = M209KR).
-   900 아이크림 5ml · 클렌징 패드 3매입/10매입은 사방넷 상품코드를 아직 몰라 엑셀에서 코드 칸이 비면 사방넷에서 골라 주세요. */
+   클렌징 패드는 3매입 = M402KR 「(3매입)(증정)」 · 15매입 = M401KR (사방넷 ERP 통일 마스터SKU, 2026-11-09 사용자 확인).
+   900 아이크림 5ml 은 마스터에 코드가 없어 엑셀 코드 칸이 비어 나갑니다 — 사방넷에서 골라 주세요. */
 const SAMPLE_ITEMS=(function(){
   const out=[];
   PRICE_LIST.forEach(function(p){
     const n=p[1], b=p[0];
     if(n==='클리어 클렌징 패드'){
-      out.push({name:'클리어 클렌징 패드 3매입',brand:b,base:n,spec:'3매'});
-      out.push({name:'클리어 클렌징 패드 10매입',brand:b,base:n,spec:'10매'});
+      out.push({name:'클리어 클렌징 패드 3매입',brand:b,base:n,spec:'3매',code:['M402KR','메라블 클리어 클렌징 패드(3매입)(증정)']});
+      out.push({name:'클리어 클렌징 패드 15매입',brand:b,base:n,spec:'15매',code:['M401KR','메라블 클리어 클렌징 패드(15매입)']});
       return;
     }
     out.push({name:n,brand:b,base:n});
@@ -10782,6 +10784,7 @@ const SAMPLE_ITEMS=(function(){
 })();
 function sampleItemOf_(n){ return SAMPLE_ITEMS.filter(function(x){ return x.name===n; })[0]||null; }
 function sampleSboCode_(si){
+  if(si&&si.code) return si.code;              /* 마스터에서 정해 준 코드 */
   if(!si||!si.spec) return undefined;          /* 용량 구분 없는 품목은 평소처럼 */
   const sp=String(si.spec).toLowerCase().replace(/\s+/g,''), bk=itemKey(si.base);
   const hit=SBO_CODES.filter(function(x){
