@@ -4520,7 +4520,8 @@ function autoFold_(root,scope){
     while(n&&!(n.nodeType===1&&n.classList.contains('sec-h'))){ rest.push(n); n=n.nextSibling; }
     if(!rest.some(function(x){ return x.nodeType===1; })) return;
     const key='af:'+scope+':'+h.textContent.replace(/[\d,.\s]+/g,'').slice(0,40);
-    const p=document.createElement('div');p.className='ch-panel af'+(foldMemGet_(key)==='1'?' open':'');
+    const fm=foldMemGet_(key);
+    const p=document.createElement('div');p.className='ch-panel af'+((fm==='1'||(fm==null&&h.dataset.open==='1'))?' open':'');
     const hd=document.createElement('div');hd.className='ch-head';
     const chev=document.createElement('span');chev.className='chev';chev.textContent='▶';
     par.insertBefore(p,h);
@@ -10838,7 +10839,7 @@ function sampleOrderBox_(){
   const wrap=document.createElement('div');
   const open=sampleOrders_(true);
   const h=document.createElement('div');h.className='sec-h';
-  const hs=document.createElement('span');hs.textContent='🛒 주문 ('+(open.length?'입고 대기 '+open.length+'건':'입고 대기 없음')+')';h.appendChild(hs);wrap.appendChild(h);
+  const hs=document.createElement('span');hs.textContent='🛒 주문 ('+(open.length?'입고 대기 '+open.length+'건':'입고 대기 없음')+')';h.appendChild(hs);h.dataset.open='1';wrap.appendChild(h);
   const nh=document.createElement('div');nh.className='hint';nh.style.marginBottom='8px';
   nh.textContent='사방넷 출고 엑셀을 올렸을 때 이 주문번호(SMP…)에 송장이 찍혀 있으면 재고에 자동으로 더합니다. 사방넷을 안 거친 주문은 「📥 입고 처리」로 직접 넣으세요.';
   wrap.appendChild(nh);
@@ -11083,7 +11084,7 @@ function renderSample_(box){
   /* 대여 중 */
   {
     const h=document.createElement('div');h.className='sec-h';
-    const hs=document.createElement('span');hs.textContent='📸 대여 중 ('+loans.length+'건)';h.appendChild(hs);box.appendChild(h);
+    const hs=document.createElement('span');hs.textContent='📸 대여 중 ('+loans.length+'건)';h.appendChild(hs);h.dataset.open='1';box.appendChild(h);
     if(!loans.length){ const e=document.createElement('div');e.className='hint';e.style.marginBottom='12px';e.textContent='빌려 간 샘플이 없습니다.';box.appendChild(e); }
     else {
       const t=document.createElement('table');t.className='led-table';
@@ -11114,13 +11115,14 @@ function renderSample_(box){
     }
   }
 
-  box.appendChild(sampleOrderBox_());
+  { const ob=sampleOrderBox_(); while(ob.firstChild) box.appendChild(ob.firstChild); }
 
   /* 재고 */
   {
     const h=document.createElement('div');h.className='sec-h';
     const hs=document.createElement('span');
     const tot=names.reduce(function(a,n){ return a+(sampleQty_(n)||0); },0);
+    h.dataset.open='1';
     hs.textContent='📦 현재 재고 ('+names.filter(function(n){ return sampleQty_(n)!=null; }).length+'품목 · '+tot+'개)';
     h.appendChild(hs);box.appendChild(h);
     const t=document.createElement('table');t.className='led-table';
