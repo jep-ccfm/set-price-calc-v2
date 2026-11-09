@@ -6948,7 +6948,8 @@ async function sboOrderXlsx(chId,rows,opt){
   rows.forEach(function(r){
     /* 바로팜 상품명은 「메라블 유쎄라블 …」처럼 브랜드가 붙어 옵니다 — 우리 품목명으로 맞춰 찾습니다 */
     const mi=matchItem(r.item);
-    const c=(r.spec?kkoSboCode_(codes,{name:r.item,spec:r.spec}):null)||codes[itemKey(r.item)]||codes[itemKey(itemLabel(r.item))]||(mi?codes[itemKey(mi.name)]:null)||null;
+    /* r.code 를 주면 그대로 — 내부샘플 소용량처럼 원본 코드로 잘못 잡히면 안 되는 줄 ('' = 코드 비워 두고 경고) */
+    const c=(r.code!==undefined)?(r.code||null):((r.spec?kkoSboCode_(codes,{name:r.item,spec:r.spec}):null)||codes[itemKey(r.item)]||codes[itemKey(itemLabel(r.item))]||(mi?codes[itemKey(mi.name)]:null)||null);
     if(!c) noCode[r.item]=1;
     const pl=sboPlaceOf_(so,r.store,r.addr);
     if(!pl) noZip[r.store]=1;
@@ -10780,6 +10781,15 @@ const SAMPLE_ITEMS=(function(){
   return out;
 })();
 function sampleItemOf_(n){ return SAMPLE_ITEMS.filter(function(x){ return x.name===n; })[0]||null; }
+function sampleSboCode_(si){
+  if(!si||!si.spec) return undefined;          /* 용량 구분 없는 품목은 평소처럼 */
+  const sp=String(si.spec).toLowerCase().replace(/\s+/g,''), bk=itemKey(si.base);
+  const hit=SBO_CODES.filter(function(x){
+    const nm=String(x[1]).toLowerCase().replace(/\s+/g,'');
+    return itemKey(sboItem_(x[1]).name)===bk&&new RegExp('(^|[^0-9])'+sp.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).test(nm);
+  })[0];
+  return hit?[hit[0],hit[1]]:'';
+}
 function sampleNames_(){
   const s=sampleRO_(), a=SAMPLE_ITEMS.map(function(x){ return x.name; });
   s.extra.concat(Object.keys(s.items)).forEach(function(n){ if(n&&a.indexOf(n)<0) a.push(n); });
@@ -10980,7 +10990,8 @@ function sampleOrderBox_(){
     const ono='SMP'+ymd+'-'+k;
     const memo=mI.value.trim();
     if(ty&&ty!==sboTypeOf_('sample')){ lib.sboType=Object.assign({},lib.sboType||{},{sample:ty}); }
-    const rows=items.map(function(x){ const si=sampleItemOf_(x.item)||{}; return {store:recv,addr:addr,tel:tel,item:si.base||x.item,spec:si.spec||'',qty:x.qty,ono:ono,date:day,
+    const rows=items.map(function(x){ const si=sampleItemOf_(x.item)||{}; const sc=sampleSboCode_(si);
+      return {store:recv,addr:addr,tel:tel,item:sc===''?x.item:(si.base||x.item),code:sc,qty:x.qty,ono:ono,date:day,
       memo1:'내부샘플 주문 · '+by,memo2:(day.slice(5).replace('-','/')+' '+by+' 주문'+(memo?' · '+memo:'')),msg:'내부 샘플'}; });
     const res=await sboOrderXlsx('sample',rows,copy?{copy:true}:{});
     if(!res) return;
