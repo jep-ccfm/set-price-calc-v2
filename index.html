@@ -1041,7 +1041,7 @@
       <button class="nav-item" data-view="ch_aquamedi"><span class="ic">💧</span>아쿠아메디</button>
       <button class="nav-item" data-view="ch_influencer"><span class="ic">🎁</span>인플루언서</button>
       <div class="nav-section">부가기능</div>
-      <button class="nav-item" data-view="ch_sample"><span class="ic">🧪</span>내부샘플<span class="badge" id="badge-sample" hidden>0</span></button>
+      <button class="nav-item" data-view="ch_sample"><span class="ic">🧴</span>내부샘플<span class="badge" id="badge-sample" hidden>0</span></button>
       <button class="nav-item" data-view="geo"><span class="ic">📍</span>2km 규약 검사</button>
       <button class="nav-item" data-view="trash"><span class="ic">🗑️</span>휴지통<span class="badge" id="badge-trash">0</span></button>
     </nav>
@@ -7065,8 +7065,11 @@ function sboMerge(store,lines,oldInv){
     /* 인플루언서 체험단 제품 — 발주 타입이나 관리메모에 「인플루언서·체험단」이 있으면 그쪽 (매출 발주와 섞지 않습니다) */
     const memoAll=['관리메모1','관리메모2','관리메모3','관리메모4','관리메모5'].map(function(x){ return L[x]||''; }).join(' ');
     const isInf=/인플루언서|체험단/.test(type+' '+memoAll);
+    /* 내부샘플 주문 (2026-11-09) — 대시보드가 관리메모1 「내부샘플 주문」 · 주문번호 SMP… 로 넣습니다.
+       B2B 매출 발주가 아니어도 담아야 송장이 찍혔을 때 샘플 재고에 더할 수 있습니다 (매출 집계엔 안 들어감) */
+    const isSmp=/내부\s*샘플/.test(type+' '+memoAll)||/^SMP\d/.test(String(L['주문번호']||L['쇼핑몰주문번호']||''));
     /* 아쿠아메디는 발주타입 이름에 B2B 가 안 붙을 수도 있어 채널 이름으로도 받습니다 */
-    if(!isInf&&!/B2B/i.test(type)&&!/아쿠아|개인약국/.test(type)){ st.notB2B++; return; }
+    if(!isInf&&!isSmp&&!/B2B/i.test(type)&&!/아쿠아|개인약국/.test(type)){ st.notB2B++; return; }
     const cancel=/취소/.test(L['진행상태']||'');
     /* 겹친 파일의 옛 줄 — 같은 열쇠를 나중 파일이 다시 가져왔습니다 */
     if(!cancel&&!keyOf.has(L)){ st.same++; return; }
@@ -7086,7 +7089,7 @@ function sboMerge(store,lines,oldInv){
     }
     const it=sboItem_(L['출고상품명']);
     if(!it.known) w('「'+L['출고상품명']+'」('+L['상품코드']+') — 품목표에서 못 찾았습니다');
-    const ch=isInf?{memo:'인플루언서 체험단'}:SBO_CHANNELS.filter(function(c){ return c.re.test(type); })[0];
+    const ch=isInf?{memo:'인플루언서 체험단'}:isSmp?{memo:'내부샘플'}:SBO_CHANNELS.filter(function(c){ return c.re.test(type); })[0];
     if(!ch) w('발주타입 「'+type+'」 을 어느 채널로 볼지 모릅니다');
     const tel=L['전화번호1']||L['전화번호2']||'';
     const tl=sboDigits_(tel).length;
@@ -7398,6 +7401,7 @@ async function importEntryOrders(logEl,onDone){
   try{ shipN=await refreshShipped(got); mallStampShipDates_(); }catch(e){}
   try{ saveBranchSnap_(); }catch(e){}
   let infN=0; try{ infN=infApplyShip_(await sboLoad()); }catch(e){}
+  let smpN=0; try{ smpN=sampleAutoArrive_(await sboLoad()); }catch(e){}
   try{ mallTrackSnap_(await sboLoad()); }catch(e){}
   try{ const rv=await ryVerifyRows(got); saveRyVerify(rv); ryN=applyVerifyToOrders(rv); }catch(e){ ryErr=e.message||''; }
   persistLib();
@@ -7406,6 +7410,7 @@ async function importEntryOrders(logEl,onDone){
   lines.push('완료 — 신규 '+added+'건'+(dup?' · 이미 등록 '+dup+'건':'')+
     (fixed?' · 약국명 보완 '+fixed+'건':''));
   Object.keys(byCh).forEach(k=>lines.push('   '+k+' '+byCh[k]+'건'));
+  if(smpN) lines.push('   🧴 내부샘플 주문 '+smpN+'건 송장 확인 → 재고에 더함');
   mailLog.forEach(function(x){ lines.push(x); });
   if(adopt.made||adopt.moved) lines.push('   아쿠아메디 소속 약국 새로 '+adopt.made+'곳'+(adopt.names.length?' ('+adopt.names.join(', ')+')':'')+
     (adopt.moved?' · 약국 장부로 옮기거나 겹쳐 지운 발주·명세서 '+adopt.moved+'건':''));
@@ -10296,7 +10301,7 @@ const CHANNELS=[
   {key:'ch_pharmmall',id:'pharmmall',name:'자사몰 약사 전용관',ic:'🏬',desc:'자사몰 내 약사 전용관 — 채널 판매가와 발주·거래 내역을 관리합니다.'},
   {key:'ch_aquamedi',id:'aquamedi',name:'아쿠아메디',ic:'💧',desc:'아쿠아메디 소속 약국 — 발주·거래 내역과 서류를 약국별로 관리합니다.'},
   {key:'ch_influencer',id:'influencer',name:'인플루언서',ic:'🎁',desc:'인플루언서 체험단 — 「매장 수령」 제품을 레디영 지점으로 보내고 출고일·송장을 체험단 시트에 남깁니다.'},
-  {key:'ch_sample',id:'sample',name:'내부샘플',ic:'🧪',desc:'사무실 샘플 재고 — 출고·대여(촬영 등)·입고를 한곳에 적고, 기준 미만이면 주문 필요로 알려 줍니다.',eyebrow:'부가기능'}
+  {key:'ch_sample',id:'sample',name:'내부샘플',ic:'🧴',desc:'사무실 샘플 재고 — 출고·대여(촬영 등)·입고를 한곳에 적고, 기준 미만이면 주문 필요로 알려 줍니다.',eyebrow:'부가기능'}
 ];
 /* 아쿠아메디 소속 약국 — 붙박이 둘 + 나중에 넣은 곳 */
 function aquamediPharms(){
@@ -10792,6 +10797,34 @@ async function sampleDo_(fn){
    물건이 오면 「📥 입고 처리」 — 주문 수량이 재고에 더해집니다(수량을 고쳐서 받을 수도 있음). */
 const SAMPLE_ADDR_DEF='서울 금천구 디지털로9길 47, 한신IT타워2차 1004호 (브랜드사업1본부)';
 let samplePlan={};   /* 품목 → 이번 주문 수량 (화면을 떠나면 다시 계산) */
+/* 사방넷 출고 기록에 이 주문번호(SMP…)로 송장이 찍히면 재고에 바로 더합니다 (2026-11-09 사용자 요청).
+   수량은 출고 기록에 찍힌 품목별 수량 — 못 찾은 품목은 주문 수량. 반영한 주문은 「입고 끝난 주문」으로 옮깁니다. */
+function sampleAutoArrive_(so){
+  const L=lib&&lib.sample; if(!L||!(L.orders||[]).some(function(o){ return !o.arrived&&o.ono; })) return 0;
+  const S=sample_(), rows=(so&&so.rows)||[];
+  const k=function(nm){ let mi=null; try{ mi=matchItem(nm); }catch(e){} return itemKey(mi&&mi.name?mi.name:nm); };
+  let n=0;
+  S.orders.forEach(function(o){
+    if(o.arrived||!o.ono) return;
+    const rs=rows.filter(function(r){ return r.no===o.ono&&r.v; });
+    if(!rs.length) return;
+    const r0=rs[0], at=new Date().toISOString();
+    const got=(o.items||[]).map(function(x){
+      const q=rs.filter(function(r){ return k(r.i)===k(x.item); }).reduce(function(a,r){ return a+(Number(r.q)||0); },0);
+      return {item:x.item,qty:q||Number(x.qty)||0};
+    });
+    got.forEach(function(x){
+      if(!x.qty) return;
+      const l={id:'s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),at:at,by:'사방넷 출고',t:'in',item:x.item,qty:x.qty,
+        why:'주문 '+o.ono+' 출고 '+(r0.cr?r0.cr+' ':'')+r0.v+' ('+sampleWhen_(o.at)+' '+(o.by||'')+' 주문)',order:o.id};
+      sampleApply_(S,l,1); S.log.unshift(l);
+    });
+    o.arrived={at:at,by:'사방넷 출고',items:got,inv:r0.v,cr:r0.cr||'',date:r0.fin||r0.d||''};
+    n++;
+  });
+  return n;
+}
+
 function sampleOrders_(open){ return (sampleRO_().orders||[]).filter(function(o){ return open?!o.arrived:true; }); }
 function sampleOrdering_(n){ return sampleOrders_(true).reduce(function(a,o){ (o.items||[]).forEach(function(x){ if(x.item===n) a+=Number(x.qty)||0; }); return a; },0); }
 function sampleShipCfg_(){ const c=(sampleRO_().ship)||{}; return {recv:c.recv||'',tel:c.tel||'',addr:c.addr||SAMPLE_ADDR_DEF}; }
@@ -10806,6 +10839,9 @@ function sampleOrderBox_(){
   const open=sampleOrders_(true);
   const h=document.createElement('div');h.className='sec-h';
   const hs=document.createElement('span');hs.textContent='🛒 주문 ('+(open.length?'입고 대기 '+open.length+'건':'입고 대기 없음')+')';h.appendChild(hs);wrap.appendChild(h);
+  const nh=document.createElement('div');nh.className='hint';nh.style.marginBottom='8px';
+  nh.textContent='사방넷 출고 엑셀을 올렸을 때 이 주문번호(SMP…)에 송장이 찍혀 있으면 재고에 자동으로 더합니다. 사방넷을 안 거친 주문은 「📥 입고 처리」로 직접 넣으세요.';
+  wrap.appendChild(nh);
 
   /* 입고 대기 */
   if(open.length){
@@ -10949,7 +10985,7 @@ function sampleOrderBox_(){
     d.innerHTML='<summary class="hint" style="cursor:pointer;">입고 끝난 주문 '+done.length+'건</summary>';
     const ul=document.createElement('div');ul.style.cssText='font-size:12px;margin-top:6px;display:flex;flex-direction:column;gap:3px;';
     done.forEach(function(o){ const li=document.createElement('div');
-      li.textContent=sampleWhen_(o.at)+' '+(o.by||'')+' 주문 '+(o.ono||'')+' → '+sampleWhen_(o.arrived.at)+' '+(o.arrived.by||'')+' 입고 · '+(o.arrived.items||o.items||[]).map(function(x){ return x.item+' '+x.qty; }).join(', ');
+      li.textContent=sampleWhen_(o.at)+' '+(o.by||'')+' 주문 '+(o.ono||'')+' → '+sampleWhen_(o.arrived.at)+' '+(o.arrived.by||'')+(o.arrived.inv?' '+(o.arrived.cr||'')+' '+o.arrived.inv:'')+' 입고 · '+(o.arrived.items||o.items||[]).map(function(x){ return x.item+' '+x.qty; }).join(', ');
       ul.appendChild(li); });
     d.appendChild(ul);wrap.appendChild(d);
   }
@@ -10959,6 +10995,10 @@ function sampleOrderBox_(){
 let sampleForm={item:'',t:'out',qty:'',why:''};
 let sampleLogAll=false;
 function renderSample_(box){
+  /* 이미 올라온 사방넷 출고 기록에 송장이 있으면 반영 (한 번만 — 반영되면 입고 끝난 주문으로 빠집니다) */
+  if(canEdit()&&sampleOrders_(true).some(function(o){ return o.ono; })){
+    (async function(){ try{ if(sampleAutoArrive_(await sboLoad())){ persistLib(); showToast('🧴 사방넷 송장이 찍힌 샘플 주문을 재고에 더했습니다'); refreshCurrentView(); } }catch(e){} })();
+  }
   const S=sampleRO_(), names=sampleNames_(), low=sampleLow_(), loans=sampleLoans_();
   const css=document.createElement('style');
   css.textContent='.smp-seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}'+
