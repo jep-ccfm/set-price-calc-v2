@@ -8203,6 +8203,23 @@ async function sheetAutoSync_(){
     const A=lib.aqSheet=lib.aqSheet||{at:'',rows:{}};
     if(JSON.stringify(A.rows||{})!==JSON.stringify(rows)){ A.rows=rows; A.at=new Date().toISOString(); changed++; }
   }catch(e){}
+  /* 영세(해외 B2B) 거래처 — 일본라방(씨앤더블유) · 홍콩(주말무역) 판매입력 줄 (2026-11-09 재무 요청)
+     통합매출 시트는 03B_월별매출(재무) 탭에만 붙입니다 — 00_대시보드(이사님용)·01_통합로우에는 안 들어갑니다 (gs v7.0) */
+  try{
+    const now=sboToday_().slice(0,7), rows={};
+    for(let m=EC_CUTOVER.slice(0,7);m<=now;){
+      for(const ch of ['jp','hk']){
+        const C=ecCfg_(ch);
+        (await ecLines_(ch,m)).lines.forEach(function(o){
+          rows[o.key]={k:o.key,ch:ch,mk:o.date.slice(0,7),d:o.date,vc:o.vcode||C.vcode||'',vn:o.vname||C.vname||'',item:o.item,code:o.code||'',
+            q:o.qty,sup:o.supply,vat:o.vat,tot:o.supply+o.vat,ono:o.ono||'',memo:o.memo||'',tt:o.tt||C.tt||''};
+        });
+      }
+      const y=+m.slice(0,4), mo=+m.slice(5,7); m=mo===12?(y+1)+'-01':y+'-'+String(mo+1).padStart(2,'0');
+    }
+    const X=lib.exSheet=lib.exSheet||{at:'',rows:{}};
+    if(JSON.stringify(X.rows||{})!==JSON.stringify(rows)){ X.rows=rows; X.at=new Date().toISOString(); changed++; }
+  }catch(e){}
   try{
     const R=await sheetRefBuild_(), o=lib.sheetRef||{};
     if(JSON.stringify(o.codes||{})!==JSON.stringify(R.codes)||JSON.stringify(o.biz||{})!==JSON.stringify(R.biz)){
@@ -8265,7 +8282,7 @@ async function sheetRefBuild_(){
     });
   });
   Object.keys(lib.taxDocs||{}).forEach(function(id){ (lib.taxDocs[id]||[]).forEach(function(t){ (t.items||[]).forEach(function(it){ code(it.name); }); }); });
-  [lib.rySheet,lib.aqSheet].forEach(function(S){ const R=(S&&S.rows)||{}; Object.keys(R).forEach(function(k){ code(R[k]&&R[k].item); }); });
+  [lib.rySheet,lib.aqSheet,lib.exSheet].forEach(function(S){ const R=(S&&S.rows)||{}; Object.keys(R).forEach(function(k){ code(R[k]&&R[k].item); }); });
   return {codes:codes,biz:biz};
 }
 async function rySheetOpen_(){
@@ -14940,14 +14957,14 @@ let homeSearchQ='', homeSearchVendors=null;
 function editLogEsc_(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 const EDIT_LOG_OWNER='jep@mkm20201101.com';
 const EDIT_LOG_SEEN='setPriceCalc:editLogSeen';
-const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,sheetRef:1,bfFree:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
+const EDIT_LOG_AUTO={rySheet:1,aqSheet:1,exSheet:1,sheetRef:1,bfFree:1,mallTrack:1,entryShipped:1,ryVerify:1,rdRaw:1,branchStock:1,bfVerify:1};
 const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계산서',deposits:'입금',pharmInfo:'약국 정보',
   applicants:'자사몰 가입 신청',geo:'2km 지점',companies:'세트 저장소',trash:'휴지통',ecountDone:'이카운트 반영 표시',
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
   orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',infSafe:'인플루언서 안전재고',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
   purchaseDocs:'발주서',chDocs:'서류 보관함',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
-  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',bfFree:'바로팜 5+1 증정',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
+  rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',bfFree:'바로팜 5+1 증정',exSheet:'영세 거래처 시트',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
   rdRaw:'레디영 rawdata',branchStock:'지점 취급표',bfVerify:'바로팜 대조'};
 function editLogIsAuto_(c){
   const p=String(c.p||''), top=p.split('.')[0];
