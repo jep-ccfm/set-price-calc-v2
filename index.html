@@ -10759,6 +10759,8 @@ function renderInfluencer_(box){
    lib.sample = {items:{품목:{qty,min}}, extra:[직접 넣은 품목], log:[{id,at,by,t,item,qty,why,prev,back:{at,by}}]}
    ============================================================ */
 const SAMPLE_MIN_DEF=10;
+/* 내부 보유 최대 — 마스크팩류 50개, 나머지 25개 (2026-11-09 사용자 결정). 주문은 이 수량까지 채웁니다 */
+const SAMPLE_MAX_DEF=25, SAMPLE_MAX_MASK=50;
 const SAMPLE_T={out:{ic:'📤',l:'출고'},loan:{ic:'📸',l:'대여'},in:{ic:'📥',l:'입고'},count:{ic:'📋',l:'실사'}};
 function sampleRO_(){ const s=(lib&&lib.sample)||{}; return {items:s.items||{},log:s.log||[],extra:s.extra||[],orders:s.orders||[],ship:s.ship||null}; }
 function sample_(){ lib.sample=lib.sample||{}; const s=lib.sample; s.items=s.items||{}; s.log=s.log||[]; s.extra=s.extra||[]; return s; }
@@ -10803,6 +10805,7 @@ function sampleNames_(){
 }
 function sampleBrand_(n){ const x=sampleItemOf_(n); return x?x.brand:'기타'; }
 function sampleQty_(n){ const it=sampleRO_().items[n]; return (it&&it.qty!=null)?(Number(it.qty)||0):null; }
+function sampleMax_(n){ const it=sampleRO_().items[n]; return (it&&it.max!=null&&it.max!=='')?Number(it.max)||0:(/마스크/.test(n)?SAMPLE_MAX_MASK:SAMPLE_MAX_DEF); }
 function sampleMin_(n){ const it=sampleRO_().items[n]; return (it&&it.min!=null&&it.min!=='')?Number(it.min)||0:SAMPLE_MIN_DEF; }
 function sampleLoans_(n){ return sampleRO_().log.filter(function(l){ return l.t==='loan'&&!l.back&&(!n||l.item===n); }); }
 function sampleLow_(){ return sampleNames_().filter(function(n){ const q=sampleQty_(n); return q!=null&&q<sampleMin_(n); }); }
@@ -10868,10 +10871,10 @@ function sampleOrders_(open){ return (sampleRO_().orders||[]).filter(function(o)
 function sampleOrdering_(n){ return sampleOrders_(true).reduce(function(a,o){ (o.items||[]).forEach(function(x){ if(x.item===n) a+=Number(x.qty)||0; }); return a; },0); }
 function sampleShipCfg_(){ const c=(sampleRO_().ship)||{}; return {recv:c.recv||'',tel:c.tel||'',addr:c.addr||SAMPLE_ADDR_DEF}; }
 function sampleSuggest_(n){
-  /* 기준 미만이면 기준의 두 배가 되도록 (주문 중인 수량은 빼고) */
+  /* 기준 미만이면 최대 보유량까지 채우는 수량 (주문 중인 수량은 빼고) */
   const q=sampleQty_(n), mn=sampleMin_(n);
   if(q==null||q>=mn) return 0;
-  return Math.max(0,mn*2-q-sampleOrdering_(n));
+  return Math.max(0,sampleMax_(n)-q-sampleOrdering_(n));
 }
 function sampleOrderBox_(){
   const wrap=document.createElement('div');
@@ -10945,10 +10948,10 @@ function sampleOrderBox_(){
   const lowN=names.filter(function(n){ return sampleSuggest_(n)>0; });
   const t0=document.createElement('div');t0.style.cssText='display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px;';
   t0.innerHTML='<b style="font-size:13px;">✍️ 새 주문</b><span class="hint"></span>';
-  t0.lastChild.textContent=lowN.length?'기준 미만 '+lowN.length+'품목은 기준의 두 배가 되게 수량을 미리 넣었습니다 (주문 중인 수량은 뺌) — 고쳐도 됩니다':'수량을 넣은 품목만 주문됩니다';
+  t0.lastChild.textContent=lowN.length?'기준 미만 '+lowN.length+'품목은 최대 보유량(마스크팩류 '+SAMPLE_MAX_MASK+' · 나머지 '+SAMPLE_MAX_DEF+')까지 채우는 수량을 미리 넣었습니다 (주문 중인 수량은 뺌) — 고쳐도 됩니다':'수량을 넣은 품목만 주문됩니다';
   fm.appendChild(t0);
   const t=document.createElement('table');t.className='led-table';
-  t.innerHTML='<thead><tr><th>품목</th><th style="text-align:right;">현재</th><th style="text-align:right;">기준</th><th style="text-align:right;">주문 중</th><th style="text-align:right;">이번 주문</th></tr></thead>';
+  t.innerHTML='<thead><tr><th>품목</th><th style="text-align:right;">현재</th><th style="text-align:right;">기준</th><th style="text-align:right;">최대</th><th style="text-align:right;">주문 중</th><th style="text-align:right;">이번 주문</th></tr></thead>';
   const tb=document.createElement('tbody');
   const val=function(n){ return samplePlan[n]!=null?samplePlan[n]:sampleSuggest_(n); };
   /* 기준 미만 · 이미 수량을 넣은 품목을 위로 */
@@ -10958,6 +10961,7 @@ function sampleOrderBox_(){
     const c0=document.createElement('td');c0.textContent=n;tr.appendChild(c0);
     const c1=document.createElement('td');c1.style.cssText='text-align:right;font-family:var(--mono);';c1.textContent=q==null?'—':q;tr.appendChild(c1);
     const c2=document.createElement('td');c2.style.cssText='text-align:right;font-family:var(--mono);color:var(--ink-mute);';c2.textContent=mn;tr.appendChild(c2);
+    const c2b=document.createElement('td');c2b.style.cssText='text-align:right;font-family:var(--mono);color:var(--ink-mute);';c2b.textContent=sampleMax_(n);tr.appendChild(c2b);
     const c3=document.createElement('td');c3.style.cssText='text-align:right;font-family:var(--mono);color:#8A5300;';c3.textContent=og||'';tr.appendChild(c3);
     const c4=document.createElement('td');c4.style.textAlign='right';
     const qi=document.createElement('input');qi.type='number';qi.min='0';qi.className='cell-input';qi.style.cssText='width:70px;padding:4px 6px;text-align:right;';
@@ -11050,7 +11054,7 @@ function renderSample_(box){
   box.appendChild(css);
   const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='12px';
   nt.innerHTML='사무실 샘플 재고를 <b>정은 · rjs · pms</b>가 같이 봅니다. 내줄 때마다 아래에서 <b>출고</b>(사유) 또는 <b>대여</b>(촬영 등 — 돌려받으면 「↩ 돌리기」)로 적으면 재고에 바로 반영됩니다.<br>'+
-    '품목마다 <b>기준 '+SAMPLE_MIN_DEF+'개 미만</b>이면 「주문 필요」로 표시되고, <b>🛒 주문</b>에서 누가·언제·몇 개를 적으면 사방넷 발주 엑셀이 바로 나옵니다. 처음엔 <b>📋 실사</b>로 지금 있는 수량을 넣어 주세요. 품목 이름을 누르면 아래 입력칸에 바로 들어갑니다.';
+    '품목마다 <b>기준 '+SAMPLE_MIN_DEF+'개 미만</b>이면 「주문 필요」 — 주문은 <b>최대 보유량(마스크팩류 '+SAMPLE_MAX_MASK+' · 나머지 '+SAMPLE_MAX_DEF+')</b>까지 채웁니다. <b>🛒 주문</b>에서 누가·언제·몇 개를 적으면 사방넷 발주 엑셀이 바로 나옵니다. 처음엔 <b>📋 실사</b>로 지금 있는 수량을 넣어 주세요. 품목 이름을 누르면 아래 입력칸에 바로 들어갑니다.';
   box.appendChild(nt);
 
   /* 주문 필요 */
@@ -11165,7 +11169,7 @@ function renderSample_(box){
     hs.textContent='📦 현재 재고 ('+names.filter(function(n){ return sampleQty_(n)!=null; }).length+'품목 · '+tot+'개)';
     h.appendChild(hs);box.appendChild(h);
     const t=document.createElement('table');t.className='led-table';
-    t.innerHTML='<thead><tr><th>브랜드</th><th>품목</th><th style="text-align:right;">현재 재고</th><th style="text-align:right;">대여 중</th><th style="text-align:right;">기준</th><th>상태</th><th>마지막 기록</th></tr></thead>';
+    t.innerHTML='<thead><tr><th>브랜드</th><th>품목</th><th style="text-align:right;">현재 재고</th><th style="text-align:right;">대여 중</th><th style="text-align:right;">기준</th><th style="text-align:right;">최대</th><th>상태</th><th>마지막 기록</th></tr></thead>';
     const tb=document.createElement('tbody');
     names.forEach(function(n){
       const q=sampleQty_(n), mn=sampleMin_(n), lo=sampleLoans_(n).reduce(function(a,l){ return a+(Number(l.qty)||0); },0);
@@ -11186,9 +11190,18 @@ function renderSample_(box){
         await sampleDo_(function(s){ const it=s.items[n]=s.items[n]||{}; it.min=v; return true; });
       });
       c4.appendChild(mi);tr.appendChild(c4);
+      const c4b=document.createElement('td');c4b.style.textAlign='right';
+      const mx=document.createElement('input');mx.type='number';mx.min='0';mx.className='cell-input';mx.value=sampleMax_(n);mx.style.cssText='width:56px;padding:3px 5px;text-align:right;';
+      mx.title='내부 보유 최대 — 주문할 때 이 수량까지 채웁니다';
+      mx.addEventListener('change',async function(){
+        const v=Math.max(0,parseInt(mx.value,10)||0);
+        await sampleDo_(function(s){ const it=s.items[n]=s.items[n]||{}; it.max=v; return true; });
+      });
+      c4b.appendChild(mx);tr.appendChild(c4b);
       const c5=document.createElement('td');c5.style.cssText='font-size:12px;font-weight:700;';
       if(q==null){ c5.style.color='var(--ink-mute)';c5.textContent='실사 전'; }
       else if(q<mn){ const og=sampleOrdering_(n); c5.style.color=og?'#8A5300':'var(--warn)';c5.textContent=og?'🛒 주문 중 '+og+'개':'🔔 주문 필요'; }
+      else if(q>sampleMax_(n)){ c5.style.color='#8A5300';c5.textContent='최대 초과'; }
       else { c5.style.color='var(--good)';c5.textContent='충분'; }
       tr.appendChild(c5);
       const c6=document.createElement('td');c6.style.cssText='font-size:11.5px;color:var(--ink-soft);';
