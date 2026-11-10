@@ -1912,6 +1912,8 @@ function renderCompany(k){
   if(k==='ready')document.getElementById('readyCtrBtn').addEventListener('click',openReadyContract);
   /* 해외 채널은 묶음 번호가 없어 보관함을 맨 위에 둡니다 */
   if(k==='jp'||k==='hk')box.appendChild(buildChDocs_(k,''));
+  /* 일본라방 세금계산서 (2026-11-10 — 씨앤더블유 10월분부터) */
+  if(k==='jp')box.appendChild(buildTaxDocs('jp'));
 
   // 레디영: 정산 시트 + 월별 거래명세서 원장
   // 홍콩: 발주서(XLSX) 업로드 → 월별 집계
