@@ -8188,6 +8188,25 @@ function rySheetRow_(o){
    같은 줄을 lib.aqSheet 에 담아 통합매출 시트가 그 달 아쿠아메디 매출로 씁니다.
    aqSheet 는 매번 통째로 다시 만듭니다 — 발주를 고치거나 지우면 시트에서도 빠지게. */
 let sheetAutoAt=0;
+/* 카톡 발주 문구가 받는 곳 이름에 붙어 온 것 정리 (2026-11-12) — 통합매출 시트 거래처 칸에 그대로 나갔습니다
+   「베리뉴약국 홍대 레드로드점 발주 부탁드립니다:)(홍대 레드로드점)」 → 「베리뉴약국(홍대 레드로드점)」
+   「생생온누리약국 발주 추가합니다」 → 「생생온누리약국」 */
+function cleanStoreName_(v){
+  const t=String(v||'').trim(); if(!t) return t;
+  const m=t.match(/^([\s\S]*?)\s*[(（]([^)）]+)[)）]\s*$/);
+  let base=m?m[1]:t; const br=m?m[2].trim():'';
+  base=base.replace(/\s*(발주|주문|출고|배송)\s*(부탁|요청|추가|드립|합니|해\s*주)[\s\S]*$/,'').replace(/[:;]\)+|\^\^|~+|!+/g,'').trim();
+  if(br){
+    const b0=br.replace(/\s/g,''), bb=base.replace(/\s/g,'');
+    if(bb.length>b0.length&&bb.slice(-b0.length)===b0){
+      let cut=base.length, need=b0.length;
+      while(cut>0&&need>0){ cut--; if(!/\s/.test(base[cut])) need--; }
+      base=base.slice(0,cut).trim();
+    }
+    return base?base+'('+br+')':br;
+  }
+  return base||t;
+}
 async function sheetAutoSync_(){
   if(!canEdit()||Date.now()-sheetAutoAt<3*60*1000) return;
   sheetAutoAt=Date.now();
@@ -8209,7 +8228,7 @@ async function sheetAutoSync_(){
     const now=sboToday_().slice(0,7), rows={};
     for(let m=EC_CUTOVER.slice(0,7);m<=now;){
       (await ecLines_('aquamedi',m)).lines.forEach(function(o){
-        rows[o.key]={k:o.key,mk:o.date.slice(0,7),d:o.date,pid:o.pid||'',vc:o.vcode,vn:o.vname,recv:o.recv||'',item:o.item,code:o.code||'',
+        rows[o.key]={k:o.key,mk:o.date.slice(0,7),d:o.date,pid:o.pid||'',vc:o.vcode,vn:o.vname,recv:cleanStoreName_(o.recv||''),item:o.item,code:o.code||'',
           q:o.qty,unit:o.unit,sup:o.supply,vat:o.vat,tot:o.supply+o.vat,ono:o.ono||'',src:o.tag||'사방넷 출고'};
       });
       const y=+m.slice(0,4), mo=+m.slice(5,7); m=mo===12?(y+1)+'-01':y+'-'+String(mo+1).padStart(2,'0');
