@@ -11059,7 +11059,14 @@ function sampleOrderBox_(){
   return wrap;
 }
 
-let sampleForm={item:'',t:'out',qty:'',why:''};
+let sampleForm={item:'',t:'out',qty:'',why:'',lines:[{item:'',qty:''}]};
+/* 기록하기 칸에 품목 한 줄 더하기 — 비어 있는 줄이 있으면 거기에 */
+function sampleAddLine_(n){
+  const L=sampleForm.lines=(sampleForm.lines&&sampleForm.lines.length)?sampleForm.lines:[];
+  if(L.some(function(x){ return x.item===n; })) return;
+  const empty=L.filter(function(x){ return !x.item; })[0];
+  if(empty) empty.item=n; else L.push({item:n,qty:''});
+}
 let sampleLogAll=false;
 function renderSample_(box){
   /* 이미 올라온 사방넷 출고 기록에 송장이 있으면 반영 (한 번만 — 반영되면 입고 끝난 주문으로 빠집니다) */
@@ -11077,7 +11084,7 @@ function renderSample_(box){
   box.appendChild(css);
   const nt=document.createElement('div');nt.className='hint';nt.style.marginBottom='12px';
   nt.innerHTML='사무실 샘플 재고를 <b>정은 · rjs · pms</b>가 같이 봅니다. 내줄 때마다 아래에서 <b>출고</b>(사유) 또는 <b>대여</b>(촬영 등 — 돌려받으면 「↩ 돌리기」)로 적으면 재고에 바로 반영됩니다.<br>'+
-    '품목마다 <b>기준 '+SAMPLE_MIN_DEF+'개 미만</b>이면 「주문 필요」 — 주문은 <b>최대 보유량(마스크팩류 '+SAMPLE_MAX_MASK+' · 나머지 '+SAMPLE_MAX_DEF+')</b>까지 채웁니다. <b>🛒 주문</b>에서 누가·언제·몇 개를 적으면 사방넷 발주 엑셀이 바로 나옵니다. 처음엔 <b>📋 실사</b>로 지금 있는 수량을 넣어 주세요. 품목 이름을 누르면 아래 입력칸에 바로 들어갑니다.';
+    '품목마다 <b>기준 '+SAMPLE_MIN_DEF+'개 미만</b>이면 「주문 필요」 — 주문은 <b>최대 보유량(마스크팩류 '+SAMPLE_MAX_MASK+' · 나머지 '+SAMPLE_MAX_DEF+')</b>까지 채웁니다. <b>🛒 주문</b>에서 누가·언제·몇 개를 적으면 사방넷 발주 엑셀이 바로 나옵니다. 처음엔 <b>📋 실사</b>로 지금 있는 수량을 넣어 주세요. 여러 품목은 「＋ 품목 추가」로 한 번에 — 재고 표의 품목 이름을 눌러도 한 줄씩 더해집니다.';
   box.appendChild(nt);
 
   /* 주문 필요 */
@@ -11106,48 +11113,83 @@ function renderSample_(box){
   hint.textContent={out:'나간 수량만큼 재고에서 빠집니다',loan:'잠깐 빠졌다가 돌려받으면 「↩ 돌리기」',in:'들어온 수량만큼 재고에 더합니다',count:'세어 본 수량으로 재고를 맞춥니다'}[sampleForm.t];
   r1.appendChild(hint);
   fm.appendChild(r1);
+  /* 여러 품목을 한 번에 (2026-11-12) — 촬영 대여는 보통 여러 품목을 같이 빌려 가서 하나씩 적기 번거로웠습니다.
+     줄마다 품목 · 수량, 사유는 한 번. 대여는 한 묶음으로 남아 「↩ 한꺼번에 돌리기」로 같이 돌려받습니다. */
+  sampleForm.lines=(sampleForm.lines&&sampleForm.lines.length)?sampleForm.lines:[{item:'',qty:''}];
+  if(sampleForm.item){ sampleAddLine_(sampleForm.item); sampleForm.item=''; }
+  const lw=document.createElement('div');lw.style.cssText='display:flex;flex-direction:column;gap:6px;';
+  sampleForm.lines.forEach(function(L,li){
+    const row=document.createElement('div');row.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+    const sel=document.createElement('select');sel.className='cell-input';sel.style.cssText='padding:6px 8px;min-width:260px;';
+    sel.innerHTML='<option value="">품목 선택</option>';
+    names.forEach(function(n){ const o=document.createElement('option');o.value=n;const q=sampleQty_(n);o.textContent=n+(q!=null?' (재고 '+q+')':'');sel.appendChild(o); });
+    sel.value=L.item||'';
+    sel.addEventListener('change',function(){ L.item=sel.value; });
+    const qi=document.createElement('input');qi.type='number';qi.min='0';qi.className='cell-input';qi.placeholder=sampleForm.t==='count'?'지금 수량':'수량';
+    qi.style.cssText='width:90px;padding:6px 8px;text-align:right;';qi.value=L.qty;
+    qi.addEventListener('input',function(){ L.qty=qi.value; });
+    row.append(sel,qi);
+    if(sampleForm.lines.length>1){
+      const x=document.createElement('button');x.className='icon-btn';x.style.fontSize='11px';x.textContent='✕';x.title='이 줄 빼기';
+      x.addEventListener('click',function(){ sampleForm.lines.splice(li,1); refreshCurrentView(); });
+      row.appendChild(x);
+    }
+    lw.appendChild(row);
+  });
+  const addL=document.createElement('button');addL.className='icon-btn';addL.style.cssText='align-self:flex-start;font-size:12px;';addL.textContent='＋ 품목 추가';
+  addL.title='여러 품목을 한 번에 적습니다 — 재고 표의 품목 이름을 눌러도 한 줄씩 더해집니다';
+  addL.addEventListener('click',function(){ sampleForm.lines.push({item:'',qty:''}); refreshCurrentView(); });
+  lw.appendChild(addL);
+  fm.appendChild(lw);
   const r2=document.createElement('div');r2.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
-  const sel=document.createElement('select');sel.className='cell-input';sel.style.cssText='padding:6px 8px;min-width:230px;';
-  sel.innerHTML='<option value="">품목 선택</option>';
-  names.forEach(function(n){ const o=document.createElement('option');o.value=n;const q=sampleQty_(n);o.textContent=n+(q!=null?' (재고 '+q+')':'');sel.appendChild(o); });
-  sel.value=sampleForm.item||'';
-  sel.addEventListener('change',function(){ sampleForm.item=sel.value; });
-  const qi=document.createElement('input');qi.type='number';qi.min='0';qi.className='cell-input';qi.placeholder=sampleForm.t==='count'?'지금 수량':'수량';
-  qi.style.cssText='width:90px;padding:6px 8px;text-align:right;';qi.value=sampleForm.qty;
-  qi.addEventListener('input',function(){ sampleForm.qty=qi.value; });
-  const wi=document.createElement('input');wi.className='cell-input';wi.style.cssText='flex:1;min-width:220px;padding:6px 8px;';
+  const wi=document.createElement('input');wi.className='cell-input';wi.style.cssText='flex:1;min-width:260px;padding:6px 8px;';
   wi.placeholder={out:'사유 — 예) 미팅 샘플 (아쿠아메디 대표님)',loan:'사유 — 예) 11/12 상세페이지 촬영',in:'메모 — 예) 11/9 주문분 입고',count:'메모 — 예) 11/9 실사'}[sampleForm.t];
   wi.value=sampleForm.why;
   wi.addEventListener('input',function(){ sampleForm.why=wi.value; });
   const go=document.createElement('button');go.className='icon-btn';go.style.cssText='font-weight:800;padding:7px 14px;';
-  go.textContent=SAMPLE_T[sampleForm.t].ic+' '+SAMPLE_T[sampleForm.t].l+' 기록';
+  const nLines=sampleForm.lines.filter(function(L){ return L.item; }).length;
+  go.textContent=SAMPLE_T[sampleForm.t].ic+' '+SAMPLE_T[sampleForm.t].l+' 기록'+(nLines>1?' ('+nLines+'품목)':'');
   go.addEventListener('click',async function(){
-    const item=sel.value, q=parseInt(qi.value,10), why=wi.value.trim(), t=sampleForm.t;
-    if(!item){ showToast('품목을 고르세요'); return; }
-    if(isNaN(q)||q<0||(t!=='count'&&q===0)){ showToast('수량을 넣으세요'); return; }
+    const t=sampleForm.t, why=wi.value.trim();
+    /* 같은 품목을 두 줄에 적었으면 합칩니다 */
+    const want={}, order=[];
+    for(const L of sampleForm.lines){
+      if(!L.item&&!String(L.qty||'').trim()) continue;
+      const q=parseInt(L.qty,10);
+      if(!L.item){ showToast('품목을 고르지 않은 줄이 있습니다'); return; }
+      if(isNaN(q)||q<0||(t!=='count'&&q===0)){ showToast(L.item+' — 수량을 넣으세요'); return; }
+      if(want[L.item]==null){ want[L.item]=0; order.push(L.item); }
+      want[L.item]=(t==='count')?q:want[L.item]+q;
+    }
+    if(!order.length){ showToast('품목을 고르세요'); return; }
     if((t==='out'||t==='loan')&&!why){ showToast('어디에 · 왜 나가는지 사유를 적어 주세요'); wi.focus(); return; }
     go.disabled=true;
     const ok=await sampleDo_(function(s){
-      const cur=(s.items[item]&&s.items[item].qty!=null)?Number(s.items[item].qty)||0:null;
-      if((t==='out'||t==='loan')&&(cur==null||cur<q)){
-        showToast(cur==null?'재고가 아직 없습니다 — 먼저 📋 실사로 지금 수량을 넣어 주세요':'재고('+cur+'개)보다 많습니다 — 실사로 수량을 먼저 맞춰 주세요');
-        return false;
+      /* 하나라도 재고가 모자라면 아무것도 적지 않습니다 */
+      if(t==='out'||t==='loan'){
+        const short=order.filter(function(item){ const c=(s.items[item]&&s.items[item].qty!=null)?Number(s.items[item].qty)||0:null; return c==null||c<want[item]; });
+        if(short.length){ showToast('재고가 모자라거나 실사 전인 품목: '+short.map(function(n){ const c=s.items[n]&&s.items[n].qty; return n+(c!=null?' (재고 '+c+')':' (실사 전)'); }).join(', ')); return false; }
       }
-      const l={id:'s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),at:new Date().toISOString(),by:sampleWho_(),t:t,item:item,qty:q,why:why};
-      if(t==='count') l.prev=cur==null?0:cur;
-      sampleApply_(s,l,1);
-      s.log.unshift(l);
+      const at=new Date().toISOString(), by=sampleWho_(), grp=order.length>1?'g'+Date.now().toString(36):'';
+      order.forEach(function(item){
+        const cur=(s.items[item]&&s.items[item].qty!=null)?Number(s.items[item].qty)||0:null;
+        const l={id:'s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),at:at,by:by,t:t,item:item,qty:want[item],why:why};
+        if(grp) l.grp=grp;
+        if(t==='count') l.prev=cur==null?0:cur;
+        sampleApply_(s,l,1);
+        s.log.unshift(l);
+      });
       if(s.log.length>2000) s.log.length=2000;
       return true;
     });
-    if(ok){ showToast(SAMPLE_T[t].l+' 기록 — '+item+' '+q+'개'); sampleForm.qty=''; sampleForm.why=''; refreshCurrentView(); }
+    if(ok){ showToast(SAMPLE_T[t].l+' 기록 — '+(order.length>1?order.length+'품목':order[0]+' '+want[order[0]]+'개')); sampleForm.lines=[{item:'',qty:''}]; sampleForm.why=''; refreshCurrentView(); }
     go.disabled=false;
   });
-  r2.append(sel,qi,wi,go);
+  r2.append(wi,go);
   fm.appendChild(r2);
   box.appendChild(fm);
 
-  /* 대여 중 */
+  /* 대여 중 — 한 번에 빌려 간 묶음은 같이 보여 주고 「↩ 한꺼번에 돌리기」 */
   {
     const h=document.createElement('div');h.className='sec-h';
     const hs=document.createElement('span');hs.textContent='📸 대여 중 ('+loans.length+'건)';h.appendChild(hs);h.dataset.open='1';box.appendChild(h);
@@ -11156,25 +11198,49 @@ function renderSample_(box){
       const t=document.createElement('table');t.className='led-table';
       t.innerHTML='<thead><tr><th>빌려 간 날</th><th>품목</th><th>수량</th><th>사유</th><th>기록</th><th></th></tr></thead>';
       const tb=document.createElement('tbody');
-      loans.forEach(function(l){
-        const tr=document.createElement('tr');
-        [sampleWhen_(l.at),l.item,l.qty+'개',l.why||'',l.by||''].forEach(function(v,i){ const td=document.createElement('td');td.textContent=v;if(i===2)td.style.fontWeight='700';tr.appendChild(td); });
-        const td=document.createElement('td');
-        const b=document.createElement('button');b.className='icon-btn';b.style.fontWeight='700';b.textContent='↩ 돌리기';
-        b.title='돌려받았으면 누르세요 — 재고에 다시 더해집니다';
-        b.addEventListener('click',async function(){
-          b.disabled=true;
-          await sampleDo_(function(s){
-            const x=s.log.filter(function(z){ return z.id===l.id; })[0];
-            if(!x||x.back){ showToast('이미 돌려받은 건입니다'); return false; }
+      const giveBack=async function(ids,label){
+        await sampleDo_(function(s){
+          let n=0; const at=new Date().toISOString(), by=sampleWho_();
+          ids.forEach(function(id){
+            const x=s.log.filter(function(z){ return z.id===id; })[0];
+            if(!x||x.back) return;
             const it=s.items[x.item]=s.items[x.item]||{qty:0};
             it.qty=(Number(it.qty)||0)+(Number(x.qty)||0);
-            x.back={at:new Date().toISOString(),by:sampleWho_()};
-            return true;
+            x.back={at:at,by:by}; n++;
           });
-          showToast('돌려받음 — '+l.item+' '+l.qty+'개 재고로');
+          if(!n){ showToast('이미 돌려받은 건입니다'); return false; }
+          return true;
         });
-        td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
+        showToast('돌려받음 — '+label+' 재고로');
+      };
+      const groups=[], seen={};
+      loans.forEach(function(l){ const g=l.grp||l.id; if(!seen[g]){ seen[g]={key:g,list:[]}; groups.push(seen[g]); } seen[g].list.push(l); });
+      groups.forEach(function(G){
+        if(G.list.length>1){
+          const hr=document.createElement('tr');hr.style.background='#F6F3EC';
+          const l0=G.list[0];
+          const td0=document.createElement('td');td0.colSpan=5;td0.style.cssText='font-size:12.5px;';
+          td0.innerHTML='<b></b> <span style="color:var(--ink-soft);"></span>';
+          td0.firstChild.textContent='묶음 대여 '+G.list.length+'품목 · '+G.list.reduce(function(a,l){ return a+(Number(l.qty)||0); },0)+'개';
+          td0.lastChild.textContent=sampleWhen_(l0.at)+' · '+(l0.why||'')+' · '+(l0.by||'');
+          hr.appendChild(td0);
+          const tdb=document.createElement('td');
+          const ball=document.createElement('button');ball.className='icon-btn';ball.style.fontWeight='800';ball.textContent='↩ 한꺼번에 돌리기';
+          ball.title='이 묶음을 전부 돌려받았으면 누르세요 — 일부만 돌아왔으면 아래 줄에서 하나씩';
+          ball.addEventListener('click',function(){ ball.disabled=true; giveBack(G.list.map(function(l){ return l.id; }),G.list.length+'품목'); });
+          tdb.appendChild(ball);hr.appendChild(tdb);tb.appendChild(hr);
+        }
+        G.list.forEach(function(l){
+          const tr=document.createElement('tr');
+          [sampleWhen_(l.at),l.item,l.qty+'개',l.why||'',l.by||''].forEach(function(v,i){ const td=document.createElement('td');td.textContent=v;if(i===2)td.style.fontWeight='700';
+            if(G.list.length>1&&(i===0||i===3||i===4)){ td.style.color='var(--ink-mute)';td.style.fontSize='11.5px'; }
+            tr.appendChild(td); });
+          const td=document.createElement('td');
+          const b=document.createElement('button');b.className='icon-btn';b.style.fontWeight='700';b.textContent='↩ 돌리기';
+          b.title='돌려받았으면 누르세요 — 재고에 다시 더해집니다';
+          b.addEventListener('click',function(){ b.disabled=true; giveBack([l.id],l.item+' '+l.qty+'개'); });
+          td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
+        });
       });
       t.appendChild(tb);
       const bx=document.createElement('div');bx.style.cssText='overflow-x:auto;margin-bottom:12px;';bx.appendChild(t);box.appendChild(bx);
@@ -11201,7 +11267,7 @@ function renderSample_(box){
       if(q!=null&&q<mn) tr.className='smp-low';
       const c0=document.createElement('td');c0.style.color='var(--ink-mute)';c0.style.fontSize='12px';c0.textContent=sampleBrand_(n);tr.appendChild(c0);
       const c1=document.createElement('td');const sp=document.createElement('span');sp.className='smp-name';sp.textContent=n;
-      sp.title='아래 기록하기 칸에 넣기';sp.addEventListener('click',function(){ sampleForm.item=n; refreshCurrentView(); window.scrollTo({top:0,behavior:'smooth'}); });
+      sp.title='위 기록하기 칸에 한 줄 더하기';sp.addEventListener('click',function(){ sampleAddLine_(n); refreshCurrentView(); window.scrollTo({top:0,behavior:'smooth'}); showToast(n+' — 기록하기 칸에 넣었습니다'); });
       c1.appendChild(sp);tr.appendChild(c1);
       const c2=document.createElement('td');c2.style.cssText='text-align:right;font-weight:800;font-family:var(--mono);';c2.textContent=q==null?'—':q;tr.appendChild(c2);
       const c3=document.createElement('td');c3.style.cssText='text-align:right;font-family:var(--mono);color:#8A5300;';c3.textContent=lo?lo:'';tr.appendChild(c3);
