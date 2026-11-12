@@ -11119,14 +11119,14 @@ function renderSample_(box){
   if(sampleForm.item){ sampleAddLine_(sampleForm.item); sampleForm.item=''; }
   const lw=document.createElement('div');lw.style.cssText='display:flex;flex-direction:column;gap:6px;';
   sampleForm.lines.forEach(function(L,li){
-    const row=document.createElement('div');row.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
-    const sel=document.createElement('select');sel.className='cell-input';sel.style.cssText='padding:6px 8px;min-width:260px;';
+    const row=document.createElement('div');row.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:nowrap;max-width:620px;';
+    const sel=document.createElement('select');sel.className='cell-input';sel.style.cssText='padding:6px 8px;width:auto;flex:1 1 auto;min-width:0;';
     sel.innerHTML='<option value="">품목 선택</option>';
     names.forEach(function(n){ const o=document.createElement('option');o.value=n;const q=sampleQty_(n);o.textContent=n+(q!=null?' (재고 '+q+')':'');sel.appendChild(o); });
     sel.value=L.item||'';
     sel.addEventListener('change',function(){ L.item=sel.value; });
     const qi=document.createElement('input');qi.type='number';qi.min='0';qi.className='cell-input';qi.placeholder=sampleForm.t==='count'?'지금 수량':'수량';
-    qi.style.cssText='width:90px;padding:6px 8px;text-align:right;';qi.value=L.qty;
+    qi.style.cssText='width:90px;flex:0 0 90px;padding:6px 8px;text-align:right;';qi.value=L.qty;
     qi.addEventListener('input',function(){ L.qty=qi.value; });
     row.append(sel,qi);
     if(sampleForm.lines.length>1){
@@ -11214,7 +11214,9 @@ function renderSample_(box){
         showToast('돌려받음 — '+label+' 재고로');
       };
       const groups=[], seen={};
-      loans.forEach(function(l){ const g=l.grp||l.id; if(!seen[g]){ seen[g]={key:g,list:[]}; groups.push(seen[g]); } seen[g].list.push(l); });
+      /* 묶음 = 한 번에 기록한 것(grp). 예전에 하나씩 적은 것도 같은 날 · 같은 사람 · 같은 사유면 한 묶음으로 봅니다 */
+      loans.forEach(function(l){ const g=l.grp||(l.why?'w|'+String(l.at||'').slice(0,10)+'|'+(l.by||'')+'|'+l.why:l.id);
+        if(!seen[g]){ seen[g]={key:g,list:[]}; groups.push(seen[g]); } seen[g].list.push(l); });
       groups.forEach(function(G){
         if(G.list.length>1){
           const hr=document.createElement('tr');hr.style.background='#F6F3EC';
