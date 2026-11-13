@@ -4980,9 +4980,25 @@ const SETTLE_SUPPLIER={name:'(주)고지식바이오', bizNo:'274-81-00503', ceo
   addr:'서울특별시 강남구 선릉로 428, 9층 111호', tel:'1551-7430'};
 const SETTLE_BANK={'54106474904035':{bank:'IBK기업은행',holder:'(주)고지식바이오',disp:'541-064749-04-035'},
                    '54106474904042':{bank:'IBK기업은행',holder:'(주)고지식바이오',disp:'541-064749-04-042'}};
-function settleChannels(){
+/* 레디영 법인 — 2026-11-11 (주)레디영 → (주)피앤비랩 으로 법인명·대표 변경 (사업자등록증 11/11 발급, b2b@readyyoung.kr 11/12 안내).
+   from = 이 귀속월 정산분부터 그 법인으로 정산서·세금계산서를 냅니다.
+   ※ 피앤비랩 적용 시점(11월분부터)은 레디영에 문의 중 — 확정되면 pending 을 지우고 from 을 맞추세요.
+   상대 통장사본은 받았지만 입금은 레디영 → 우리라 정산서에 넣을 일이 없어 여기 두지 않습니다(공개 저장소). */
+const RY_ENTITY=[
+  {from:'0000-00', name:'(주)레디영',   bizNo:'',             ceo:'',     addr:''},
+  {from:'2026-11', name:'(주)피앤비랩', bizNo:'356-88-03456', ceo:'김세영', addr:'서울특별시 강남구 테헤란로5길 51-16, 2층(역삼동)',
+   was:'(주)레디영', pending:true}
+];
+function ryEntity(mk){
+  let hit=RY_ENTITY[0];
+  RY_ENTITY.forEach(function(x){ if(String(mk||'')>=x.from) hit=x; });
+  return hit;
+}
+/* toMk = 정산 기간의 끝 달 — 여러 달을 묶으면 마지막 달 법인으로 */
+function settleChannels(toMk){
+  const ry=ryEntity(toMk||thisMonthKey());
   return [
-    {id:'ready',     name:'레디영',            pids:['ready'],     one:'(주)레디영', acct:'54106474904035'},
+    {id:'ready',     name:'레디영',            pids:['ready'],     one:ry.name, ent:ry, acct:'54106474904035'},
     {id:'pharmmall', name:'자사몰 약사전용관', pids:['pharmmall'], one:'',          acct:'54106474904042'},
     {id:'aquamedi',  name:'아쿠아메디',        pids:aquaIds(),     one:'',          acct:'54106474904035'}
   ];
@@ -5018,7 +5034,7 @@ function settleAquaInfo_(branch){
 /* 기간 안 원장 → 채널 > 거래처 > (지점) > 줄 */
 function settleCollect(fromMk,toMk){
   const res=[];
-  settleChannels().forEach(function(ch){
+  settleChannels(toMk).forEach(function(ch){
     const docs=[];
     ch.pids.forEach(function(pid){
       docMonthsOf_(pid).forEach(function(mk){
@@ -5041,7 +5057,7 @@ function settleCollect(fromMk,toMk){
         else if(ch.id==='aquamedi'){ const pi=settleAquaInfo_(br);
           info={biz:pi.name||br, bizNo:pi.biz||'', ceo:pi.owner||'', addr:pi.addr||pi.ship||'', tel:pi.tel||'',
                 email:String(pi.email||'').trim()}; }
-        else { info={biz:ch.one, bizNo:'', ceo:'', addr:'', tel:''}; }
+        else { const E=ch.ent||{}; info={biz:ch.one, bizNo:E.bizNo||'', ceo:E.ceo||'', addr:E.addr||'', tel:''}; }
         custs[ck]={name:ck, info:info, secs:{}, secOrder:[], docs:0};
         order.push(ck);
       }
@@ -5412,6 +5428,16 @@ function buildSettlePanel(){
         } else hd.append(bd,bp,bx);
       }
       box.appendChild(hd);
+      /* 레디영 법인 변경 안내 — 적용 시점 확정 전까지 눈에 띄게 */
+      if(ch.id==='ready'){
+        const nx=RY_ENTITY[RY_ENTITY.length-1], on=ch.ent===nx;
+        const rn=document.createElement('div');rn.className='hint';
+        rn.style.cssText='margin:6px 0 0;padding:6px 9px;border-radius:7px;border:1px dashed var(--warn);';
+        rn.innerHTML='🏢 <b>법인 변경</b> '+settleEsc_(nx.was)+' → <b>'+settleEsc_(nx.name)+'</b> (사업자 '+settleEsc_(nx.bizNo)+' · 대표 '+settleEsc_(nx.ceo)+') · '+
+          '<b>'+mkLabel(nx.from)+'분 정산부터</b> 적용 — 지금 고른 기간은 '+(on?'<b>'+settleEsc_(nx.name)+'</b>':settleEsc_(ch.one))+' 로 나갑니다.'+
+          (nx.pending?' <span style="color:var(--warn);font-weight:700;">적용 시점 레디영 확인 중 · 세금계산서 발행 전 확정 필요</span>':'');
+        box.appendChild(rn);
+      }
       if(!cs.length){
         const e=document.createElement('div');e.className='hint';e.style.margin='6px 0 0';
         e.innerHTML='<span style="color:var(--warn);">이 기간 원장이 비어 있습니다.</span> '+
