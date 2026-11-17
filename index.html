@@ -11358,7 +11358,7 @@ function renderSample_(box){
     (sampleLogAll?S.log:S.log.slice(0,30)).forEach(function(l){
       const tr=document.createElement('tr');
       const T=SAMPLE_T[l.t]||{ic:'',l:l.t};
-      const st=l.t==='loan'?(l.back?' · ↩ '+sampleWhen_(l.back.at)+' 돌려받음':' · 대여 중'):(l.t==='count'?' (전 '+(l.prev||0)+'개)':'');
+      const st=l.t==='loan'?(l.back?' · ↩ '+sampleWhen_(l.back.at)+' '+(l.back.by||'?')+' 반납 처리':' · 대여 중'):(l.t==='count'?' (전 '+(l.prev||0)+'개)':'');
       [sampleWhen_(l.at),l.by||'',T.ic+' '+T.l,l.item,(l.t==='out'||l.t==='loan'?'−':l.t==='in'?'+':'=')+l.qty,(l.why||'')+st].forEach(function(v,i){
         const td=document.createElement('td');td.textContent=v;
         if(i===4){ td.style.cssText='text-align:right;font-family:var(--mono);font-weight:700;'; }
