@@ -8334,7 +8334,10 @@ async function sheetRefBuild_(){
         if(id==='pharmmall'){ const si=(lib.storeInfo||{})[br]||{};
           const ap=(lib.applicants||[]).filter(function(a){ return storeKey_(a.name)===storeKey_(br); })[0]||{};
           put(k,si.bizNo||ap.biz,si.ceo||ap.owner); }
-        else if(id==='ready'){ const v=M?ecVendorRY_(M,br):null; if(v) put(k,v.code,''); }
+        /* 레디영 — 이카운트 거래처코드. 사업자번호 꼴이 아닌 코드(홍대입구점 00008 · 레디영지마켓 00016)도 그대로 넘깁니다
+           (2026-11-17 — 예전엔 사업자번호 꼴만 넘겨 03B 에서 빈칸으로 보였습니다) */
+        else if(id==='ready'){ const v=M?ecVendorRY_(M,br):null;
+          if(v){ const b=ecBiz_(v.code); if(/^\d{3}-\d{2}-\d{5}$/.test(b)) put(k,v.code,''); else if(b) biz[k]=[b,'']; } }
         else if(aq.indexOf(id)>=0){ const pi=(lib.pharmInfo||{})[id]||{};
           const p2=(pi.biz||pi.owner)?pi:settleAquaInfo_(br); put(k,p2.biz,p2.owner); }
       });
