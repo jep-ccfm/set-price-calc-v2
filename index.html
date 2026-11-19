@@ -2542,7 +2542,59 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){const lb=document.g
    파일은 비공개 버킷 b2b-docs 에 둡니다. 열기 = 회사 계정(@mkm20201101.com) 로그인, 올리기·지우기 = 편집 명단(b2b_can_edit).
    목록(파일명 · 월 · 메모)은 lib.chDocs[채널] 에 둡니다. */
 const DOC_BUCKET='b2b-docs';
-const CHDOC_KINDS={po:'발주서',st:'거래명세서'};
+const CHDOC_KINDS={po:'발주서',st:'거래명세서',ct:'계약서',tx:'세금계산서'};
+const CHDOC_COLOR={po:'var(--accent)',st:'var(--good)',ct:'#8A5300',tx:'#6A4BB5'};
+
+/* ---------- 바로팜 연간 입점비 (2026-11-19) ----------
+   계약서 제10조: 스토어 입점비 연 1회 3,000,000원(VAT 별도). 입점월(8월) 말일 세금계산서 → 익월 말일까지 현금 지급.
+   제20조: 1년 단위 자동 연장 — 연장될 때마다 그 첫 달(8월)에 입점비가 다시 생깁니다.
+   2026년분 지출결의 상신이 빠져 11/19 에 급히 처리했습니다 → 매년 8월 홈 알림 + 바로팜 화면에 「상신 완료」 버튼.
+   완료 기록은 lib.annualDone['bf-entry-YYYY'] = {at, by, memo}. */
+const BF_ENTRY_FEE={supply:3000000,vat:300000,month:8,since:2026};
+function annualDoneOf_(){ lib.annualDone=lib.annualDone||{}; return lib.annualDone; }
+/* 지금 챙겨야 할 해 — 8월부터는 그해, 1~7월은 작년분이 안 끝났으면 작년 */
+function bfEntryDueYear_(){
+  const d=new Date(), y=d.getFullYear(), m=d.getMonth()+1;
+  const D=annualDoneOf_();
+  if(m>=BF_ENTRY_FEE.month&&y>=BF_ENTRY_FEE.since&&!D['bf-entry-'+y]) return y;
+  if(m<BF_ENTRY_FEE.month&&y-1>=BF_ENTRY_FEE.since&&!D['bf-entry-'+(y-1)]) return y-1;
+  return 0;
+}
+function bfEntryAlert_(){
+  const y=bfEntryDueYear_(); if(!y) return null;
+  const due=y+'-09-30', over=thisMonthKey()>y+'-09'||(new Date().toISOString().slice(0,10)>due);
+  return {t:(over?'🔴 ':'📅 ')+'바로팜 '+y+'년 연간 입점비 상신',
+    s:'입점비 '+fmt(BF_ENTRY_FEE.supply)+' + VAT '+fmt(BF_ENTRY_FEE.vat)+' = '+fmt(BF_ENTRY_FEE.supply+BF_ENTRY_FEE.vat)+'원 · 8/31자 매입 세금계산서 → '+
+      '9/30까지 지급 · 지출결의 상신 후 바로팜 화면에서 「상신 완료」'+(over?' — 지급 기한이 지났습니다':''),
+    view:'ch_barofarm',kind:over?'warn':'info'};
+}
+function buildBfEntryFee_(){
+  const box=document.createElement('div');
+  box.style.cssText='margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#FBFAF7;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;';
+  const D=annualDoneOf_(), y=bfEntryDueYear_(), now=new Date().getFullYear();
+  const t=document.createElement('div');t.style.flex='1';
+  const last=Object.keys(D).filter(k=>/^bf-entry-\d{4}$/.test(k)).sort().pop();
+  if(y){
+    t.innerHTML='<b style="color:var(--warn);">📅 '+y+'년 연간 입점비 상신 필요</b> — '+fmt(BF_ENTRY_FEE.supply+BF_ENTRY_FEE.vat)+'원(VAT 포함) · 8/31자 매입 세금계산서 · 9/30까지 지급'+
+      '<div class="hint" style="margin-top:2px;">계약서 제10조 — 매년 8월(입점월) 자동 연장 때마다 다시 생깁니다. 지출결의 상신 후 오른쪽 버튼을 눌러 주세요.</div>';
+  }else{
+    const ly=last?last.slice(-4):'';
+    t.innerHTML='<b>📅 연간 입점비</b> — '+(ly?ly+'년분 상신 완료 ✅ ('+String(D[last].at||'').slice(0,10)+(D[last].memo?' · '+settleEsc_(D[last].memo):'')+')':'기록 없음')+
+      '<div class="hint" style="margin-top:2px;">다음 상신: '+(ly&&+ly>=now?(+ly+1):now)+'년 8월 · '+fmt(BF_ENTRY_FEE.supply+BF_ENTRY_FEE.vat)+'원 — 8월이 되면 홈 「확인이 필요한 항목」에 뜹니다.</div>';
+  }
+  box.appendChild(t);
+  if(y&&canEdit()){
+    const b=document.createElement('button');b.className='icon-btn';b.style.fontWeight='800';b.textContent='✅ '+y+'년 상신 완료';
+    b.addEventListener('click',()=>{
+      const memo=prompt(y+'년 바로팜 입점비 지출결의 상신 완료로 기록할까요? 메모(선택)','');
+      if(memo===null)return;
+      annualDoneOf_()['bf-entry-'+y]={at:new Date().toISOString(),by:authEmail(),memo:memo.trim()};
+      persistLib();refreshCurrentView();showToast(y+'년 입점비 상신 완료로 기록했어요');
+    });
+    box.appendChild(b);
+  }
+  return box;
+}
 const chDocFilt_={};   /* 채널 → {kind, mk} — 다시 그려도 고른 칸 유지 */
 function chDocsOf(id){ lib.chDocs=lib.chDocs||{}; lib.chDocs[id]=lib.chDocs[id]||[]; return lib.chDocs[id]; }
 function chDocSize_(n){ n=Number(n)||0; return n>=1048576?(n/1048576).toFixed(1)+'MB':Math.max(1,Math.round(n/1024))+'KB'; }
@@ -2617,9 +2669,9 @@ async function chDocView_(rec){
 /* 채널 화면에 붙이는 묶음 — no 가 비면 번호 동그라미를 뺍니다 (홍콩 · 일본라방은 묶음 번호가 없음) */
 function buildChDocs_(id,no){
   const list=chDocsOf(id);
-  const nPo=list.filter(d=>d.kind==='po').length;
-  const g=groupBox(no||'','🗂 발주서 · 거래명세서 보관함',
-    list.length?('발주서 '+nPo+' · 거래명세서 '+(list.length-nPo)):'<span style="color:var(--ink-mute);">아직 없음</span>',
+  const cnt=Object.keys(CHDOC_KINDS).map(k=>[k,list.filter(d=>d.kind===k).length]).filter(x=>x[1]||x[0]==='po'||x[0]==='st');
+  const g=groupBox(no||'','🗂 서류 보관함 (발주서 · 거래명세서 · 계약서 · 세금계산서)',
+    list.length?cnt.map(x=>CHDOC_KINDS[x[0]]+' '+x[1]).join(' · '):'<span style="color:var(--ink-mute);">아직 없음</span>',
     'setPriceCalc:grpDocs_'+id,false);
   if(!no){const n=g.group.querySelector('.grp-n');if(n)n.remove();}
   g.body.appendChild(chDocsBody_(id));
@@ -2693,8 +2745,9 @@ function chDocsBody_(id){
 
     /* 거르기 — 종류 · 월 */
     const fr=document.createElement('div');fr.style.cssText='display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;';
-    [['','전체'],['po','발주서'],['st','거래명세서']].forEach(([k,lab])=>{
+    [['','전체']].concat(Object.keys(CHDOC_KINDS).map(k=>[k,CHDOC_KINDS[k]])).forEach(([k,lab])=>{
       const n=k?list.filter(d=>d.kind===k).length:list.length;
+      if(k&&!n&&k!=='po'&&k!=='st') return;
       const p=document.createElement('button');p.className='round-pill'+(F.kind===k?' active':'');
       p.textContent=lab+' '+n;p.addEventListener('click',()=>{F.kind=k;draw();});fr.appendChild(p);
     });
@@ -2717,7 +2770,7 @@ function chDocsBody_(id){
       const tr=document.createElement('tr');
       const c1=document.createElement('td');c1.textContent=d.mk||'-';c1.style.cssText='font-size:12.5px;white-space:nowrap;';
       const c2=document.createElement('td');c2.textContent=CHDOC_KINDS[d.kind]||d.kind;
-      c2.style.cssText='font-size:12.5px;font-weight:700;white-space:nowrap;color:'+(d.kind==='po'?'var(--accent)':'var(--good)')+';';
+      c2.style.cssText='font-size:12.5px;font-weight:700;white-space:nowrap;color:'+(CHDOC_COLOR[d.kind]||'var(--good)')+';';
       const c3=document.createElement('td');
       const nm=document.createElement('a');nm.href='#';nm.textContent=d.name;nm.style.cssText='font-weight:700;font-size:12.5px;word-break:break-all;';
       nm.addEventListener('click',e=>{e.preventDefault();chDocView_(d);});
@@ -11441,6 +11494,7 @@ function renderChannel(view){
     const nt=document.createElement('div');nt.className='hint';nt.style.margin='-6px 0 14px';
     nt.innerHTML='발주 확인·출고 처리는 <b>바로팜 파트너센터</b>에서 진행합니다. 이 화면은 주문내역을 내려받아 <b>확인·집계</b>하는 용도입니다.';
     box.appendChild(nt);
+    box.appendChild(buildBfEntryFee_());
     /* ① 주문 → ② 정산 점검 → ③ 돈 → ④ 자료 */
     const bOrd=(ordersOf('barofarm')||[]).length;
     let bLeft=0; try{ bLeft=bfOrderRows(null,false).length; }catch(e){}
@@ -15705,7 +15759,7 @@ const EDIT_LOG_KEY={orders:'주문',ledger:'거래명세서',taxDocs:'세금계�
   ecVendorReg:'이카운트 거래처 등록',payDueAdj:'입금 기한 조정',partners:'거래처',storeInfo:'사방넷 약국 정보',
   orderDrop:'주문 제외',aquaPharms:'아쿠아메디 소속 약국',bfSettle:'바로팜 정산서',infShip:'체험단 발송',infOut:'체험단 출고',infSafe:'인플루언서 안전재고',sample:'내부샘플',
   bfInvDone:'바로팜 송장',itemAlias:'품목 별칭',storeAlias:'약국 별칭',storeMerged:'약국 합치기',rdAlias:'수취인 이어두기',
-  purchaseDocs:'발주서',chDocs:'서류 보관함',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
+  purchaseDocs:'발주서',chDocs:'서류 보관함',annualDone:'연간 입점비',aqFree:'테스터 수량',mallContract:'자사몰 계약',ecCfg:'이카운트 설정',ryVerifyOk:'대조 확인',
   rySheet:'레디영 시트',aqSheet:'아쿠아메디 시트',sheetRef:'통합시트 참고값',bfFree:'바로팜 5+1 증정',exSheet:'영세 거래처 시트',mallTrack:'자사몰 송장',entryShipped:'출고 대조',ryVerify:'발주 대조',
   rdRaw:'레디영 rawdata',branchStock:'지점 취급표',bfVerify:'바로팜 대조'};
 function editLogIsAuto_(c){
@@ -15933,6 +15987,8 @@ function renderHome(){
         s:names.join(', ')+' — 코드가 없으면 명세서 발행이 보류됩니다',view:'geo',kind:'warn'});
   }catch(e){}
 
+  // 바로팜 연간 입점비 — 매년 8월 상신 (2026-11-19)
+  try{ const bfe=bfEntryAlert_(); if(bfe) alerts.unshift(bfe); }catch(e){}
   // 미처리 가입심사
   const waiting=(lib.applicants||[]).filter(a=>(a.status||'대기')==='대기').length;
   if(waiting)alerts.push({t:'🧾 자사몰 가입 심사 대기 '+waiting+'건',s:'2km 규약 판정 후 승인/거절하세요',view:'ch_pharmmall',kind:'new'});
